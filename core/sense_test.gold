@@ -1,0 +1,10 @@
+use companion
+
+The program drives `sense::sense_frame` with frames every 0.05 s from t = 0 to t = 12 inclusive (frame i at t = i·0.05), and prints every event as `name arg` using `sense::sense_name`. Base pose (all 33 landmarks visibility 1, every landmark not listed at (0.5, 0.5)): nose 0 (0.5, 0.3), 11 (0.6, 0.45), 12 (0.4, 0.45), 13 (0.65, 0.6), 14 (0.35, 0.6), 15 (0.65, 0.75), 16 (0.35, 0.75), 23 (0.55, 0.8), 24 (0.45, 0.8); pose[133] = 1. A person is detected (pose[132] = 1) for 1 <= t < 9, otherwise 0. For 3 <= t < 5, landmark 16 is at (0.30 + 0.06·sin(2π·2.5·(t - 3)), 0.35). Hands are always (0, 0) and (0, 0). The face is detected (face[54] = 1) for 6 <= t < 7.5 with blendshapes 44 and 45 at 0.8 and everything else 0, otherwise all face values are 0. Objects: for 5.5 <= t < 7 one detection (41, 0.8) with objs[16] = 1, otherwise none.
+
+expect:
+enter 0
+wave 1
+object 41
+smile 0
+leave 0

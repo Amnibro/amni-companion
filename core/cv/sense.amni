@@ -1,0 +1,398 @@
+namespace sense;
+import math;
+let NEV = 25;
+fn sense_name(code int) const byte[:] {
+	match code {
+		1 => "enter",
+		2 => "leave",
+		3 => "wave",
+		4 => "hands_up",
+		5 => "clap",
+		6 => "point",
+		7 => "arms_crossed",
+		8 => "t_pose",
+		9 => "approach",
+		10 => "back_away",
+		11 => "thumbs_up",
+		12 => "thumbs_down",
+		13 => "peace",
+		14 => "love",
+		15 => "fist",
+		16 => "open_palm",
+		17 => "pointing_up",
+		18 => "smile",
+		19 => "surprise",
+		20 => "frown",
+		21 => "wink",
+		22 => "nod",
+		23 => "head_shake",
+		24 => "object",
+		_ => "?",
+	}
+}
+var EVB i32[34];
+var EVN int = 0;
+fn emit(code int, arg int) {
+	if EVN < 17 {
+		EVB[EVN * 2] = code as i32;
+		EVB[EVN * 2 + 1] = arg as i32;
+		EVN += 1;
+	}
+}
+struct Hold { since real, on bool, done bool }
+struct Rev { has bool, ext real, dir int, n int, ts real[4] }
+var FIRED bool[NEV];
+var LASTF real[NEV];
+fn cool(code int) real {
+	match code {
+		1, 2 => 0.0,
+		16 => 10.0,
+		_ => 2.5,
+	}
+}
+fn fire(code int, arg int, t real) bool {
+	if FIRED[code] && t - LASTF[code] < cool(code) { return false; }
+	FIRED[code] = true;
+	LASTF[code] = t;
+	emit(code, arg);
+	return true;
+}
+fn held(h Hold&, cond bool, t real, dur real) bool {
+	if !cond {
+		h.on = false;
+		h.done = false;
+		return false;
+	}
+	if !h.on {
+		h.on = true;
+		h.since = t;
+		h.done = false;
+	}
+	if !h.done && t - h.since >= dur {
+		h.done = true;
+		return true;
+	}
+	return false;
+}
+fn rev_add(r Rev&, t real) {
+	if r.n == 4 {
+		for i in 3 { r.ts[i] = r.ts[i + 1]; }
+		r.n = 3;
+	}
+	r.ts[r.n] = t;
+	r.n += 1;
+}
+fn rev_fire(r Rev&, v real, t real, thr real, need int, win real) bool {
+	if !r.has {
+		r.has = true;
+		r.ext = v;
+		r.dir = 0;
+		return false;
+	}
+	if r.dir == 0 {
+		if v > r.ext + thr { r.dir = 1; r.ext = v; }
+		else if v < r.ext - thr { r.dir = -1; r.ext = v; }
+	} else if r.dir > 0 {
+		if v > r.ext { r.ext = v; }
+		else if v < r.ext - thr { r.dir = -1; r.ext = v; rev_add(r, t); }
+	} else {
+		if v < r.ext { r.ext = v; }
+		else if v > r.ext + thr { r.dir = 1; r.ext = v; rev_add(r, t); }
+	}
+	var c = 0;
+	for i in r.n { if t - r.ts[i] <= win { c += 1; } }
+	if c >= need {
+		r.n = 0;
+		return true;
+	}
+	return false;
+}
+var ASP real = 1.0;
+var PLAST bool = false;
+var PCHG real = 0.0;
+var PINIT bool = true;
+var PREOK bool = false;
+var ENTDONE bool = false;
+var INSIDE bool = false;
+var ENTERED bool = false;
+fn presence_update(pose real[:], t real) bool {
+	ENTERED = false;
+	ASP = if pose[133] > 0.0 { pose[133] } else { 1.0 };
+	let present = pose[132] > 0.5 && pose[47] > 0.5 && pose[51] > 0.5;
+	if present != PLAST {
+		if present {
+			PREOK = PINIT || t - PCHG >= 2.0;
+			PINIT = false;
+			ENTDONE = false;
+		}
+		PLAST = present;
+		PCHG = t;
+	}
+	if present {
+		if PREOK && !ENTDONE && t - PCHG >= 0.5 {
+			ENTDONE = true;
+			INSIDE = true;
+			ENTERED = true;
+			fire(1, 0, t);
+		}
+	} else if INSIDE && t - PCHG >= 2.5 {
+		INSIDE = false;
+		fire(2, 0, t);
+	}
+	return present;
+}
+var WAVR Rev[2];
+var HUH Hold;
+var TPH Hold;
+var PTH Hold[2];
+var ACH Hold;
+var CLAPARM bool = false;
+var CLAPN int = 0;
+var CLAPT real[2];
+var BASE real = 0.0;
+var BASEOK bool = false;
+var BT real = 0.0;
+fn px(pose real[:], i int) real { pose[i * 4] * ASP }
+fn py(pose real[:], i int) real { pose[i * 4 + 1] }
+fn pdist(pose real[:], a int, b int) real {
+	let dx = px(pose, a) - px(pose, b);
+	let dy = py(pose, a) - py(pose, b);
+	sqrt(dx * dx + dy * dy)
+}
+fn elbow_angle(pose real[:], s int) real {
+	let sh = 11 + s;
+	let el = 13 + s;
+	let wr = 15 + s;
+	let ux = px(pose, sh) - px(pose, el);
+	let uy = py(pose, sh) - py(pose, el);
+	let vx = px(pose, wr) - px(pose, el);
+	let vy = py(pose, wr) - py(pose, el);
+	let cross = ux * vy - uy * vx;
+	let dot = ux * vx + uy * vy;
+	atan2(abs(cross), dot) * 180.0 / PI
+}
+fn body_reset() {
+	WAVR[0] = default<Rev>();
+	WAVR[1] = default<Rev>();
+	HUH = default<Hold>();
+	TPH = default<Hold>();
+	PTH[0] = default<Hold>();
+	PTH[1] = default<Hold>();
+	ACH = default<Hold>();
+	CLAPARM = false;
+	CLAPN = 0;
+	CLAPT[0] = 0.0;
+	CLAPT[1] = 0.0;
+	BASE = 0.0;
+	BASEOK = false;
+	BT = 0.0;
+}
+fn body_update(pose real[:], t real) {
+	let sw = pdist(pose, 11, 12);
+	if sw < 0.000001 { return; }
+	for s in 2 {
+		let w = 15 + s;
+		let e = 13 + s;
+		if py(pose, w) < py(pose, e) {
+			if rev_fire(WAVR[s], px(pose, w), t, 0.12 * sw, 3, 1.7) { fire(3, s, t); }
+		} else {
+			WAVR[s] = default<Rev>();
+		}
+	}
+	let ny = py(pose, 0) - 0.15 * sw;
+	if held(HUH, py(pose, 15) < ny && py(pose, 16) < ny, t, 0.4) { fire(4, 0, t); }
+	let d = pdist(pose, 15, 16) / sw;
+	if d > 0.9 {
+		CLAPARM = true;
+	} else if d < 0.3 && CLAPARM {
+		CLAPARM = false;
+		if CLAPN == 2 {
+			CLAPT[0] = CLAPT[1];
+			CLAPN = 1;
+		}
+		CLAPT[CLAPN] = t;
+		CLAPN += 1;
+		var c = 0;
+		for i in CLAPN { if t - CLAPT[i] <= 1.5 { c += 1; } }
+		if c >= 2 {
+			CLAPN = 0;
+			fire(5, 0, t);
+		}
+	}
+	let tcond = elbow_angle(pose, 0) > 170.0 && elbow_angle(pose, 1) > 170.0
+		&& abs(py(pose, 15) - py(pose, 11)) < 0.35 * sw && abs(py(pose, 16) - py(pose, 12)) < 0.35 * sw
+		&& abs(px(pose, 15) - px(pose, 11)) > 1.4 * sw && abs(px(pose, 16) - px(pose, 12)) > 1.4 * sw;
+	if held(TPH, tcond, t, 0.7) { fire(8, 0, t); }
+	for s in 2 {
+		let sh = 11 + s;
+		let w = 15 + s;
+		let arg = if px(pose, w) > px(pose, sh) { 1 } else { 0 };
+		let pc = elbow_angle(pose, s) > 150.0 && abs(px(pose, w) - px(pose, sh)) > 1.2 * sw
+			&& abs(py(pose, w) - py(pose, sh)) < 0.7 * sw && !tcond;
+		if held(PTH[s], pc, t, 0.5) { fire(6, arg, t); }
+	}
+	let cc = pdist(pose, 15, 14) < 0.7 * sw && pdist(pose, 16, 13) < 0.7 * sw;
+	if held(ACH, cc, t, 0.8) { fire(7, 0, t); }
+	if ENTERED || !BASEOK {
+		BASE = sw;
+		BASEOK = true;
+	} else {
+		let k = 1.0 - exp(-(t - BT) / 3.0);
+		BASE += (sw - BASE) * k;
+		if sw > 1.3 * BASE {
+			fire(9, 0, t);
+			BASE = sw;
+		} else if sw < 0.75 * BASE {
+			fire(10, 0, t);
+			BASE = sw;
+		}
+	}
+	BT = t;
+}
+var HGH Hold;
+var HGC int = 0;
+fn gesture_code(g int) int {
+	match g {
+		1 => 15,
+		2 => 16,
+		3 => 17,
+		4 => 12,
+		5 => 11,
+		6 => 13,
+		7 => 14,
+		_ => 0,
+	}
+}
+fn hands_reset() {
+	HGH = default<Hold>();
+	HGC = 0;
+}
+fn hands_update(hands real[:], t real) {
+	var g = 0;
+	for i in 2 {
+		let gi = hands[i * 2] as int;
+		if g == 0 && gi > 0 && hands[i * 2 + 1] > 0.7 { g = gi; }
+	}
+	if g != HGC {
+		HGH = default<Hold>();
+		HGC = g;
+	}
+	if held(HGH, g > 0, t, 0.35) {
+		let code = gesture_code(g);
+		if code == 16 && FIRED[3] && t - LASTF[3] < 2.0 { return; }
+		if code > 0 { fire(code, 0, t); }
+	}
+}
+var SMH Hold;
+var SUH Hold;
+var FRH Hold;
+var WKON bool = false;
+var WKT real = 0.0;
+var NODR Rev;
+var SHKR Rev;
+fn face_reset() {
+	SMH = default<Hold>();
+	SUH = default<Hold>();
+	FRH = default<Hold>();
+	WKON = false;
+	WKT = 0.0;
+	NODR = default<Rev>();
+	SHKR = default<Rev>();
+}
+fn face_update(face real[:], t real) {
+	if face[54] <= 0.5 {
+		face_reset();
+		return;
+	}
+	let smile = (face[44] + face[45]) / 2.0;
+	let smiling = smile > 0.55;
+	if held(SMH, smiling, t, 0.7) { fire(18, 0, t); }
+	let wide = (face[21] + face[22]) / 2.0;
+	let scond = face[25] > 0.45 && (face[3] > 0.4 || wide > 0.35);
+	if held(SUH, scond, t, 0.25) { fire(19, 0, t); }
+	let fr = (face[30] + face[31]) / 2.0;
+	let brow = (face[1] + face[2]) / 2.0;
+	let fcond = ((fr > 0.35 && brow > 0.35) || fr > 0.6) && !smiling;
+	if held(FRH, fcond, t, 1.7) { fire(20, 0, t); }
+	let wcond = (face[9] > 0.7 && face[10] < 0.25) || (face[10] > 0.7 && face[9] < 0.25);
+	if wcond {
+		if !WKON {
+			WKON = true;
+			WKT = t;
+		}
+	} else if WKON {
+		WKON = false;
+		let dur = t - WKT;
+		if dur >= 0.12 && dur <= 0.7 { fire(21, 0, t); }
+	}
+	if rev_fire(NODR, face[53], t, 0.07, 2, 1.2) { fire(22, 0, t); }
+	if rev_fire(SHKR, face[52], t, 0.1, 2, 1.2) { fire(23, 0, t); }
+}
+var OSEEN real[80];
+var OSTART real[80];
+var OLAST real[80];
+var OON bool[80];
+var ODONE bool[80];
+var OFIRED bool[80];
+fn objs_reset() {
+	for i in 80 {
+		OSEEN[i] = 0.0;
+		OSTART[i] = 0.0;
+		OLAST[i] = 0.0;
+		OON[i] = false;
+		ODONE[i] = false;
+		OFIRED[i] = false;
+	}
+}
+fn objs_update(objs real[:], t real) {
+	let n = min(objs[16] as int, 8);
+	for i in n {
+		let cls = objs[i * 2] as int;
+		let score = objs[i * 2 + 1];
+		if score > 0.55 && cls >= 1 && cls <= 79 {
+			if !OON[cls] || t - OSEEN[cls] >= 0.5 {
+				OON[cls] = true;
+				OSTART[cls] = t;
+				ODONE[cls] = false;
+			}
+			OSEEN[cls] = t;
+			if !ODONE[cls] && t - OSTART[cls] >= 0.7 {
+				ODONE[cls] = true;
+				if !OFIRED[cls] || t - OLAST[cls] >= 45.0 {
+					OFIRED[cls] = true;
+					OLAST[cls] = t;
+					emit(24, cls);
+				}
+			}
+		}
+	}
+}
+fn sense_reset() {
+	for i in NEV {
+		FIRED[i] = false;
+		LASTF[i] = 0.0;
+	}
+	EVN = 0;
+	ASP = 1.0;
+	PLAST = false;
+	PCHG = 0.0;
+	PINIT = true;
+	PREOK = false;
+	ENTDONE = false;
+	INSIDE = false;
+	ENTERED = false;
+	body_reset();
+	hands_reset();
+	face_reset();
+	objs_reset();
+}
+fn sense_frame(t real, pose real[:], hands real[:], face real[:], objs real[:], ev i32[:]) int {
+	EVN = 0;
+	let present = presence_update(pose, t);
+	if present { body_update(pose, t); } else { body_reset(); }
+	hands_update(hands, t);
+	face_update(face, t);
+	objs_update(objs, t);
+	for i in EVN * 2 { ev[i] = EVB[i]; }
+	return EVN;
+}

@@ -1,0 +1,62 @@
+import cv.qm;
+import cv.rig;
+import cv.motion;
+import cv.sense;
+import cv.talk;
+var F real[300000];
+var I i32[8192];
+var T byte[70000];
+var O byte[70000];
+fn main() {}
+extern fn cv_view(id i32, xs real[:]);
+extern fn cv_view_i(id i32, xs i32[:]);
+extern fn cv_bytes(id i32, xs byte[:]);
+export fn cv_init() {
+	cv_view(0, F[..]);
+	cv_view_i(1, I[..]);
+	cv_bytes(2, T[..]);
+	cv_bytes(3, O[..]);
+}
+export fn cv_rig(n i32, tlen i32, par_at i32, pos_at i32, slot_at i32) i32 {
+	return rig::rig_map(T[0..tlen], n, I[par_at..par_at + n], F[pos_at..pos_at + 3 * n], I[slot_at..slot_at + 22]) as i32;
+}
+export fn cv_humanoid(slot_at i32) i32 {
+	if rig::rig_humanoid(I[slot_at..slot_at + 22]) { return 1; }
+	return 0;
+}
+export fn cv_slot_name(k i32) i32 {
+	let s = rig::slot_name(k);
+	for i in s.len { O[i] = s[i]; }
+	return s.len as i32;
+}
+export fn cv_solve(slot_at i32, rest_at i32, want_at i32, out_at i32) {
+	motion::solve_local(I[slot_at..slot_at + 22], F[rest_at..rest_at + 264], F[want_at..want_at + 110], F[out_at..out_at + 110]);
+}
+export fn cv_retarget(sslot_at i32, srest_at i32, tslot_at i32, trest_at i32, nf i32, frames_at i32, out_at i32) {
+	motion::retarget_clip(I[sslot_at..sslot_at + 22], F[srest_at..srest_at + 264], I[tslot_at..tslot_at + 22], F[trest_at..trest_at + 264], nf, F[frames_at..frames_at + 91 * nf], F[out_at..out_at + 91 * nf]);
+}
+export fn cv_pose(lm_at i32, mirror i32, t real, filter i32, slot_at i32, rest_at i32, out_at i32) i32 {
+	let lm = F[lm_at..lm_at + 132];
+	if filter != 0 { motion::pose_filter(lm, t); }
+	return motion::pose_solve(lm, mirror != 0, I[slot_at..slot_at + 22], F[rest_at..rest_at + 264], F[out_at..out_at + 110]) as i32;
+}
+export fn cv_pose_reset() {
+	motion::pose_reset();
+}
+export fn cv_sense(t real, pose_at i32, hands_at i32, face_at i32, objs_at i32, ev_at i32) i32 {
+	return sense::sense_frame(t, F[pose_at..pose_at + 134], F[hands_at..hands_at + 4], F[face_at..face_at + 55], F[objs_at..objs_at + 17], I[ev_at..ev_at + 34]) as i32;
+}
+export fn cv_sense_name(code i32) i32 {
+	let s = sense::sense_name(code);
+	for i in s.len { O[i] = s[i]; }
+	return s.len as i32;
+}
+export fn cv_sense_reset() {
+	sense::sense_reset();
+}
+export fn cv_tags(tlen i32) i32 {
+	return talk::tags_split(T[0..tlen], O[0..35000], O[35000..70000], I[8190..8192]) as i32;
+}
+export fn cv_reply(tlen i32) i32 {
+	return talk::brain_reply(T[0..tlen], O[..]) as i32;
+}

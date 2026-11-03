@@ -1,0 +1,117 @@
+namespace qm;
+import math;
+struct V3 { x real, y real, z real }
+struct Q4 { x real, y real, z real, w real }
+fn v3(x real, y real, z real) V3 { V3 { x: x, y: y, z: z } }
+fn v_add(a V3, b V3) V3 { V3 { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z } }
+fn v_sub(a V3, b V3) V3 { V3 { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z } }
+fn v_scale(a V3, k real) V3 { V3 { x: a.x * k, y: a.y * k, z: a.z * k } }
+fn v_dot(a V3, b V3) real { a.x * b.x + a.y * b.y + a.z * b.z }
+fn v_cross(a V3, b V3) V3 {
+	V3 { x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x }
+}
+fn v_len(a V3) real { sqrt(v_dot(a, a)) }
+fn v_lerp(a V3, b V3, t real) V3 {
+	V3 { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t }
+}
+fn v_norm(a V3) V3 {
+	let l = v_len(a);
+	if l < 1e-12 { V3 { x: 0.0, y: 0.0, z: 0.0 } } else { V3 { x: a.x / l, y: a.y / l, z: a.z / l } }
+}
+fn q_ident() Q4 { Q4 { x: 0.0, y: 0.0, z: 0.0, w: 1.0 } }
+fn q_conj(q Q4) Q4 { Q4 { x: -q.x, y: -q.y, z: -q.z, w: q.w } }
+fn q_dot(a Q4, b Q4) real { a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w }
+fn q_norm(q Q4) Q4 {
+	let l = sqrt(q_dot(q, q));
+	if l < 1e-12 { q_ident() } else { Q4 { x: q.x / l, y: q.y / l, z: q.z / l, w: q.w / l } }
+}
+fn q_mul(a Q4, b Q4) Q4 {
+	Q4 {
+		x: a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+		y: a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+		z: a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+		w: a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
+	}
+}
+fn q_rot(q Q4, v V3) V3 {
+	let u = V3 { x: q.x, y: q.y, z: q.z };
+	let t = v_scale(v_cross(u, v), 2.0);
+	v_add(v_add(v, v_scale(t, q.w)), v_cross(u, t))
+}
+fn q_axis_angle(axis V3, ang real) Q4 {
+	let h = ang * 0.5;
+	let s = sin(h);
+	Q4 { x: axis.x * s, y: axis.y * s, z: axis.z * s, w: cos(h) }
+}
+fn q_from_to(a V3, b V3) Q4 {
+	let d = v_dot(a, b);
+	if d < -0.999999 {
+		var c = v_cross(a, V3 { x: 1.0, y: 0.0, z: 0.0 });
+		if v_len(c) < 1e-6 { c = v_cross(a, V3 { x: 0.0, y: 1.0, z: 0.0 }); }
+		let ax = v_norm(c);
+		return Q4 { x: ax.x, y: ax.y, z: ax.z, w: 0.0 };
+	}
+	let c = v_cross(a, b);
+	q_norm(Q4 { x: c.x, y: c.y, z: c.z, w: 1.0 + d })
+}
+fn q_slerp(a Q4, b Q4, t real) Q4 {
+	var d = q_dot(a, b);
+	var bb = b;
+	if d < 0.0 {
+		bb = Q4 { x: -b.x, y: -b.y, z: -b.z, w: -b.w };
+		d = -d;
+	}
+	if d > 0.9995 {
+		return q_norm(Q4 {
+			x: a.x + (bb.x - a.x) * t,
+			y: a.y + (bb.y - a.y) * t,
+			z: a.z + (bb.z - a.z) * t,
+			w: a.w + (bb.w - a.w) * t,
+		});
+	}
+	let th = acos(min(d, 1.0));
+	let s = sin(th);
+	let wa = sin((1.0 - t) * th) / s;
+	let wb = sin(t * th) / s;
+	Q4 { x: a.x * wa + bb.x * wb, y: a.y * wa + bb.y * wb, z: a.z * wa + bb.z * wb, w: a.w * wa + bb.w * wb }
+}
+fn q_from_axes(x V3, y V3, z V3) Q4 {
+	let m00 = x.x;
+	let m11 = y.y;
+	let m22 = z.z;
+	let m21 = y.z;
+	let m12 = z.y;
+	let m02 = z.x;
+	let m20 = x.z;
+	let m10 = x.y;
+	let m01 = y.x;
+	let trace = m00 + m11 + m22;
+	var r = q_ident();
+	if trace > 0.0 {
+		let s = 0.5 / sqrt(trace + 1.0);
+		r = Q4 { x: (m21 - m12) * s, y: (m02 - m20) * s, z: (m10 - m01) * s, w: 0.25 / s };
+	} else if m00 > m11 && m00 > m22 {
+		let s = 2.0 * sqrt(1.0 + m00 - m11 - m22);
+		r = Q4 { x: 0.25 * s, y: (m01 + m10) / s, z: (m02 + m20) / s, w: (m21 - m12) / s };
+	} else if m11 > m22 {
+		let s = 2.0 * sqrt(1.0 + m11 - m00 - m22);
+		r = Q4 { x: (m01 + m10) / s, y: 0.25 * s, z: (m12 + m21) / s, w: (m02 - m20) / s };
+	} else {
+		let s = 2.0 * sqrt(1.0 + m22 - m00 - m11);
+		r = Q4 { x: (m02 + m20) / s, y: (m12 + m21) / s, z: 0.25 * s, w: (m10 - m01) / s };
+	}
+	q_norm(r)
+}
+fn q_get(a real[:], at int) Q4 { Q4 { x: a[at], y: a[at + 1], z: a[at + 2], w: a[at + 3] } }
+fn q_put(a real[:], at int, q Q4) {
+	a[at] = q.x;
+	a[at + 1] = q.y;
+	a[at + 2] = q.z;
+	a[at + 3] = q.w;
+}
+fn v_get(a real[:], at int) V3 { V3 { x: a[at], y: a[at + 1], z: a[at + 2] } }
+fn v_put(a real[:], at int, v V3) {
+	a[at] = v.x;
+	a[at + 1] = v.y;
+	a[at + 2] = v.z;
+}

@@ -1,0 +1,10 @@
+art/.mosaic/
+art/*.log
+core/*.log
+node_modules/
+*.tmp
+art/holo_7.png
+art/holo_27.png
+art/engineer_7.png
+art/engineer_17.png
+art/gen.json

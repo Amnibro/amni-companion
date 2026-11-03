@@ -1,0 +1,55 @@
+=== 4a3a5a230e459152
+import math;
+import cv.sense;
+
+fn setlm(pose real[:], i int, x real, y real) {
+	pose[i * 4] = x;
+	pose[i * 4 + 1] = y;
+}
+
+fn main() {
+	var pose real[134] = [0.0; 134];
+	var hands real[128] = [0.0; 128];
+	var face real[64] = [0.0; 64];
+	var objs real[32] = [0.0; 32];
+	var ev i32[64] = [0 as i32; 64];
+	sense::sense_reset();
+	for f in 241 {
+		let t = f as real * 0.05;
+		for i in 33 {
+			setlm(pose, i, 0.5, 0.5);
+			pose[i * 4 + 2] = 0.0;
+			pose[i * 4 + 3] = 1.0;
+		}
+		setlm(pose, 0, 0.5, 0.3);
+		setlm(pose, 11, 0.6, 0.45);
+		setlm(pose, 12, 0.4, 0.45);
+		setlm(pose, 13, 0.65, 0.6);
+		setlm(pose, 14, 0.35, 0.6);
+		setlm(pose, 15, 0.65, 0.75);
+		setlm(pose, 16, 0.35, 0.75);
+		setlm(pose, 23, 0.55, 0.8);
+		setlm(pose, 24, 0.45, 0.8);
+		pose[133] = 1.0;
+		pose[132] = if f >= 20 && f < 180 { 1.0 } else { 0.0 };
+		if f >= 60 && f < 100 {
+			setlm(pose, 16, 0.30 + 0.06 * sin(TAU * 2.5 * (t - 3.0)), 0.35);
+		}
+		for i in 64 { face[i] = 0.0; }
+		if f >= 120 && f < 150 {
+			face[44] = 0.8;
+			face[45] = 0.8;
+			face[54] = 1.0;
+		}
+		for i in 32 { objs[i] = 0.0; }
+		if f >= 110 && f < 140 {
+			objs[0] = 41.0;
+			objs[1] = 0.8;
+			objs[16] = 1.0;
+		}
+		let n = sense::sense_frame(t, pose, hands, face, objs, ev);
+		for k in n {
+			print(sense::sense_name(ev[2 * k] as int), " ", ev[2 * k + 1]);
+		}
+	}
+}

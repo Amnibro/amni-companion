@@ -1,0 +1,149 @@
+import cv.motion;
+import cv.rig;
+import math;
+fn setp(p real[:], k int, x real, y real, z real) {
+	p[3 * k] = x;
+	p[3 * k + 1] = y;
+	p[3 * k + 2] = z;
+}
+fn sym(p real[:], k int, x real, y real, z real) {
+	setp(p, k, x, y, z);
+	setp(p, k + 4, -x, y, z);
+}
+fn test_pos() real[66] {
+	var p real[66] = [0.0; 66];
+	setp(p, 0, 0.0, 1.0, 0.0);
+	setp(p, 1, 0.0, 1.1, 0.0);
+	setp(p, 2, 0.0, 1.2, 0.0);
+	setp(p, 3, 0.0, 1.3, 0.0);
+	setp(p, 4, 0.0, 1.45, 0.0);
+	setp(p, 5, 0.0, 1.55, 0.0);
+	sym(p, 6, 0.05, 1.4, 0.0);
+	sym(p, 7, 0.15, 1.4, 0.0);
+	sym(p, 8, 0.4, 1.4, 0.0);
+	sym(p, 9, 0.65, 1.4, 0.0);
+	sym(p, 14, 0.1, 0.95, 0.0);
+	sym(p, 15, 0.1, 0.5, 0.0);
+	sym(p, 16, 0.1, 0.08, 0.0);
+	sym(p, 17, 0.1, 0.0, 0.12);
+	p
+}
+fn pack_rest(pos real[:], out real[:]) {
+	for k in 22 {
+		let b = 12 * k;
+		for i in 12 { out[b + i] = 0.0; }
+		out[b + 3] = 1.0;
+		out[b + 4] = pos[3 * k];
+		out[b + 5] = pos[3 * k + 1];
+		out[b + 6] = pos[3 * k + 2];
+		out[b + 10] = 1.0;
+		out[b + 11] = 1.0;
+	}
+}
+fn f4(out byte[>..]&, v real) {
+	var x = v;
+	if abs(x) < 0.00005 { x = 0.0; }
+	format_flt(out, x, 4);
+}
+fn showq(label const byte[:], a real[:], k int, o int) {
+	var s byte[>..] = [];
+	if label.len > 0 {
+		s.append(label);
+		s.push(' ');
+	}
+	s.append(rig::slot_name(k));
+	for i in 4 {
+		s.push(' ');
+		f4(s, a[o + i]);
+	}
+	print(s);
+}
+fn main() {
+	let pos = test_pos();
+	var rest real[264] = [0.0; 264];
+	pack_rest(pos, rest);
+	var slot i32[22] = [0 as i32; 22];
+	for k in 22 { slot[k] = k as i32; }
+	var want real[110] = [0.0; 110];
+	var out real[110] = [0.0; 110];
+	motion::solve_local(slot, rest, want, out);
+	var ok = true;
+	for k in 22 {
+		for i in 4 {
+			let e = if i == 3 { 1.0 } else { 0.0 };
+			if abs(out[5 * k + i] - e) > 0.000000001 { ok = false; }
+		}
+	}
+	if ok { print("rest ok"); } else { print("rest bad"); }
+	var ax = pos[3 * 8] - pos[3 * 7];
+	var ay = pos[3 * 8 + 1] - pos[3 * 7 + 1];
+	var az = pos[3 * 8 + 2] - pos[3 * 7 + 2];
+	let al = sqrt(ax * ax + ay * ay + az * az);
+	ax /= al;
+	ay /= al;
+	az /= al;
+	let bx = 0.0;
+	let by = -1.0;
+	let bz = 0.0;
+	let cx = ay * bz - az * by;
+	let cy = az * bx - ax * bz;
+	let cz = ax * by - ay * bx;
+	let cw = 1.0 + ax * bx + ay * by + az * bz;
+	let ql = sqrt(cx * cx + cy * cy + cz * cz + cw * cw);
+	want[35] = cx / ql;
+	want[36] = cy / ql;
+	want[37] = cz / ql;
+	want[38] = cw / ql;
+	want[39] = 1.0;
+	motion::solve_local(slot, rest, want, out);
+	showq("", out, 7, 35);
+	showq("", out, 8, 40);
+	var lm real[132] = [0.0; 132];
+	for i in 33 { lm[4 * i + 3] = 0.0; }
+	for &i in [23, 24, 11, 12, 13, 15, 14, 16] { lm[4 * i + 3] = 1.0; }
+	lm[4 * 23] = 0.1;
+	lm[4 * 24] = -0.1;
+	lm[4 * 11] = 0.18;
+	lm[4 * 11 + 1] = -0.45;
+	lm[4 * 12] = -0.18;
+	lm[4 * 12 + 1] = -0.45;
+	lm[4 * 13] = 0.18;
+	lm[4 * 13 + 1] = -0.15;
+	lm[4 * 15] = 0.18;
+	lm[4 * 15 + 1] = 0.1;
+	lm[4 * 14] = -0.45;
+	lm[4 * 14 + 1] = -0.45;
+	lm[4 * 16] = -0.7;
+	lm[4 * 16 + 1] = -0.45;
+	var po real[110] = [0.0; 110];
+	motion::pose_reset();
+	let cnt = motion::pose_solve(lm, false, slot, rest, po);
+	print("count ", cnt);
+	showq("pose", po, 7, 35);
+	showq("pose", po, 11, 55);
+	var pm real[110] = [0.0; 110];
+	motion::pose_reset();
+	let cnt2 = motion::pose_solve(lm, true, slot, rest, pm);
+	showq("mirror", pm, 11, 55);
+	showq("mirror", pm, 7, 35);
+	var tpos real[66] = copy(pos);
+	let c = 0.70710678;
+	setp(tpos, 8, 0.15 + 0.25 * c, 1.4 - 0.25 * c, 0.0);
+	setp(tpos, 9, 0.15 + 0.5 * c, 1.4 - 0.5 * c, 0.0);
+	var trest real[264] = [0.0; 264];
+	pack_rest(tpos, trest);
+	var frames real[91] = [0.0; 91];
+	for k in 22 { frames[4 * k + 3] = 1.0; }
+	frames[89] = 1.0;
+	var ro real[91] = [0.0; 91];
+	motion::retarget_clip(slot, rest, slot, trest, 1, frames, ro);
+	showq("retarget", ro, 7, 4 * 7);
+	showq("retarget", ro, 8, 4 * 8);
+	var s byte[>..] = [];
+	s.append("hips");
+	for i in 3 {
+		s.push(' ');
+		f4(s, ro[88 + i]);
+	}
+	print(s);
+}

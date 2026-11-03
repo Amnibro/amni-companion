@@ -1,0 +1,399 @@
+namespace rig;
+let NSLOT = 22;
+fn slot_name(k int) const byte[:] {
+	match k {
+		0 => "hips",
+		1 => "spine",
+		2 => "chest",
+		3 => "upper_chest",
+		4 => "neck",
+		5 => "head",
+		6 => "l_shoulder",
+		7 => "l_upper_arm",
+		8 => "l_lower_arm",
+		9 => "l_hand",
+		10 => "r_shoulder",
+		11 => "r_upper_arm",
+		12 => "r_lower_arm",
+		13 => "r_hand",
+		14 => "l_upper_leg",
+		15 => "l_lower_leg",
+		16 => "l_foot",
+		17 => "l_toes",
+		18 => "r_upper_leg",
+		19 => "r_lower_leg",
+		20 => "r_foot",
+		21 => "r_toes",
+		_ => "?",
+	}
+}
+fn ::main() { rig::main(); }
+let K_NONE = 0;
+let K_HIPS = 1;
+let K_SPINE = 2;
+let K_NECK = 3;
+let K_HEAD = 4;
+let K_SHOULDER = 5;
+let K_UPPER_ARM = 6;
+let K_LOWER_ARM = 7;
+let K_HAND = 8;
+let K_UPPER_LEG = 9;
+let K_LOWER_LEG = 10;
+let K_FOOT = 11;
+let K_TOE = 12;
+let SIDE_CENTER = 0;
+let SIDE_LEFT = 1;
+let SIDE_RIGHT = 2;
+fn lower97(name const byte[:], out byte[..97]&) {
+	out.clear();
+	var n = name.len;
+	if n > 97 { n = 97; }
+	for i in n {
+		var ch = name[i];
+		if ch >= 'A' && ch <= 'Z' { ch += 32; }
+		out.push(ch);
+	}
+}
+fn prefix_len(o const byte[:]) int {
+	if starts_with(o, "def-") || starts_with(o, "def_") { return 4; }
+	if starts_with(o, "j_bip_") { return 6; }
+	if starts_with(o, "cc_base_") { return 8; }
+	if starts_with(o, "bip01_") || starts_with(o, "bip01 ") { return 6; }
+	if starts_with(o, "bip001_") || starts_with(o, "bip001 ") { return 7; }
+	if starts_with(o, "b_") || starts_with(o, "c_") { return 2; }
+	return 0;
+}
+fn clean(name const byte[:], out byte[..97]&) {
+	lower97(name, out);
+	var s = 0;
+	for i in out.len {
+		if out[i] == ':' { s = i + 1; }
+	}
+	if starts_with(out[s..], "mixamorig") {
+		s += 9;
+		if s < out.len && out[s] == '_' { s += 1; }
+	}
+	var pl = prefix_len(out[s..]);
+	while pl > 0 {
+		s += pl;
+		pl = prefix_len(out[s..]);
+	}
+	var tmp byte[..97] = [];
+	for i in s..out.len { tmp.push(out[i]); }
+	out.clear();
+	out.append(tmp);
+}
+fn is_body_word(s const byte[:]) bool {
+	starts_with(s, "hip") || starts_with(s, "pelvis") || starts_with(s, "spine") || starts_with(s, "chest") || starts_with(s, "neck") || starts_with(s, "head") || starts_with(s, "shoulder") || starts_with(s, "clavicle") || starts_with(s, "collar") || starts_with(s, "shldr") || starts_with(s, "upperarm") || starts_with(s, "uparm") || starts_with(s, "arm") || starts_with(s, "forearm") || starts_with(s, "lowerarm") || starts_with(s, "loarm") || starts_with(s, "hand") || starts_with(s, "fist") || starts_with(s, "upleg") || starts_with(s, "upperleg") || starts_with(s, "thigh") || starts_with(s, "leg") || starts_with(s, "lowerleg") || starts_with(s, "loleg") || starts_with(s, "shin") || starts_with(s, "calf") || starts_with(s, "knee") || starts_with(s, "foot") || starts_with(s, "ankle") || starts_with(s, "toe") || starts_with(s, "ball") || starts_with(s, "waist") || starts_with(s, "torso") || starts_with(s, "abdomen")
+}
+fn sub_at(c const byte[:], sub const byte[:]) int {
+	for i in c.len {
+		if starts_with(c[i..], sub) { return i; }
+	}
+	return -1;
+}
+fn has(c const byte[:], sub const byte[:]) bool { sub_at(c, sub) >= 0 }
+fn is_sided(c const byte[:], word const byte[:], ch byte) bool {
+	if starts_with(c, word) { return true; }
+	if c.len >= 2 && c[0] == ch && (c[1] == '_' || c[1] == '.' || c[1] == ' ') { return true; }
+	if c.len >= 2 && c[c.len - 1] == ch {
+		let p = c[c.len - 2];
+		if p == '_' || p == '.' || p == ' ' || p == '-' { return true; }
+	}
+	return sub_at(c, word) >= 0;
+}
+fn side_of(c const byte[:]) int {
+	if is_sided(c, "left", 'l') { return 1; }
+	if is_sided(c, "right", 'r') { return 2; }
+	if !is_body_word(c) && c.len > 1 {
+		if c[0] == 'l' && is_body_word(c[1..]) { return 1; }
+		if c[0] == 'r' && is_body_word(c[1..]) { return 2; }
+	}
+	return 0;
+}
+fn compact(c const byte[:], out byte[..97]&) {
+	out.clear();
+	var a = 0;
+	var b = 0;
+	var p = sub_at(c, "left");
+	if p >= 0 {
+		a = p;
+		b = p + 4;
+	} else {
+		p = sub_at(c, "right");
+		if p >= 0 {
+			a = p;
+			b = p + 5;
+		} else {
+			var found = false;
+			for t in 2 {
+				if found { continue; }
+				let ch byte = if t == 0 { 'l' } else { 'r' };
+				if c.len >= 2 && c[0] == ch && (c[1] == '_' || c[1] == '.' || c[1] == ' ') {
+					a = 0;
+					b = 2;
+					found = true;
+				} else if c.len >= 2 && c[c.len - 1] == ch {
+					let q = c[c.len - 2];
+					if q == '_' || q == '.' || q == ' ' || q == '-' {
+						a = c.len - 2;
+						b = c.len;
+						found = true;
+					}
+				}
+			}
+			if !found && !is_body_word(c) && c.len > 1 {
+				if (c[0] == 'l' || c[0] == 'r') && is_body_word(c[1..]) {
+					a = 0;
+					b = 1;
+				}
+			}
+		}
+	}
+	for i in c.len {
+		if i >= a && i < b { continue; }
+		let ch = c[i];
+		if ch == '.' || ch == '_' || ch == '-' || ch == ' ' { continue; }
+		if ch >= '0' && ch <= '9' { continue; }
+		if out.len >= 97 { break; }
+		out.push(ch);
+	}
+}
+fn kind_of(name const byte[:]) int {
+	var lo byte[..97] = [];
+	lower97(name, lo);
+	if starts_with(lo, "org-") || starts_with(lo, "mch-") || starts_with(lo, "ik_") || starts_with(lo, "ik-") || starts_with(lo, "ctrl") || starts_with(lo, "vis_") || starts_with(lo, "j_sec") || starts_with(lo, "j_adj") { return 0; }
+	var cl byte[..97] = [];
+	clean(name, cl);
+	var k byte[..97] = [];
+	compact(cl, k);
+	if has(k, "twist") || has(k, "roll") || has(k, "pole") || has(k, "ctrl") || has(k, "helper") || has(k, "nub") || has(k, "socket") || has(k, "weapon") || has(k, "thumb") || has(k, "index") || has(k, "middle") || has(k, "ring") || has(k, "pinky") || has(k, "little") || has(k, "finger") || has(k, "metacarpal") || has(k, "tongue") || has(k, "teeth") || has(k, "hair") || has(k, "skirt") || has(k, "breast") || has(k, "bust") || has(k, "cape") { return 0; }
+	if ends_with(k, "end") || ends_with(k, "top") || ends_with(k, "tip") { return 0; }
+	if k == "eye" || k == "jaw" || k == "ear" || k == "tail" || k == "ik" || k == "root" || k == "armature" || k == "" { return 0; }
+	if has(k, "forearm") || has(k, "lowerarm") || has(k, "loarm") || has(k, "elbow") { return 7; }
+	if has(k, "upleg") || has(k, "upperleg") || has(k, "thigh") || has(k, "femur") { return 9; }
+	if has(k, "toe") || has(k, "ball") { return 12; }
+	if has(k, "hip") || has(k, "pelvis") { return 1; }
+	if has(k, "shoulder") || has(k, "clavicle") || has(k, "collar") { return 5; }
+	if has(k, "upperarm") || has(k, "uparm") || has(k, "humerus") || has(k, "shldr") || k == "arm" { return 6; }
+	if has(k, "hand") || has(k, "wrist") || has(k, "fist") { return 8; }
+	if has(k, "lowerleg") || has(k, "loleg") || has(k, "shin") || has(k, "calf") || has(k, "knee") || has(k, "crus") || k == "leg" { return 10; }
+	if has(k, "foot") || has(k, "ankle") { return 11; }
+	if has(k, "neck") { return 3; }
+	if has(k, "head") { return 4; }
+	if has(k, "spine") || has(k, "chest") || has(k, "torso") || has(k, "abdomen") || has(k, "waist") || has(k, "belly") { return 2; }
+	return 0;
+}
+fn bone_side(name const byte[:]) int {
+	var cl byte[..97] = [];
+	clean(name, cl);
+	return side_of(cl);
+}
+fn anc_of(parent i32[:], nb int, i int, a int) bool {
+	var p int = parent[i];
+	var g = 0;
+	while p >= 0 && p < nb && g <= nb {
+		if p == a { return true; }
+		p = parent[p];
+		g += 1;
+	}
+	return false;
+}
+fn pick_bone(kind int[:], side int[:], depth int[:], clen int[:], nb int, k int, sd int) int {
+	var best = -1;
+	for i in nb {
+		if kind[i] == k && side[i] == sd {
+			if best < 0 || depth[i] < depth[best] || (depth[i] == depth[best] && clen[i] < clen[best]) { best = i; }
+		}
+	}
+	return best;
+}
+fn pick_shallow(kind int[:], depth int[:], nb int, k int) int {
+	var best = -1;
+	for i in nb {
+		if kind[i] == k {
+			if best < 0 || depth[i] < depth[best] { best = i; }
+		}
+	}
+	return best;
+}
+fn rig_map(names const byte[:], n int, parent i32[:], pos real[:], slot i32[:]) int {
+	var nb = n;
+	if nb > 1024 { nb = 1024; }
+	if nb < 0 { nb = 0; }
+	var kind int[1024] = [0; 1024];
+	var side int[1024] = [0; 1024];
+	var depth int[1024] = [0; 1024];
+	var clen int[1024] = [0; 1024];
+	var chain int[1024] = [0; 1024];
+	for k in 22 { slot[k] = -1; }
+	var st = 0;
+	var bi = 0;
+	for j in 0..names.len + 1 {
+		if j == names.len || names[j] == '\n' {
+			if bi < nb {
+				let line = names[st..j];
+				kind[bi] = kind_of(line);
+				var cl byte[..97] = [];
+				clean(line, cl);
+				var cp byte[..97] = [];
+				compact(cl, cp);
+				clen[bi] = cp.len;
+				var sd = side_of(cl);
+				if kind[bi] >= 5 && kind[bi] <= 12 && sd == 0 {
+					let x = pos[3 * bi];
+					if x > 0.0001 { sd = 1; } else if x < -0.0001 { sd = 2; }
+				}
+				side[bi] = sd;
+			}
+			bi += 1;
+			st = j + 1;
+		}
+	}
+	for i in nb {
+		var a int = parent[i];
+		var d = 0;
+		while a >= 0 && a < nb && d <= nb {
+			d += 1;
+			a = parent[a];
+		}
+		depth[i] = d;
+	}
+	for sd in 1..3 {
+		for k in 5..13 {
+			var idx = 0;
+			if sd == 1 {
+				idx = if k <= 8 { k + 1 } else { k + 5 };
+			} else {
+				idx = if k <= 8 { k + 5 } else { k + 9 };
+			}
+			let b = pick_bone(kind, side, depth, clen, nb, k, sd);
+			if b >= 0 { slot[idx] = b as i32; }
+		}
+	}
+	var hips = pick_shallow(kind, depth, nb, 1);
+	if hips < 0 {
+		if slot[14] >= 0 && parent[slot[14]] >= 0 {
+			hips = parent[slot[14]];
+		} else if slot[18] >= 0 && parent[slot[18]] >= 0 {
+			hips = parent[slot[18]];
+		}
+	}
+	if hips >= 0 { slot[0] = hips as i32; }
+	let neck = pick_shallow(kind, depth, nb, 3);
+	if neck >= 0 { slot[4] = neck as i32; }
+	var head = -1;
+	var head_anc = -1;
+	for i in nb {
+		if kind[i] == 4 {
+			if head < 0 || depth[i] < depth[head] { head = i; }
+			if neck >= 0 && anc_of(parent, nb, i, neck) {
+				if head_anc < 0 || depth[i] < depth[head_anc] { head_anc = i; }
+			}
+		}
+	}
+	if head_anc >= 0 { head = head_anc; }
+	if head >= 0 { slot[5] = head as i32; }
+	let start = if neck >= 0 { neck } else { head };
+	var m = 0;
+	if start >= 0 && hips >= 0 {
+		var reached = false;
+		var p int = parent[start];
+		var g = 0;
+		while p >= 0 && p < nb && g <= nb && m < 1024 {
+			if p == hips {
+				reached = true;
+				break;
+			}
+			chain[m] = p;
+			m += 1;
+			p = parent[p];
+			g += 1;
+		}
+		if !reached { m = 0; }
+	}
+	for i in m / 2 {
+		let t = chain[i];
+		chain[i] = chain[m - 1 - i];
+		chain[m - 1 - i] = t;
+	}
+	if m >= 1 { slot[1] = chain[0] as i32; }
+	if m == 2 { slot[2] = chain[1] as i32; }
+	if m >= 3 {
+		slot[2] = chain[m / 2] as i32;
+		slot[3] = chain[m - 1] as i32;
+	}
+	var filled = 0;
+	for k in 22 {
+		if slot[k] >= 0 { filled += 1; }
+	}
+	return filled;
+}
+fn rig_humanoid(slot i32[:]) bool {
+	slot[0] >= 0 && slot[5] >= 0 && slot[7] >= 0 && slot[8] >= 0 && slot[11] >= 0 && slot[12] >= 0
+}
+fn slot_parent(k int) int {
+	match k {
+		0 => -1,
+		1 => 0,
+		2 => 1,
+		3 => 2,
+		4 => 3,
+		5 => 4,
+		6 => 3,
+		7 => 6,
+		8 => 7,
+		9 => 8,
+		10 => 3,
+		11 => 10,
+		12 => 11,
+		13 => 12,
+		14 => 0,
+		15 => 14,
+		16 => 15,
+		17 => 16,
+		18 => 0,
+		19 => 18,
+		20 => 19,
+		21 => 20,
+		_ => -1,
+	}
+}
+fn slot_child(k int) int {
+	match k {
+		0 => 1,
+		1 => 2,
+		2 => 3,
+		3 => 4,
+		4 => 5,
+		6 => 7,
+		7 => 8,
+		8 => 9,
+		10 => 11,
+		11 => 12,
+		12 => 13,
+		14 => 15,
+		15 => 16,
+		16 => 17,
+		18 => 19,
+		19 => 20,
+		20 => 21,
+		_ => -1,
+	}
+}
+fn eff_parent(slot i32[:], k int) int {
+	var p = slot_parent(k);
+	while p >= 0 {
+		if slot[p] >= 0 { return p; }
+		p = slot_parent(p);
+	}
+	return -1;
+}
+fn eff_child(slot i32[:], k int) int {
+	var c = slot_child(k);
+	while c >= 0 {
+		if slot[c] >= 0 { return c; }
+		c = slot_child(c);
+	}
+	return -1;
+}

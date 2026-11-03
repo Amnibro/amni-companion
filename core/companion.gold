@@ -1,0 +1,24 @@
+use companion
+into companion.amni
+
+The WebAssembly entry points of the companion core, called from JavaScript. JavaScript reads and writes four fixed module arrays directly: `F real[300000]`, `I i32[8192]`, `T byte[70000]` (text in) and `O byte[70000]` (text out). Every export takes only i32 or real arguments (offsets into those arrays) and returns i32 or nothing; out-of-range offsets are the caller's bug. Import the modules qm, rig, motion, sense and talk from `cv`, and keep a global `fn main() {}`.
+
+```amni
+extern fn cv_view(id i32, xs real[:]);
+extern fn cv_view_i(id i32, xs i32[:]);
+extern fn cv_bytes(id i32, xs byte[:]);
+```
+
+`export fn cv_init()` hands the arrays to JavaScript: cv_view(0, F[..]), cv_view_i(1, I[..]), cv_bytes(2, T[..]), cv_bytes(3, O[..]).
+
+`export fn cv_rig(n i32, tlen i32, par_at i32, pos_at i32, slot_at i32) i32` returns `rig::rig_map(T[0..tlen], n, I[par_at..par_at+n], F[pos_at..pos_at+3n], I[slot_at..slot_at+22])`. `export fn cv_humanoid(slot_at i32) i32` is 1 when `rig::rig_humanoid` holds for I[slot_at..slot_at+22], else 0. `export fn cv_slot_name(k i32) i32` copies `rig::slot_name(k)` into O and returns its length.
+
+`export fn cv_solve(slot_at i32, rest_at i32, want_at i32, out_at i32)` runs `motion::solve_local` on I[slot_at..+22], F[rest_at..+264], F[want_at..+110], F[out_at..+110].
+
+`export fn cv_retarget(sslot_at i32, srest_at i32, tslot_at i32, trest_at i32, nf i32, frames_at i32, out_at i32)` runs `motion::retarget_clip` with slot maps of 22 from I, rest packs of 264 from F, and F[frames_at..+91·nf] and F[out_at..+91·nf].
+
+`export fn cv_pose(lm_at i32, mirror i32, t real, filter i32, slot_at i32, rest_at i32, out_at i32) i32`: with lm = F[lm_at..+132], when filter is not 0 first call `motion::pose_filter(lm, t)`, then return `motion::pose_solve(lm, mirror != 0, slot, rest, F[out_at..+110])`. `export fn cv_pose_reset()` calls `motion::pose_reset`.
+
+`export fn cv_sense(t real, pose_at i32, hands_at i32, face_at i32, objs_at i32, ev_at i32) i32` returns `sense::sense_frame(t, F[pose_at..+134], F[hands_at..+4], F[face_at..+55], F[objs_at..+17], I[ev_at..+34])`. `export fn cv_sense_name(code i32) i32` copies `sense::sense_name(code)` into O and returns its length. `export fn cv_sense_reset()` calls `sense::sense_reset`.
+
+`export fn cv_tags(tlen i32) i32` runs `talk::tags_split(T[0..tlen], O[0..35000], O[35000..70000], I[8190..8192])` and returns the tag count (JavaScript reads the clean length at I[8190] and the tags length at I[8191]). `export fn cv_reply(tlen i32) i32` returns `talk::brain_reply(T[0..tlen], O[..])`.

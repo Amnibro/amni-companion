@@ -1,0 +1,19 @@
+use companion
+
+The program tests `talk`. First it runs `talk::tags_split` on `Hi there! [[emote:wave]] *dances happily* Let's go [[walk:user]]` with 256-byte clean and tags buffers and prints `clean=` followed by the clean text, then `tags=` followed by the tag lines joined with ';' (no trailing ';'), then `count=` and the count. Then it calls `talk::brain_reply` with a 1024-byte out buffer on inputs made of header lines and an utterance; the base header is persona=holo, name empty, cname=Holo, hour=14, minute=5, day=Monday, seen empty, person=0, seed=0, and each case changes only what it lists. It prints each reply on its own line, or `(none)` when the length is 0. Cases in order: utterance "hello"; utterance "what time is it?"; utterance "my name is anthony"; persona=dex name=Anthony utterance "what's my name"; persona=dex utterance "@object dog"; persona=custom utterance "dance"; seed=1 utterance "hi what time is it"; utterance "@open_palm"; utterance "what is the meaning of life?"; seen=cup,book utterance "what do you see"; persona=dex hour=0 minute=7 utterance "what time is it".
+
+expect:
+clean=Hi there! Let's go
+tags=emote:wave;anim:dance;walk:user
+count=3
+Heyyy friend! Good afternoon! I was hoping you'd show up. [[emote:wave]]
+It's 2:05 PM! Time flies when you're with me.
+Anthony! Ooh, I like it. Saved forever. Well, in this browser anyway. [[remember:name=Anthony]] [[face:smile]]
+You told me you're Anthony. My memory's better than my handwriting.
+A dog. Best coworker in the room.
+Let's dance! [[anim:dance]]
+It's 2:05 PM! Time flies when you're with me.
+(none)
+Ooh, great question! I need my big brain for that one. Settings, then AI brain!
+Is that a cup? Ooh, show me closer!
+12:07 AM, give or take your clock's drift.

@@ -1,0 +1,125 @@
+use companion
+
+The program checks the mapper on five rigs and passes each rig to `rig::rig_map` as one byte string with the names joined by '\n' (as rig_map expects), and prints each slot index and the bone name it got, then whether it is humanoid. Rig A (Mixamo, parents in order): "mixamorig:Hips" -1, "mixamorig:Spine" 0, "mixamorig:Spine1" 1, "mixamorig:Spine2" 2, "mixamorig:Neck" 3, "mixamorig:Head" 4, "mixamorig:HeadTop_End" 5, "mixamorig:LeftShoulder" 3, "mixamorig:LeftArm" 7, "mixamorig:LeftForeArm" 8, "mixamorig:LeftHand" 9, "mixamorig:LeftHandIndex1" 10, "mixamorig:RightShoulder" 3, "mixamorig:RightArm" 12, "mixamorig:RightForeArm" 13, "mixamorig:RightHand" 14, "mixamorig:LeftUpLeg" 0, "mixamorig:LeftLeg" 16, "mixamorig:LeftFoot" 17, "mixamorig:LeftToeBase" 18, "mixamorig:RightUpLeg" 0, "mixamorig:RightLeg" 20, "mixamorig:RightFoot" 21, "mixamorig:RightToeBase" 22, all positions 0. Rig B (Rigify): "root" -1, "DEF-hips" 0, "DEF-spine.001" 1, "DEF-spine.002" 2, "DEF-spine.003" 3, "DEF-neck" 4, "DEF-head" 5, "DEF-shoulder.L" 4, "DEF-upper_arm.L" 7, "DEF-forearm.L" 8, "DEF-hand.L" 9, "DEF-shoulder.R" 4, "DEF-upper_arm.R" 11, "DEF-forearm.R" 12, "DEF-hand.R" 13, "DEF-thigh.L" 1, "DEF-shin.L" 15, "DEF-foot.L" 16, "DEF-toe.L" 17, "DEF-thigh.R" 1, "DEF-shin.R" 19, "DEF-foot.R" 20, "DEF-toe.R" 21. Rig C (VRoid): "J_Bip_C_Hips" -1, "J_Bip_C_Spine" 0, "J_Bip_C_Chest" 1, "J_Bip_C_UpperChest" 2, "J_Bip_C_Neck" 3, "J_Bip_C_Head" 4, "J_Bip_L_Shoulder" 3, "J_Bip_L_UpperArm" 6, "J_Bip_L_LowerArm" 7, "J_Bip_L_Hand" 8, "J_Bip_R_Shoulder" 3, "J_Bip_R_UpperArm" 10, "J_Bip_R_LowerArm" 11, "J_Bip_R_Hand" 12, "J_Bip_L_UpperLeg" 0, "J_Bip_L_LowerLeg" 14, "J_Bip_L_Foot" 15, "J_Bip_L_ToeBase" 16, "J_Bip_R_UpperLeg" 0, "J_Bip_R_LowerLeg" 18, "J_Bip_R_Foot" 19, "J_Bip_R_ToeBase" 20. Rig D (Unreal): "root" -1, "pelvis" 0, "spine_01" 1, "spine_02" 2, "spine_03" 3, "neck_01" 4, "head" 5, "clavicle_l" 4, "upperarm_l" 7, "upperarm_twist_01_l" 8, "lowerarm_l" 8, "hand_l" 10, "clavicle_r" 4, "upperarm_r" 13, "lowerarm_r" 14, "hand_r" 15, "thigh_l" 1, "calf_l" 17, "foot_l" 18, "ball_l" 19, "thigh_r" 1, "calf_r" 21, "foot_r" 22, "ball_r" 23, "ik_hand_l" 0. Rig E (VRoid with cloth bones): "J_Bip_C_Hips" -1, "J_Bip_C_Spine" 0, "J_Bip_C_Chest" 1, "J_Bip_C_UpperChest" 2, "J_Bip_C_Neck" 3, "J_Bip_C_Head" 4, "J_Bip_L_Shoulder" 3, "J_Sec_L_TopsUpperArmInside" 6, "J_Bip_L_UpperArm" 6, "J_Bip_L_LowerArm" 8, "J_Bip_L_Hand" 9, "J_Bip_R_Shoulder" 3, "J_Sec_R_TopsUpperArmInside" 11, "J_Bip_R_UpperArm" 11, "J_Bip_R_LowerArm" 13, "J_Bip_R_Hand" 14, "J_Sec_L_TopsUpperLegBack" 0, "J_Bip_L_UpperLeg" 0, "J_Bip_L_LowerLeg" 17, "J_Bip_L_Foot" 18, "J_Bip_L_ToeBase" 19, "J_Sec_R_TopsUpperLegBack" 0, "J_Bip_R_UpperLeg" 0, "J_Bip_R_LowerLeg" 22, "J_Bip_R_Foot" 23, "J_Bip_R_ToeBase" 24, with positions x = 0.1 for every name containing "_L_", -0.1 for "_R_", 0 otherwise. For each rig print `rig A` (B, C, D, E) and then one line per slot `slot_name=bone` (`-` when empty), then `humanoid true` or `humanoid false`.
+
+expect:
+rig A
+hips=mixamorig:Hips
+spine=mixamorig:Spine
+chest=mixamorig:Spine1
+upper_chest=mixamorig:Spine2
+neck=mixamorig:Neck
+head=mixamorig:Head
+l_shoulder=mixamorig:LeftShoulder
+l_upper_arm=mixamorig:LeftArm
+l_lower_arm=mixamorig:LeftForeArm
+l_hand=mixamorig:LeftHand
+r_shoulder=mixamorig:RightShoulder
+r_upper_arm=mixamorig:RightArm
+r_lower_arm=mixamorig:RightForeArm
+r_hand=mixamorig:RightHand
+l_upper_leg=mixamorig:LeftUpLeg
+l_lower_leg=mixamorig:LeftLeg
+l_foot=mixamorig:LeftFoot
+l_toes=mixamorig:LeftToeBase
+r_upper_leg=mixamorig:RightUpLeg
+r_lower_leg=mixamorig:RightLeg
+r_foot=mixamorig:RightFoot
+r_toes=mixamorig:RightToeBase
+humanoid true
+rig B
+hips=DEF-hips
+spine=DEF-spine.001
+chest=DEF-spine.002
+upper_chest=DEF-spine.003
+neck=DEF-neck
+head=DEF-head
+l_shoulder=DEF-shoulder.L
+l_upper_arm=DEF-upper_arm.L
+l_lower_arm=DEF-forearm.L
+l_hand=DEF-hand.L
+r_shoulder=DEF-shoulder.R
+r_upper_arm=DEF-upper_arm.R
+r_lower_arm=DEF-forearm.R
+r_hand=DEF-hand.R
+l_upper_leg=DEF-thigh.L
+l_lower_leg=DEF-shin.L
+l_foot=DEF-foot.L
+l_toes=DEF-toe.L
+r_upper_leg=DEF-thigh.R
+r_lower_leg=DEF-shin.R
+r_foot=DEF-foot.R
+r_toes=DEF-toe.R
+humanoid true
+rig C
+hips=J_Bip_C_Hips
+spine=J_Bip_C_Spine
+chest=J_Bip_C_Chest
+upper_chest=J_Bip_C_UpperChest
+neck=J_Bip_C_Neck
+head=J_Bip_C_Head
+l_shoulder=J_Bip_L_Shoulder
+l_upper_arm=J_Bip_L_UpperArm
+l_lower_arm=J_Bip_L_LowerArm
+l_hand=J_Bip_L_Hand
+r_shoulder=J_Bip_R_Shoulder
+r_upper_arm=J_Bip_R_UpperArm
+r_lower_arm=J_Bip_R_LowerArm
+r_hand=J_Bip_R_Hand
+l_upper_leg=J_Bip_L_UpperLeg
+l_lower_leg=J_Bip_L_LowerLeg
+l_foot=J_Bip_L_Foot
+l_toes=J_Bip_L_ToeBase
+r_upper_leg=J_Bip_R_UpperLeg
+r_lower_leg=J_Bip_R_LowerLeg
+r_foot=J_Bip_R_Foot
+r_toes=J_Bip_R_ToeBase
+humanoid true
+rig D
+hips=pelvis
+spine=spine_01
+chest=spine_02
+upper_chest=spine_03
+neck=neck_01
+head=head
+l_shoulder=clavicle_l
+l_upper_arm=upperarm_l
+l_lower_arm=lowerarm_l
+l_hand=hand_l
+r_shoulder=clavicle_r
+r_upper_arm=upperarm_r
+r_lower_arm=lowerarm_r
+r_hand=hand_r
+l_upper_leg=thigh_l
+l_lower_leg=calf_l
+l_foot=foot_l
+l_toes=ball_l
+r_upper_leg=thigh_r
+r_lower_leg=calf_r
+r_foot=foot_r
+r_toes=ball_r
+humanoid true
+rig E
+hips=J_Bip_C_Hips
+spine=J_Bip_C_Spine
+chest=J_Bip_C_Chest
+upper_chest=J_Bip_C_UpperChest
+neck=J_Bip_C_Neck
+head=J_Bip_C_Head
+l_shoulder=J_Bip_L_Shoulder
+l_upper_arm=J_Bip_L_UpperArm
+l_lower_arm=J_Bip_L_LowerArm
+l_hand=J_Bip_L_Hand
+r_shoulder=J_Bip_R_Shoulder
+r_upper_arm=J_Bip_R_UpperArm
+r_lower_arm=J_Bip_R_LowerArm
+r_hand=J_Bip_R_Hand
+l_upper_leg=J_Bip_L_UpperLeg
+l_lower_leg=J_Bip_L_LowerLeg
+l_foot=J_Bip_L_Foot
+l_toes=J_Bip_L_ToeBase
+r_upper_leg=J_Bip_R_UpperLeg
+r_lower_leg=J_Bip_R_LowerLeg
+r_foot=J_Bip_R_Foot
+r_toes=J_Bip_R_ToeBase
+humanoid true

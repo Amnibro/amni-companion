@@ -1,0 +1,50 @@
+=== -1765fd6945db052
+import cv.rig;
+
+fn show(label const byte[:], joined const byte[:], parent i32[:]) {
+	let n = parent.len;
+	var starts int[>..] = [];
+	var ends int[>..] = [];
+	var s = 0;
+	for i in 0..joined.len + 1 {
+		if i == joined.len || joined[i] == '\n' {
+			starts.push(s);
+			ends.push(i);
+			s = i + 1;
+		}
+	}
+	var pos real[>..] = [];
+	for i in n {
+		let nm = joined[starts[i]..ends[i]];
+		var x = 0.0;
+		if find(nm, "_L_") >= 0 { x = 0.1; } else if find(nm, "_R_") >= 0 { x = -0.1; }
+		pos.push(x);
+		pos.push(0.0);
+		pos.push(0.0);
+	}
+	var slot i32[22] = [-1; 22];
+	rig::rig_map(joined, n, parent, pos, slot);
+	print(label);
+	for k in 22 {
+		if slot[k] >= 0 {
+			let b = slot[k] as int;
+			print(rig::slot_name(k), "=", joined[starts[b]..ends[b]]);
+		} else {
+			print(rig::slot_name(k), "=-");
+		}
+	}
+	print("humanoid ", rig::rig_humanoid(slot));
+}
+
+fn main() {
+	let pa i32[24] = [-1, 0, 1, 2, 3, 4, 5, 3, 7, 8, 9, 10, 3, 12, 13, 14, 0, 16, 17, 18, 0, 20, 21, 22];
+	show("rig A", "mixamorig:Hips\nmixamorig:Spine\nmixamorig:Spine1\nmixamorig:Spine2\nmixamorig:Neck\nmixamorig:Head\nmixamorig:HeadTop_End\nmixamorig:LeftShoulder\nmixamorig:LeftArm\nmixamorig:LeftForeArm\nmixamorig:LeftHand\nmixamorig:LeftHandIndex1\nmixamorig:RightShoulder\nmixamorig:RightArm\nmixamorig:RightForeArm\nmixamorig:RightHand\nmixamorig:LeftUpLeg\nmixamorig:LeftLeg\nmixamorig:LeftFoot\nmixamorig:LeftToeBase\nmixamorig:RightUpLeg\nmixamorig:RightLeg\nmixamorig:RightFoot\nmixamorig:RightToeBase", pa);
+	let pb i32[23] = [-1, 0, 1, 2, 3, 4, 5, 4, 7, 8, 9, 4, 11, 12, 13, 1, 15, 16, 17, 1, 19, 20, 21];
+	show("rig B", "root\nDEF-hips\nDEF-spine.001\nDEF-spine.002\nDEF-spine.003\nDEF-neck\nDEF-head\nDEF-shoulder.L\nDEF-upper_arm.L\nDEF-forearm.L\nDEF-hand.L\nDEF-shoulder.R\nDEF-upper_arm.R\nDEF-forearm.R\nDEF-hand.R\nDEF-thigh.L\nDEF-shin.L\nDEF-foot.L\nDEF-toe.L\nDEF-thigh.R\nDEF-shin.R\nDEF-foot.R\nDEF-toe.R", pb);
+	let pc i32[22] = [-1, 0, 1, 2, 3, 4, 3, 6, 7, 8, 3, 10, 11, 12, 0, 14, 15, 16, 0, 18, 19, 20];
+	show("rig C", "J_Bip_C_Hips\nJ_Bip_C_Spine\nJ_Bip_C_Chest\nJ_Bip_C_UpperChest\nJ_Bip_C_Neck\nJ_Bip_C_Head\nJ_Bip_L_Shoulder\nJ_Bip_L_UpperArm\nJ_Bip_L_LowerArm\nJ_Bip_L_Hand\nJ_Bip_R_Shoulder\nJ_Bip_R_UpperArm\nJ_Bip_R_LowerArm\nJ_Bip_R_Hand\nJ_Bip_L_UpperLeg\nJ_Bip_L_LowerLeg\nJ_Bip_L_Foot\nJ_Bip_L_ToeBase\nJ_Bip_R_UpperLeg\nJ_Bip_R_LowerLeg\nJ_Bip_R_Foot\nJ_Bip_R_ToeBase", pc);
+	let pd i32[25] = [-1, 0, 1, 2, 3, 4, 5, 4, 7, 8, 8, 10, 4, 13, 14, 15, 1, 17, 18, 19, 1, 21, 22, 23, 0];
+	show("rig D", "root\npelvis\nspine_01\nspine_02\nspine_03\nneck_01\nhead\nclavicle_l\nupperarm_l\nupperarm_twist_01_l\nlowerarm_l\nhand_l\nclavicle_r\nupperarm_r\nlowerarm_r\nhand_r\nthigh_l\ncalf_l\nfoot_l\nball_l\nthigh_r\ncalf_r\nfoot_r\nball_r\nik_hand_l", pd);
+	let pe i32[26] = [-1, 0, 1, 2, 3, 4, 3, 6, 6, 8, 9, 3, 11, 11, 13, 14, 0, 0, 17, 18, 19, 0, 0, 22, 23, 24];
+	show("rig E", "J_Bip_C_Hips\nJ_Bip_C_Spine\nJ_Bip_C_Chest\nJ_Bip_C_UpperChest\nJ_Bip_C_Neck\nJ_Bip_C_Head\nJ_Bip_L_Shoulder\nJ_Sec_L_TopsUpperArmInside\nJ_Bip_L_UpperArm\nJ_Bip_L_LowerArm\nJ_Bip_L_Hand\nJ_Bip_R_Shoulder\nJ_Sec_R_TopsUpperArmInside\nJ_Bip_R_UpperArm\nJ_Bip_R_LowerArm\nJ_Bip_R_Hand\nJ_Sec_L_TopsUpperLegBack\nJ_Bip_L_UpperLeg\nJ_Bip_L_LowerLeg\nJ_Bip_L_Foot\nJ_Bip_L_ToeBase\nJ_Sec_R_TopsUpperLegBack\nJ_Bip_R_UpperLeg\nJ_Bip_R_LowerLeg\nJ_Bip_R_Foot\nJ_Bip_R_ToeBase", pe);
+}

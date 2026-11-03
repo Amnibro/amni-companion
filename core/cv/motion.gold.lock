@@ -1,0 +1,260 @@
+=== 70c2162d9ef2ae51
+import cv.qm;
+import cv.rig;
+=== -180beaa88bde7847
+let ID_Q real[4] = [0.0, 0.0, 0.0, 1.0];
+fn qid() qm::Q4 { qm::q_get(ID_Q, 0) }
+fn rest_w0(rest real[:], k int) qm::Q4 { qm::q_get(rest, 12 * k) }
+fn rest_p0(rest real[:], k int) qm::V3 { qm::v_get(rest, 12 * k + 4) }
+fn rest_pb(rest real[:], k int) qm::Q4 { qm::q_get(rest, 12 * k + 7) }
+fn rest_mapped(rest real[:], k int) bool { rest[12 * k + 11] > 0.5 }
+=== 071e8c7a17fee91e
+fn solve_local(slot i32[:], rest real[:], want real[:], out real[:]) {
+	var w real[88] = [0.0; 88];
+	for k in 22 {
+		if slot[k] < 0 {
+			out[5 * k] = 0.0;
+			out[5 * k + 1] = 0.0;
+			out[5 * k + 2] = 0.0;
+			out[5 * k + 3] = 1.0;
+			out[5 * k + 4] = 0.0;
+			continue;
+		}
+		let ep = rig::eff_parent(slot, k);
+		var p = rest_pb(rest, k);
+		if ep >= 0 {
+			p = qm::q_mul(qm::q_mul(qm::q_get(w, 4 * ep), qm::q_conj(rest_w0(rest, ep))), rest_pb(rest, k));
+		}
+		let w0k = rest_w0(rest, k);
+		let lrest = qm::q_mul(qm::q_conj(rest_pb(rest, k)), w0k);
+		let wi = qm::q_mul(p, lrest);
+		let flag = want[5 * k + 4];
+		var wk = wi;
+		var used = false;
+		if flag > 0.5 && flag < 1.5 {
+			wk = qm::q_norm(qm::q_get(want, 5 * k));
+			used = true;
+		} else if flag >= 1.5 {
+			let c = rig::eff_child(slot, k);
+			if c >= 0 {
+				let r0 = qm::v_norm(qm::v_sub(rest_p0(rest, c), rest_p0(rest, k)));
+				let r = qm::q_rot(qm::q_mul(wi, qm::q_conj(w0k)), r0);
+				wk = qm::q_mul(qm::q_from_to(r, qm::v_norm(qm::v_get(want, 5 * k))), wi);
+				used = true;
+			}
+		}
+		qm::q_put(w, 4 * k, wk);
+		qm::q_put(out, 5 * k, qm::q_norm(qm::q_mul(qm::q_conj(p), wk)));
+		out[5 * k + 4] = if used { 1.0 } else { 0.0 };
+	}
+}
+=== -6b9abef0c08d8b5e
+fn retarget_corr(sslot i32[:], srest real[:], tslot i32[:], trest real[:], corr real[:]) {
+	for k in 22 {
+		qm::q_put(corr, 4 * k, qid());
+		if sslot[k] < 0 || tslot[k] < 0 { continue; }
+		let cs = rig::eff_child(sslot, k);
+		let ct = rig::eff_child(tslot, k);
+		if cs >= 0 && ct >= 0 {
+			let a = qm::v_norm(qm::v_sub(rest_p0(trest, ct), rest_p0(trest, k)));
+			let b = qm::v_norm(qm::v_sub(rest_p0(srest, cs), rest_p0(srest, k)));
+			qm::q_put(corr, 4 * k, qm::q_from_to(a, b));
+		} else {
+			let ep = rig::eff_parent(tslot, k);
+			if ep >= 0 { qm::q_put(corr, 4 * k, qm::q_get(corr, 4 * ep)); }
+		}
+	}
+}
+=== -448300da9a4cffda
+fn retarget_frame(sslot i32[:], srest real[:], tslot i32[:], trest real[:], corr real[:], sw real[:], want real[:]) {
+	for k in 22 {
+		if sslot[k] >= 0 && tslot[k] >= 0 {
+			let d = qm::q_mul(qm::q_get(sw, 4 * k), qm::q_conj(rest_w0(srest, k)));
+			let q = qm::q_mul(qm::q_mul(d, qm::q_get(corr, 4 * k)), rest_w0(trest, k));
+			qm::q_put(want, 5 * k, q);
+			want[5 * k + 4] = 1.0;
+		} else {
+			qm::q_put(want, 5 * k, qid());
+			want[5 * k + 4] = 0.0;
+		}
+	}
+}
+=== -222211967c12307b
+fn retarget_clip(sslot i32[:], srest real[:], tslot i32[:], trest real[:], nf int, frames real[:], out real[:]) {
+	var corr real[88] = [0.0; 88];
+	var sw real[88] = [0.0; 88];
+	var want real[110] = [0.0; 110];
+	var loc real[110] = [0.0; 110];
+	retarget_corr(sslot, srest, tslot, trest, corr);
+	let sy = srest[5];
+	let ty = trest[5];
+	let ratio = if sy > 1e-7 { ty / sy } else { 1.0 };
+	for f in nf {
+		let fb = 91 * f;
+		for i in 88 { sw[i] = frames[fb + i]; }
+		retarget_frame(sslot, srest, tslot, trest, corr, sw, want);
+		solve_local(tslot, trest, want, loc);
+		for k in 22 {
+			for c in 4 { out[fb + 4 * k + c] = loc[5 * k + c]; }
+			if f > 0 {
+				let pb = 91 * (f - 1) + 4 * k;
+				var d = 0.0;
+				for c in 4 { d += out[fb + 4 * k + c] * out[pb + c]; }
+				if d < 0.0 {
+					for c in 4 { out[fb + 4 * k + c] = -out[fb + 4 * k + c]; }
+				}
+			}
+		}
+		for c in 3 {
+			out[fb + 88 + c] = trest[4 + c] + (frames[fb + 88 + c] - srest[4 + c]) * ratio;
+		}
+	}
+}
+=== -18876e3fb95b51bd
+fn lm_pair(i int) int {
+	if i <= 0 { return 0; }
+	if i <= 3 { return i + 3; }
+	if i <= 6 { return i - 3; }
+	if i % 2 == 1 { return i + 1; }
+	return i - 1;
+}
+fn lm_avatar(lm real[:], i int, mirror bool) qm::V3 {
+	if mirror {
+		let j = lm_pair(i);
+		return qm::v3(-lm[4 * j], -lm[4 * j + 1], -lm[4 * j + 2]);
+	}
+	return qm::v3(lm[4 * i], -lm[4 * i + 1], -lm[4 * i + 2]);
+}
+fn lm_vis(lm real[:], i int, mirror bool) real {
+	if mirror { return lm[4 * lm_pair(i) + 3]; }
+	return lm[4 * i + 3];
+}
+fn lm_seen(vis real[:], i int) bool {
+	if i >= 23 { return vis[i] > 0.6; }
+	return vis[i] > 0.5;
+}
+=== 3f64d82ac81d3adb
+fn ps_frame(d qm::V3, up qm::V3) qm::Q4 {
+	let xh = qm::v_norm(qm::v_sub(d, qm::v_scale(up, qm::v_dot(d, up))));
+	return qm::q_from_axes(xh, up, qm::v_cross(xh, up));
+}
+fn ps_put_quat(want real[:], rest real[:], k int, r qm::Q4) {
+	qm::q_put(want, 5 * k, qm::q_mul(r, rest_w0(rest, k)));
+	want[5 * k + 4] = 1.0;
+}
+fn ps_put_dir(want real[:], k int, d qm::V3) {
+	want[5 * k] = d.x;
+	want[5 * k + 1] = d.y;
+	want[5 * k + 2] = d.z;
+	want[5 * k + 3] = 0.0;
+	want[5 * k + 4] = 2.0;
+}
+fn ps_limb(lm real[:], mirror bool, vis real[:], want real[:], k int, a int, b int, th real) int {
+	if vis[a] > th && vis[b] > th {
+		ps_put_dir(want, k, qm::v_sub(lm_avatar(lm, b, mirror), lm_avatar(lm, a, mirror)));
+		return 1;
+	}
+	return 0;
+}
+fn ps_hand(lm real[:], mirror bool, vis real[:], want real[:], k int, wr int, i1 int, i2 int) int {
+	if vis[wr] > 0.5 && vis[i1] > 0.5 && vis[i2] > 0.5 {
+		let mid = qm::v_scale(qm::v_add(lm_avatar(lm, i1, mirror), lm_avatar(lm, i2, mirror)), 0.5);
+		ps_put_dir(want, k, qm::v_sub(mid, lm_avatar(lm, wr, mirror)));
+		return 1;
+	}
+	return 0;
+}
+fn pose_solve(lm real[:], mirror bool, slot i32[:], rest real[:], out real[:]) int {
+	var want real[110] = [0.0; 110];
+	var vis real[33] = [0.0; 33];
+	for i in 33 { vis[i] = lm_vis(lm, i, mirror); }
+	var n = 0;
+	var up = qm::v3(0.0, 1.0, 0.0);
+	var rh = qid();
+	var rc = qid();
+	let shoulders = vis[11] > 0.5 && vis[12] > 0.5;
+	if shoulders {
+		let ls = lm_avatar(lm, 11, mirror);
+		let rs = lm_avatar(lm, 12, mirror);
+		let sc = qm::v_scale(qm::v_add(ls, rs), 0.5);
+		if vis[23] > 0.7 && vis[24] > 0.7 {
+			let lh = lm_avatar(lm, 23, mirror);
+			let rhp = lm_avatar(lm, 24, mirror);
+			let hc = qm::v_scale(qm::v_add(lh, rhp), 0.5);
+			up = qm::v_norm(qm::v_sub(sc, hc));
+			rh = ps_frame(qm::v_sub(lh, rhp), up);
+			rc = ps_frame(qm::v_sub(ls, rs), up);
+		}
+	}
+	ps_put_quat(want, rest, 0, rh);
+	ps_put_quat(want, rest, 1, qm::q_slerp(rh, rc, 0.5));
+	ps_put_quat(want, rest, 2, rc);
+	ps_put_quat(want, rest, 3, rc);
+	n += 4;
+	if vis[0] > 0.5 && vis[7] > 0.5 && vis[8] > 0.5 {
+		let le = lm_avatar(lm, 7, mirror);
+		let re = lm_avatar(lm, 8, mirror);
+		let x = qm::v_norm(qm::v_sub(le, re));
+		let f0 = qm::v_sub(lm_avatar(lm, 0, mirror), qm::v_scale(qm::v_add(le, re), 0.5));
+		let f = qm::v_norm(qm::v_sub(f0, qm::v_scale(x, qm::v_dot(f0, x))));
+		let rhd = qm::q_from_axes(x, qm::v_cross(f, x), f);
+		ps_put_quat(want, rest, 5, rhd);
+		ps_put_quat(want, rest, 4, qm::q_slerp(rc, rhd, 0.5));
+		n += 2;
+	}
+	n += ps_limb(lm, mirror, vis, want, 7, 11, 13, 0.5);
+	n += ps_limb(lm, mirror, vis, want, 8, 13, 15, 0.5);
+	n += ps_hand(lm, mirror, vis, want, 9, 15, 19, 17);
+	n += ps_limb(lm, mirror, vis, want, 11, 12, 14, 0.5);
+	n += ps_limb(lm, mirror, vis, want, 12, 14, 16, 0.5);
+	n += ps_hand(lm, mirror, vis, want, 13, 16, 20, 18);
+	n += ps_limb(lm, mirror, vis, want, 14, 23, 25, 0.7);
+	n += ps_limb(lm, mirror, vis, want, 15, 25, 27, 0.7);
+	n += ps_limb(lm, mirror, vis, want, 16, 27, 31, 0.7);
+	n += ps_limb(lm, mirror, vis, want, 18, 24, 26, 0.7);
+	n += ps_limb(lm, mirror, vis, want, 19, 26, 28, 0.7);
+	n += ps_limb(lm, mirror, vis, want, 20, 28, 32, 0.7);
+	solve_local(slot, rest, want, out);
+	return n;
+}
+=== -6bc7426dc2eba7f3
+var PF_X real[99] = [0.0; 99];
+var PF_D real[99] = [0.0; 99];
+var PF_T real = 0.0;
+var PF_HAS bool = false;
+fn pf_alpha(cutoff real, dt real) real {
+	let tau = 1.0 / (6.283185307179586 * cutoff);
+	return 1.0 / (1.0 + tau / dt);
+}
+fn pose_reset() {
+	PF_HAS = false;
+}
+fn pose_filter(lm real[:], t real) {
+	let dt = t - PF_T;
+	if !PF_HAS || dt <= 0.0 || dt > 0.5 {
+		for k in 33 {
+			for c in 3 {
+				PF_X[3 * k + c] = lm[4 * k + c];
+				PF_D[3 * k + c] = 0.0;
+			}
+		}
+		PF_T = t;
+		PF_HAS = true;
+		return;
+	}
+	let ad = pf_alpha(1.0, dt);
+	for k in 33 {
+		for c in 3 {
+			let j = 3 * k + c;
+			let x = lm[4 * k + c];
+			let dx = (x - PF_X[j]) / dt;
+			let ed = PF_D[j] + ad * (dx - PF_D[j]);
+			let cutoff = 1.0 + 3.0 * abs(ed);
+			let v = PF_X[j] + pf_alpha(cutoff, dt) * (x - PF_X[j]);
+			lm[4 * k + c] = v;
+			PF_X[j] = v;
+			PF_D[j] = ed;
+		}
+	}
+	PF_T = t;
+}

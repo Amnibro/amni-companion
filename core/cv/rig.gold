@@ -1,0 +1,30 @@
+into cv/rig.amni
+namespace rig
+lang amni
+use companion
+
+Maps any humanoid skeleton's bone names onto 22 canonical slots so shared animations and body tracking can drive it. Slot order (the index is the slot number): 0 hips, 1 spine, 2 chest, 3 upper_chest, 4 neck, 5 head, 6 l_shoulder, 7 l_upper_arm, 8 l_lower_arm, 9 l_hand, 10 r_shoulder, 11 r_upper_arm, 12 r_lower_arm, 13 r_hand, 14 l_upper_leg, 15 l_lower_leg, 16 l_foot, 17 l_toes, 18 r_upper_leg, 19 r_lower_leg, 20 r_foot, 21 r_toes. `NSLOT` = 22. `slot_name(k int) const byte[:]` returns those names ("?" when out of range).
+
+Bone kinds: 0 none, 1 hips, 2 spine, 3 neck, 4 head, 5 shoulder (clavicle), 6 upper_arm, 7 lower_arm, 8 hand, 9 upper_leg, 10 lower_leg, 11 foot, 12 toe. Sides: 0 center or unknown, 1 left, 2 right.
+
+`clean(name const byte[:], out byte[..97]&)`: lowercase the name into out (truncate at 97 bytes), then drop everything up to and including the last ':', then drop a leading "mixamorig" (with an optional following '_'), then repeatedly drop any of these leading prefixes while one matches: "def-", "def_", "j_bip_", "cc_base_", "bip01_", "bip01 ", "bip001_", "bip001 ", "b_", "c_".
+
+`is_body_word(s const byte[:]) bool`: s starts with one of "hip", "pelvis", "spine", "chest", "neck", "head", "shoulder", "clavicle", "collar", "shldr", "upperarm", "uparm", "arm", "forearm", "lowerarm", "loarm", "hand", "fist", "upleg", "upperleg", "thigh", "leg", "lowerleg", "loleg", "shin", "calf", "knee", "foot", "ankle", "toe", "ball", "waist", "torso", "abdomen".
+
+`side_of(c const byte[:]) int` on a cleaned name: left (1) when it starts with "left", "l_", "l." or "l ", or ends with "_l", ".l", " l" or "-l", or contains "left"; right (2) by the same rules with "right" and r; otherwise when c does not itself pass `is_body_word` but starts with 'l' (or 'r') and the rest passes `is_body_word`, that side (Daz style "lshldr", "rthigh"); else 0.
+
+`compact(c const byte[:], out byte[..97]&)`: copy c with the side marker removed (the "left"/"right" word, or the single l/r letter with its separator at the start or end, or the Daz single letter) and with every '.', '_', '-', ' ' and digit dropped.
+
+`kind_of(name const byte[:]) int`: lowercase the raw name; return 0 when it starts with "org-", "mch-", "ik_", "ik-", "ctrl", "vis_", "j_sec" or "j_adj". Otherwise clean it, compact it into k, and return 0 when k contains any of "twist", "roll", "pole", "ctrl", "helper", "nub", "socket", "weapon", "thumb", "index", "middle", "ring", "pinky", "little", "finger", "metacarpal", "tongue", "teeth", "hair", "skirt", "breast", "bust", "cape", or ends with "end", "top" or "tip", or equals one of "eye", "jaw", "ear", "tail", "ik", "root", "armature", "". Then the first rule that matches wins: contains "forearm", "lowerarm", "loarm" or "elbow" → 7; contains "upleg", "upperleg", "thigh" or "femur" → 9; contains "toe" or "ball" → 12; contains "hip" or "pelvis" → 1; contains "shoulder", "clavicle" or "collar" → 5; contains "upperarm", "uparm", "humerus" or "shldr", or equals "arm" → 6; contains "hand", "wrist" or "fist" → 8; contains "lowerleg", "loleg", "shin", "calf", "knee" or "crus", or equals "leg" → 10; contains "foot" or "ankle" → 11; contains "neck" → 3; contains "head" → 4; contains "spine", "chest", "torso", "abdomen", "waist" or "belly" → 2; else 0.
+
+`bone_side(name const byte[:]) int` cleans the name and returns `side_of`.
+
+`rig_map(names const byte[:], n int, parent i32[:], pos real[:], slot i32[:]) int`: names holds n bone names separated by '\n' (bone i is the i-th line), parent[i] is bone i's parent index or -1, pos[3i..3i+3] is its rest world position (x points to the character's left). Fill slot[0..22] with bone indexes or -1 and return how many slots were filled. Use only fixed-size local arrays sized for 1024 bones (no growable arrays, no heap); bones past 1024 are ignored. Depth = number of ancestors. A bone's side is `bone_side`, falling back to left when pos x > 0.0001 and right when pos x < -0.0001 for bones whose kind needs a side (kinds 5 to 12). hips: the hips-kind bone with the smallest depth (first on ties); if none, the parent of the left upper_leg, else of the right upper_leg. For each side and each kind 5 to 12, pick the bone of that kind and side with the smallest depth (ties: the shortest compacted name, then the first) and store it in its slot (left: shoulder 6, upper_arm 7, lower_arm 8, hand 9, upper_leg 14, lower_leg 15, foot 16, toe 17; right: 10, 11, 12, 13, 18, 19, 20, 21). neck: the neck-kind bone with the smallest depth; head: the head-kind bone with the smallest depth, preferring one that has the neck as an ancestor when a neck exists. Spine chain: start from the neck (or the head when there is no neck); walk parents from the start's parent upward, collecting bones until reaching hips (not included); if hips is never reached, the chain is empty. Reverse it so c[0] sits right above hips and m is its length; m ≥ 1 sets slot 1 = c[0]; m == 2 sets slot 2 = c[1]; m ≥ 3 sets slot 2 = c[m/2] and slot 3 = c[m-1].
+
+`rig_humanoid(slot i32[:]) bool`: slots 0, 5, 7, 8, 11 and 12 are all filled.
+
+`slot_parent(k int) int`: the canonical parent slot: 0 → -1, 1 → 0, 2 → 1, 3 → 2, 4 → 3, 5 → 4, 6 → 3, 7 → 6, 8 → 7, 9 → 8, 10 → 3, 11 → 10, 12 → 11, 13 → 12, 14 → 0, 15 → 14, 16 → 15, 17 → 16, 18 → 0, 19 → 18, 20 → 19, 21 → 20.
+
+`slot_child(k int) int`: the canonical child slot used for bone direction: 0 → 1, 1 → 2, 2 → 3, 3 → 4, 4 → 5, 6 → 7, 7 → 8, 8 → 9, 10 → 11, 11 → 12, 12 → 13, 14 → 15, 15 → 16, 16 → 17, 18 → 19, 19 → 20, 20 → 21, and -1 for 5, 9, 13, 17, 21.
+
+`eff_parent(slot i32[:], k int) int`: walk `slot_parent` from k upward and return the first slot that is filled (slot[p] >= 0), or -1. `eff_child(slot i32[:], k int) int`: walk `slot_child` from k downward and return the first filled slot, or -1.

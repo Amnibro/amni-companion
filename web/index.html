@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Amni-Companion</title>
+<meta name="description" content="A 3D AI companion for your browser: bring your own model and AI key, talk to it, and see it in AR with body tracking. Everything runs on your device.">
+<meta name="theme-color" content="#0b0f1f">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="stylesheet" href="css/app.css">
+<script type="importmap">{"imports":{"three":"./vendor/three/three.module.js"}}</script>
+</head>
+<body>
+<video id="cam" playsinline muted></video>
+<canvas id="stage"></canvas>
+<div id="hud">
+<header class="bar">
+<div class="brand"><svg viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7ff3ff"/><stop offset="1" stop-color="#a98bff"/></linearGradient></defs><ellipse cx="16" cy="26" rx="11" ry="3.5" fill="none" stroke="url(#lg)" stroke-width="2"/><circle cx="16" cy="9" r="4" fill="url(#lg)"/><path d="M10 23c0-6 2.5-9 6-9s6 3 6 9" fill="url(#lg)"/></svg><b>Amni-Companion</b><span id="who"></span></div>
+<nav>
+<button id="camBtn" title="Camera AR: see your companion over your camera, with body tracking" aria-label="Camera AR"><svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></button>
+<button id="arBtn" hidden title="Place in your room (WebXR AR)" aria-label="Place in your room"><svg viewBox="0 0 24 24"><path d="M12 3 4 7.5v9L12 21l8-4.5v-9z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/></svg></button>
+<button data-panel="models" title="Models" aria-label="Models"><svg viewBox="0 0 24 24"><circle cx="12" cy="6" r="3"/><path d="M6 21c0-6 2.5-10 6-10s6 4 6 10"/></svg></button>
+<button data-panel="brain" title="AI brain" aria-label="AI brain"><svg viewBox="0 0 24 24"><path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 2 5 3 3 0 0 0 3 3h1V4zM15 4a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-2 5 3 3 0 0 1-3 3h-1V4z"/></svg></button>
+<button data-panel="settings" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg></button>
+</nav>
+</header>
+<div id="bubble" class="bubble" hidden></div>
+<div id="status" class="status" hidden></div>
+<div id="toast" class="toast" hidden></div>
+<div id="log" class="log" hidden></div>
+<div id="chips" class="chips"><button data-act="emote:wave">Wave</button><button data-act="anim:dance">Dance</button><button data-act="sit">Sit</button><button data-act="anim:jump">Jump</button><button data-act="walk:user">Come here</button><button data-act="walk:roam">Explore</button><button data-say="Tell me a joke">Joke</button><button id="mirrorChip" data-act="mirror" hidden>Mirror me</button></div>
+<form id="chat" autocomplete="off"><button id="logBtn" type="button" title="Conversation" aria-label="Conversation"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></svg></button><input id="say" placeholder="Say something…" enterkeyhint="send" aria-label="Message"><button id="mic" type="button" title="Talk" aria-label="Talk"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button><button id="send" type="submit" title="Send" aria-label="Send"><svg viewBox="0 0 24 24"><path d="M4 12 20 4l-6 16-3-7z"/></svg></button></form>
+<section class="panel" id="p-models" hidden>
+<header><h2>Models</h2><button class="x" aria-label="Close">×</button></header>
+<div class="cards" id="stock"></div>
+<h3>Your models</h3>
+<p class="hint">Use any rigged humanoid <b>.glb</b> or <b>.vrm</b> (Mixamo, VRoid, Ready Player Me, Unreal, Blender Rigify, Amni-CAD…). Files stay in this browser.</p>
+<div id="mine" class="list"></div>
+<label class="btn primary file"><input id="file" type="file" accept=".glb,.vrm,model/gltf-binary" hidden>Add a model</label>
+<p id="rig" class="hint"></p>
+<label class="row">Size <input id="scale" type="range" min="0.2" max="1.7" step="0.01"></label>
+<label class="row">Companion name <input id="cname" placeholder="Uses the model's name"></label>
+<label class="row">Personality <select id="persona"><option value="auto">Match the model</option><option value="holo">Holo: bubbly and playful</option><option value="dex">Dex: calm engineer</option><option value="neutral">Friendly and neutral</option></select></label>
+</section>
+<section class="panel" id="p-brain" hidden>
+<header><h2>AI brain</h2><button class="x" aria-label="Close">×</button></header>
+<p class="hint">The built-in offline brain knows a few dozen things and works with no network. For real conversation, connect any AI service with your own key. Your key is saved only in this browser and sent only to the service you pick, directly.</p>
+<label class="row">Service <select id="provider"></select></label>
+<label class="row" id="r-base">Base URL <input id="base" spellcheck="false"></label>
+<label class="row" id="r-model">Model <input id="model" spellcheck="false"></label>
+<label class="row" id="r-key">API key <span class="keybox"><input id="key" type="password" spellcheck="false" autocomplete="off"><button type="button" id="showKey" class="ghost">Show</button></span></label>
+<p class="hint" id="brainNote"></p>
+<label class="row col">Extra personality notes <textarea id="personality" rows="3" placeholder="e.g. Loves astronomy. Calls me captain."></textarea></label>
+<label class="check"><input type="checkbox" id="remember"> Remember our conversation on this device</label>
+<div class="btns"><button class="btn" id="testBrain" type="button">Test connection</button><button class="btn ghost" id="forget" type="button">Clear conversation</button></div>
+</section>
+<section class="panel" id="p-settings" hidden>
+<header><h2>Settings</h2><button class="x" aria-label="Close">×</button></header>
+<h3>Camera AR and senses</h3>
+<p class="hint">Recognition runs entirely on this device with MediaPipe. No video or images leave it, unless you ask a connected AI brain what it sees; then it gets one snapshot.</p>
+<label class="row">Camera <select id="camera"><option value="user">Front (selfie)</option><option value="environment">Back</option></select></label>
+<label class="check"><input type="checkbox" data-sense="pose"> Body: waves, claps, pointing, poses</label>
+<label class="check"><input type="checkbox" data-sense="hands"> Hands: thumbs up, peace, heart…</label>
+<label class="check"><input type="checkbox" data-sense="face"> Face: smiles, surprise, nods, winks</label>
+<label class="check"><input type="checkbox" data-sense="objects"> Objects you show it</label>
+<label class="check"><input type="checkbox" id="react"> React out loud to what it notices</label>
+<label class="check"><input type="checkbox" id="mirror"> Mirror me like a reflection (body tracking)</label>
+<h3>Voice</h3>
+<label class="check"><input type="checkbox" id="speak"> Speak replies</label>
+<label class="row">Voice <select id="voice"></select></label>
+<label class="row">Speed <input id="rate" type="range" min="0.7" max="1.7" step="0.05"></label>
+<label class="row">Listening <select id="listen"><option value="push">Tap the mic to talk</option><option value="hands">Hands-free (keeps listening)</option></select></label>
+<p class="hint" id="voiceNote"></p>
+<h3>Privacy</h3>
+<p class="hint">No accounts, no servers, no analytics. Models, settings and keys live in this browser's storage. Voice input uses your browser's speech service, which may run in the cloud (Chrome uses Google; Safari uses Apple) unless your browser supports on-device recognition.</p>
+<div class="btns"><button class="btn ghost danger" id="wipe" type="button">Erase everything</button></div>
+<h3>About</h3>
+<p class="hint">Amni-Companion <span id="ver"></span> by Amniscient. Free software under the <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener">AGPL-3.0</a>. <a href="https://github.com/Amnibro/amni-companion" target="_blank" rel="noopener">Source code</a>. Its core (rig mapping, body tracking, gesture recognition, offline brain) is written in Helium. Credits: three.js (MIT), MediaPipe (Apache-2.0), Quaternius Universal Animation Library (CC0).</p>
+</section>
+<div id="drop" class="drop" hidden><div>Drop a <b>.glb</b> or <b>.vrm</b> to bring it to life</div></div>
+<div id="loading" class="loading"><div class="ring"></div><p id="loadMsg">Waking up…</p></div>
+</div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

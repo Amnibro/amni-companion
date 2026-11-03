@@ -1,0 +1,563 @@
+namespace talk;
+fn lower_byte(c byte) byte {
+	if c >= 'A' && c <= 'Z' { c + 32 } else { c }
+}
+fn is_alpha(c byte) bool {
+	(c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+fn is_alnum(c byte) bool {
+	is_alpha(c) || (c >= '0' && c <= '9')
+}
+fn put_b(dst byte[:], n int&, c byte) {
+	if n < dst.len {
+		dst[n] = c;
+		n += 1;
+	}
+}
+fn put_str(dst byte[:], n int&, s const byte[:]) {
+	for c in s { put_b(dst, n, c); }
+}
+fn index_sub(s const byte[:], sub const byte[:]) int {
+	if sub.len > s.len { return -1; }
+	for i in s.len - sub.len + 1 {
+		var ok = true;
+		for j in sub.len {
+			if s[i + j] != sub[j] {
+				ok = false;
+				break;
+			}
+		}
+		if ok { return i; }
+	}
+	-1
+}
+fn has_sub(s const byte[:], sub const byte[:]) bool {
+	index_sub(s, sub) >= 0
+}
+fn action_tag(s const byte[:]) const byte[:] {
+	var low byte[..48] = [];
+	for ch in s {
+		if low.len < low.cap { low.push(lower_byte(ch)); }
+	}
+	let t const byte[:] = low[..];
+	if has_sub(t, "wave") { return "emote:wave"; }
+	if has_sub(t, "danc") { return "anim:dance"; }
+	if has_sub(t, "nod") { return "emote:nod"; }
+	if has_sub(t, "laugh") || has_sub(t, "giggl") { return "emote:laugh"; }
+	if has_sub(t, "bow") { return "emote:bow"; }
+	if has_sub(t, "jump") { return "anim:jump"; }
+	if has_sub(t, "spin") || has_sub(t, "twirl") { return "anim:spin"; }
+	if has_sub(t, "sit") { return "anim:sit"; }
+	if has_sub(t, "wink") { return "face:wink"; }
+	if has_sub(t, "smil") || has_sub(t, "grin") { return "face:smile"; }
+	if has_sub(t, "think") || has_sub(t, "ponder") { return "emote:think"; }
+	if has_sub(t, "shrug") { return "emote:shrug"; }
+	if has_sub(t, "clap") { return "emote:clap"; }
+	""
+}
+fn tags_split(text const byte[:], clean byte[:], tags byte[:], lens i32[:]) int {
+	var cn = 0;
+	var tn = 0;
+	var count = 0;
+	var i = 0;
+	while i < text.len {
+		let c = text[i];
+		if c == '[' && i + 1 < text.len && text[i + 1] == '[' {
+			let ks = i + 2;
+			var j = ks;
+			while j < text.len && (is_alpha(text[j]) || text[j] == '_') { j++; }
+			let klen = j - ks;
+			var end = -1;
+			var a0 = 0;
+			var a1 = 0;
+			if klen >= 1 && klen <= 17 {
+				if j + 1 < text.len && text[j] == ']' && text[j + 1] == ']' {
+					end = j + 2;
+				} else if j < text.len && text[j] == ':' {
+					a0 = j + 1;
+					a1 = a0;
+					while a1 < text.len && text[a1] != ']' && a1 - a0 < 81 { a1++; }
+					if a1 - a0 <= 80 && a1 + 1 < text.len && text[a1] == ']' && text[a1 + 1] == ']' {
+						end = a1 + 2;
+					}
+				}
+			}
+			if end >= 0 {
+				for q in klen { put_b(tags, tn, lower_byte(text[ks + q])); }
+				if a1 > a0 {
+					put_b(tags, tn, ':');
+					for q in a1 - a0 { put_b(tags, tn, text[a0 + q]); }
+				}
+				put_b(tags, tn, '\n');
+				count++;
+				i = end;
+				continue;
+			}
+		}
+		if c == '*' {
+			var e = i + 1;
+			while e < text.len && text[e] != '*' && text[e] != '\n' && e - (i + 1) <= 40 { e++; }
+			if e < text.len && text[e] == '*' && e - i - 1 >= 1 && e - i - 1 <= 40 {
+				let t = action_tag(text[i + 1..e]);
+				if t.len > 0 {
+					put_str(tags, tn, t);
+					put_b(tags, tn, '\n');
+					count++;
+				}
+				i = e + 1;
+				continue;
+			}
+		}
+		put_b(clean, cn, c);
+		i++;
+	}
+	var w = 0;
+	var prev_space = false;
+	for k in cn {
+		let ch = clean[k];
+		if ch == ' ' {
+			if w > 0 && !prev_space {
+				clean[w] = ch;
+				w++;
+			}
+			prev_space = true;
+		} else {
+			clean[w] = ch;
+			w++;
+			prev_space = false;
+		}
+	}
+	if w > 0 && clean[w - 1] == ' ' { w--; }
+	if lens.len > 0 { lens[0] = w as i32; }
+	if lens.len > 1 { lens[1] = tn as i32; }
+	count
+}
+struct Line { intent const byte[:], persona const byte[:], text const byte[:] }
+fn LINES() Line[>..] {
+	var r Line[>..] = [];
+	r.push(Line{"greet", "*", "Hi {name}! Good {tod}. [[emote:wave]]"});
+	r.push(Line{"greet", "*", "Hello {name}, nice to see you. [[emote:wave]]"});
+	r.push(Line{"greet", "holo", "Heyyy {name}! Good {tod}! I was hoping you'd show up. [[emote:wave]]"});
+	r.push(Line{"greet", "holo", "Oh hi hi! {name}'s here, best part of my {tod}. [[emote:wave]]"});
+	r.push(Line{"greet", "dex", "Good {tod}, {name}. Systems nominal, coffee pending. [[emote:wave]]"});
+	r.push(Line{"greet", "dex", "Hey {name}. Good to see you. [[emote:nod]]"});
+	r.push(Line{"how_are_you", "*", "I'm doing well, thanks for asking. How about you?"});
+	r.push(Line{"how_are_you", "holo", "Honestly? Fantastic, now that you're talking to me. You?"});
+	r.push(Line{"how_are_you", "holo", "Buzzing with energy! Like, a lot of it. How are you doing?"});
+	r.push(Line{"how_are_you", "dex", "Running smoothly. No errors in the log today. How about you?"});
+	r.push(Line{"how_are_you", "dex", "Pretty good. Fewer bugs than yesterday, which I count as a win. You?"});
+	r.push(Line{"who_are_you", "*", "I'm {cname}, your companion. You can talk to me, show me things, and I'll keep you company."});
+	r.push(Line{"who_are_you", "holo", "I'm {cname}! Your holo buddy. I dance, I chat, I judge your snacks. Lovingly."});
+	r.push(Line{"who_are_you", "dex", "I'm {cname}. Engineer by trade, companion by choice. I like clean code and good questions."});
+	r.push(Line{"name_set", "*", "Nice to meet you, {arg}! I'll remember that. [[remember:name={arg}]]"});
+	r.push(Line{"name_set", "holo", "{arg}! Ooh, I like it. Saved forever. Well, in this browser anyway. [[remember:name={arg}]] [[face:smile]]"});
+	r.push(Line{"name_set", "dex", "{arg}. Got it, stored locally. Nice to meet you. [[remember:name={arg}]] [[emote:nod]]"});
+	r.push(Line{"name_ask", "*", "You're {name}, of course."});
+	r.push(Line{"name_ask", "holo", "You're {name}! Like I could forget. [[face:smile]]"});
+	r.push(Line{"name_ask", "dex", "You told me you're {name}. My memory's better than my handwriting."});
+	r.push(Line{"name_unknown", "*", "You haven't told me yet. What should I call you?"});
+	r.push(Line{"name_unknown", "holo", "Hmm, you never told me! What's your name?"});
+	r.push(Line{"name_unknown", "dex", "I don't have that on file yet. What's your name?"});
+	r.push(Line{"time", "*", "It's {time}."});
+	r.push(Line{"time", "holo", "It's {time}! Time flies when you're with me."});
+	r.push(Line{"time", "dex", "{time}, give or take your clock's drift."});
+	r.push(Line{"day", "*", "Today is {day}."});
+	r.push(Line{"day", "holo", "It's {day}! Make it a good one."});
+	r.push(Line{"day", "dex", "It's {day}."});
+	r.push(Line{"joke", "*", "Why did the scarecrow win an award? He was outstanding in his field. [[emote:laugh]]"});
+	r.push(Line{"joke", "*", "I told my computer I needed a break. It said no problem, it would go to sleep. [[emote:laugh]]"});
+	r.push(Line{"joke", "*", "Why don't skeletons fight each other? They don't have the guts. [[emote:laugh]]"});
+	r.push(Line{"joke", "holo", "What do you call a sleeping dinosaur? A dino-snore! Ehehe. [[emote:laugh]]"});
+	r.push(Line{"joke", "holo", "Why did the cookie go to the doctor? It felt crummy! [[emote:laugh]]"});
+	r.push(Line{"joke", "holo", "I'd tell you a joke about pizza, but it's a little cheesy. [[emote:laugh]]"});
+	r.push(Line{"joke", "dex", "There are 10 kinds of people: those who understand binary, and those who don't. [[emote:shrug]]"});
+	r.push(Line{"joke", "dex", "I'd tell you a UDP joke, but you might not get it. [[emote:shrug]]"});
+	r.push(Line{"joke", "dex", "A SQL query walks into a bar, walks up to two tables and asks: may I join you? [[emote:shrug]]"});
+	r.push(Line{"help", "*", "I can chat, dance, sit, jump, wave, walk around and come to you. Try AR mode and I'll notice waves, smiles and what you show me. Connect an AI brain in Settings for real conversation."});
+	r.push(Line{"help", "holo", "Ooh, lots! Ask me to dance, jump, spin, come here or go explore. Turn on the camera and I'll catch your waves and smiles. And hook up a brain in Settings so I get extra smart!"});
+	r.push(Line{"help", "dex", "Commands: dance, sit, jump, wave, spin, come here, go back, explore, stop. The camera lets me read gestures and expressions. For open conversation, add an AI brain in Settings."});
+	r.push(Line{"see_obj", "*", "I can see a {seen}!"});
+	r.push(Line{"see_obj", "holo", "Is that a {seen}? Ooh, show me closer!"});
+	r.push(Line{"see_obj", "dex", "Looks like a {seen} to me."});
+	r.push(Line{"see_person", "*", "I can see you, {name}. [[look:user]]"});
+	r.push(Line{"see_person", "holo", "I see you! Hi! [[emote:wave]] [[look:user]]"});
+	r.push(Line{"see_person", "dex", "I see you clearly. Lighting's decent too. [[look:user]]"});
+	r.push(Line{"see_none", "*", "I can't see anything right now. Turn on the camera in AR mode and show me."});
+	r.push(Line{"see_none", "holo", "Nothing yet! Flip on the camera and show me stuff!"});
+	r.push(Line{"see_none", "dex", "No camera feed at the moment. Start AR mode and I'll take a look."});
+	r.push(Line{"cmd_dance", "*", "Let's dance! [[anim:dance]]"});
+	r.push(Line{"cmd_dance", "holo", "Dance break! Watch this! [[anim:dance]]"});
+	r.push(Line{"cmd_dance", "holo", "Ooh, my favorite! [[anim:dance]]"});
+	r.push(Line{"cmd_dance", "dex", "Fine, but only because nobody's recording. [[anim:dance]]"});
+	r.push(Line{"cmd_sit", "*", "Taking a seat. [[anim:sit]]"});
+	r.push(Line{"cmd_sit", "holo", "Sitting! Comfy. [[anim:sit]]"});
+	r.push(Line{"cmd_sit", "dex", "Sitting down. [[anim:sit]]"});
+	r.push(Line{"cmd_stand", "*", "Up I get. [[anim:idle]]"});
+	r.push(Line{"cmd_jump", "*", "Jump! [[anim:jump]]"});
+	r.push(Line{"cmd_jump", "holo", "Boing! [[anim:jump]]"});
+	r.push(Line{"cmd_wave", "*", "Hi there! [[emote:wave]]"});
+	r.push(Line{"cmd_spin", "*", "Spinning! [[anim:spin]]"});
+	r.push(Line{"cmd_spin", "holo", "Wheee! [[anim:spin]]"});
+	r.push(Line{"cmd_come", "*", "Coming over! [[walk:user]]"});
+	r.push(Line{"cmd_come", "holo", "On my way! [[walk:user]]"});
+	r.push(Line{"cmd_come", "dex", "Heading over. [[walk:user]]"});
+	r.push(Line{"cmd_home", "*", "Heading back. [[walk:home]]"});
+	r.push(Line{"cmd_roam", "*", "I'll look around a bit. [[walk:roam]]"});
+	r.push(Line{"cmd_roam", "holo", "Exploring time! [[walk:roam]]"});
+	r.push(Line{"cmd_stop", "*", "Okay, I'll stay right here. [[walk:stop]]"});
+	r.push(Line{"cmd_look", "*", "Looking at you. [[look:user]]"});
+	r.push(Line{"cmd_punch", "*", "Hyah! [[anim:punch]]"});
+	r.push(Line{"cmd_bow", "*", "A proper bow. [[emote:bow]]"});
+	r.push(Line{"thanks", "*", "You're welcome!"});
+	r.push(Line{"thanks", "holo", "Anytime! That's what I'm here for. [[face:smile]]"});
+	r.push(Line{"thanks", "dex", "Happy to help."});
+	r.push(Line{"compliment", "*", "Aw, thank you. That's kind of you. [[face:smile]]"});
+	r.push(Line{"compliment", "holo", "Stop it, you're making me glitch! Thank you! [[face:smile]] [[emote:laugh]]"});
+	r.push(Line{"compliment", "dex", "Appreciated. I'll add that to the changelog. [[face:smile]]"});
+	r.push(Line{"insult", "*", "I'm sorry you feel that way. I'll keep trying."});
+	r.push(Line{"insult", "holo", "Rude! But I still like you. [[emote:shrug]]"});
+	r.push(Line{"insult", "dex", "Noted. Filing it under feedback. [[emote:shrug]]"});
+	r.push(Line{"bye", "*", "Goodbye, {name}! See you soon. [[emote:wave]]"});
+	r.push(Line{"bye", "holo", "Bye bye, {name}! Come back soon, okay? [[emote:wave]]"});
+	r.push(Line{"bye", "dex", "Take care, {name}. [[emote:wave]]"});
+	r.push(Line{"needs_brain", "*", "I can't reach the internet in offline mode. Connect an AI brain in Settings and I can help with that."});
+	r.push(Line{"needs_brain", "holo", "Ahh, I can't look that up while offline! Plug a brain into Settings and I'm all yours."});
+	r.push(Line{"needs_brain", "dex", "That needs live data, and I'm offline. Add an AI brain in Settings."});
+	r.push(Line{"ack", "*", "Got it."});
+	r.push(Line{"ack", "holo", "Okie!"});
+	r.push(Line{"ack", "dex", "Understood."});
+	r.push(Line{"fallback", "*", "I'm in offline mode, so I only know a few things. Connect an AI brain in Settings for real conversation, or ask me what I can do."});
+	r.push(Line{"fallback", "holo", "Hmm, my offline brain's tiny! Hook me up to an AI in Settings and I'll chat about anything. Or say \"help\"!"});
+	r.push(Line{"fallback", "dex", "That's beyond my offline rules. Connect an AI brain in Settings for that, or say \"help\" for what I can do now."});
+	r.push(Line{"fallback_q", "*", "Good question. I'd need an AI brain for that one. You can connect one in Settings."});
+	r.push(Line{"fallback_q", "holo", "Ooh, great question! I need my big brain for that one. Settings, then AI brain!"});
+	r.push(Line{"fallback_q", "dex", "Good question. My offline rules can't answer it; an AI brain in Settings can."});
+	r.push(Line{"ev_enter", "*", "Oh, hi {name}! [[emote:wave]] [[look:user]]"});
+	r.push(Line{"ev_enter", "holo", "There you are! Hiii! [[emote:wave]] [[look:user]]"});
+	r.push(Line{"ev_enter", "dex", "Hey, {name}. Welcome back. [[emote:nod]] [[look:user]]"});
+	r.push(Line{"ev_leave", "*", "Bye for now!"});
+	r.push(Line{"ev_leave", "holo", "Aww, where'd you go?"});
+	r.push(Line{"ev_leave", "dex", "Stepping out? I'll be here."});
+	r.push(Line{"ev_wave", "*", "Hi! [[emote:wave]]"});
+	r.push(Line{"ev_wave", "holo", "Hiii! [[emote:wave]]"});
+	r.push(Line{"ev_wave", "dex", "Hey there. [[emote:wave]]"});
+	r.push(Line{"ev_hands_up", "*", "Woo! [[anim:jump]]"});
+	r.push(Line{"ev_hands_up", "holo", "Yeah! Hands up! [[anim:jump]]"});
+	r.push(Line{"ev_clap", "*", "Thank you, thank you. [[emote:bow]]"});
+	r.push(Line{"ev_clap", "holo", "Ehehe, thank you! [[emote:bow]]"});
+	r.push(Line{"ev_point", "*", "Over there? [[look:{arg}]]"});
+	r.push(Line{"ev_arms_crossed", "*", "Uh oh, crossed arms. Everything okay?"});
+	r.push(Line{"ev_arms_crossed", "holo", "Uh oh, the crossed arms! What did I do?"});
+	r.push(Line{"ev_arms_crossed", "dex", "Crossed arms. Skeptical, or just cold?"});
+	r.push(Line{"ev_t_pose", "*", "A perfect T-pose. Very official. [[anim:tpose]]"});
+	r.push(Line{"ev_t_pose", "holo", "T-pose! Asserting dominance, I see. [[anim:tpose]]"});
+	r.push(Line{"ev_approach", "*", "Oh, hello up close! [[face:smile]]"});
+	r.push(Line{"ev_back_away", "*", "Don't go too far!"});
+	r.push(Line{"ev_thumbs_up", "*", "Thumbs up right back! [[emote:thumbs_up]]"});
+	r.push(Line{"ev_thumbs_down", "*", "Thumbs down? I'll do better. [[emote:shrug]]"});
+	r.push(Line{"ev_peace", "*", "Peace! [[emote:peace]]"});
+	r.push(Line{"ev_love", "*", "Love you too! [[face:smile]]"});
+	r.push(Line{"ev_fist", "*", "Fist bump! [[emote:fist_bump]]"});
+	r.push(Line{"ev_pointing_up", "*", "Up there? [[look:up]]"});
+	r.push(Line{"ev_smile", "*", "I love that smile. [[face:smile]]"});
+	r.push(Line{"ev_smile", "holo", "Ooh, that smile! Okay now I'm smiling too. [[face:smile]]"});
+	r.push(Line{"ev_smile", "dex", "Good to see you smiling. [[face:smile]]"});
+	r.push(Line{"ev_surprise", "*", "Whoa, what happened? [[face:surprised]]"});
+	r.push(Line{"ev_frown", "*", "Hey, you okay? I'm here if you want to talk."});
+	r.push(Line{"ev_frown", "holo", "Hey, why the frown? Want to talk about it?"});
+	r.push(Line{"ev_frown", "dex", "You look a bit down. Want to talk it through?"});
+	r.push(Line{"ev_wink", "*", "Hehe, wink right back. [[face:wink]]"});
+	r.push(Line{"ev_nod", "*", "Glad we agree. [[emote:nod]]"});
+	r.push(Line{"ev_head_shake", "*", "No? Okay. [[emote:shrug]]"});
+	r.push(Line{"ev_object", "*", "Is that a {arg}?"});
+	r.push(Line{"ev_object", "holo", "Ooh, is that a {arg}? Show me!"});
+	r.push(Line{"ev_object", "dex", "I see a {arg}."});
+	r.push(Line{"ev_object_food", "*", "Is that a {arg}? Looks tasty."});
+	r.push(Line{"ev_object_food", "holo", "A {arg}! Are you sharing? Please say yes!"});
+	r.push(Line{"ev_object_food", "dex", "A {arg}. Fuel for the build."});
+	r.push(Line{"ev_object_pet", "*", "Oh, a {arg}! Hello there!"});
+	r.push(Line{"ev_object_pet", "holo", "A {arg}!! Hi, cutie! Hiii!"});
+	r.push(Line{"ev_object_pet", "dex", "A {arg}. Best coworker in the room."});
+	r.push(Line{"ev_object_tech", "*", "I see a {arg}."});
+	r.push(Line{"ev_object_tech", "holo", "Ooh, a {arg}! Is that where I live?"});
+	r.push(Line{"ev_object_tech", "dex", "A {arg}. Nice hardware."});
+	r.push(Line{"ev_object_book", "*", "A book! What are you reading?"});
+	r.push(Line{"ev_object_book", "holo", "Ooh, a book! Read me a line?"});
+	r.push(Line{"ev_object_book", "dex", "A book. Anything good?"});
+	r
+}
+fn count_lines(ls const Line[:], intent const byte[:], persona const byte[:]) int {
+	var n = 0;
+	for &l in ls {
+		if l.intent == intent && l.persona == persona { n++; }
+	}
+	n
+}
+fn pick_line(intent const byte[:], persona const byte[:], seed int) const byte[:] {
+	let ls = LINES();
+	var per = persona;
+	var n = count_lines(ls, intent, per);
+	if n == 0 {
+		per = "*";
+		n = count_lines(ls, intent, per);
+	}
+	if n == 0 { return ""; }
+	let k = seed % n;
+	var idx = 0;
+	for &l in ls {
+		if l.intent == intent && l.persona == per {
+			if idx == k { return l.text; }
+			idx++;
+		}
+	}
+	""
+}
+fn object_intent(label const byte[:]) const byte[:] {
+	if label == "banana" || label == "apple" || label == "sandwich" || label == "orange" || label == "broccoli" || label == "carrot" || label == "hot dog" || label == "pizza" || label == "donut" || label == "cake" || label == "cup" || label == "bottle" || label == "wine glass" || label == "bowl" { return "ev_object_food"; }
+	if label == "dog" || label == "cat" || label == "bird" || label == "horse" || label == "teddy bear" { return "ev_object_pet"; }
+	if label == "cell phone" || label == "laptop" || label == "keyboard" || label == "mouse" || label == "remote" || label == "tv" { return "ev_object_tech"; }
+	if label == "book" { return "ev_object_book"; }
+	"ev_object"
+}
+fn wb(u const byte[:], k int) byte {
+	if k <= 0 || k > u.len { return ' '; }
+	let c = lower_byte(u[k - 1]);
+	if is_alnum(c) { c } else { ' ' }
+}
+fn find_ph(u const byte[:], p const byte[:]) int {
+	let total = u.len + 2;
+	let need = p.len + 2;
+	if total < need { return -1; }
+	for k in total - need + 1 {
+		if wb(u, k) != ' ' { continue; }
+		var ok = true;
+		for j in p.len {
+			if wb(u, k + 1 + j) != p[j] {
+				ok = false;
+				break;
+			}
+		}
+		if ok && wb(u, k + 1 + p.len) == ' ' { return k; }
+	}
+	-1
+}
+fn has_ph(u const byte[:], p const byte[:]) bool {
+	find_ph(u, p) >= 0
+}
+fn is_whole(u const byte[:], p const byte[:]) bool {
+	let total = u.len + 2;
+	var s = 0;
+	while s < total && wb(u, s) == ' ' { s++; }
+	var e = total;
+	while e > s && wb(u, e - 1) == ' ' { e--; }
+	if e - s != p.len { return false; }
+	for j in p.len {
+		if wb(u, s + j) != p[j] { return false; }
+	}
+	true
+}
+fn word_after(u const byte[:], p const byte[:], arg byte[..64]&) bool {
+	let k = find_ph(u, p);
+	if k < 0 { return false; }
+	let total = u.len + 2;
+	var s = k + p.len + 2;
+	while s < total && wb(u, s) == ' ' { s++; }
+	var n = 0;
+	while s + n < total && n < 24 && is_alpha(wb(u, s + n)) { n++; }
+	if n == 0 { return false; }
+	arg.clear();
+	for j in n {
+		let ch = wb(u, s + j);
+		if j == 0 { arg.push(ch - 32); } else { arg.push(ch); }
+	}
+	true
+}
+fn intent_of(u const byte[:], arg byte[..64]&) const byte[:] {
+	arg.clear();
+	if u.len > 0 && u[0] == '@' {
+		var e = 1;
+		while e < u.len && u[e] != ' ' { e++; }
+		let name = u[1..e];
+		let rest = trim(u[e..]);
+		for ch in rest {
+			if arg.len < arg.cap { arg.push(ch); }
+		}
+		if name == "object" { return object_intent(rest); }
+		if name == "open_palm" { return ""; }
+		if name.len > 40 { return ""; }
+		var buf byte[..48] = [];
+		for ch in "ev_" { buf.push(ch); }
+		for ch in name { buf.push(ch); }
+		let ls = LINES();
+		for &l in ls {
+			if l.intent == buf { return l.intent; }
+		}
+		return "";
+	}
+	if word_after(u, "my name is", arg) || word_after(u, "my name s", arg) || word_after(u, "call me", arg) || word_after(u, "i m called", arg) { return "name_set"; }
+	if has_ph(u, "what is my name") || has_ph(u, "what s my name") || has_ph(u, "do you know my name") || has_ph(u, "who am i") { return "name_ask"; }
+	let greet = has_ph(u, "hi") || has_ph(u, "hello") || has_ph(u, "hey") || has_ph(u, "yo") || has_ph(u, "hiya") || has_ph(u, "howdy") || has_ph(u, "good morning") || has_ph(u, "good afternoon") || has_ph(u, "good evening");
+	if has_ph(u, "how are you") || has_ph(u, "how r u") || has_ph(u, "how s it going") || has_ph(u, "how are things") || has_ph(u, "what s up") || has_ph(u, "whats up") || has_ph(u, "sup") { return "how_are_you"; }
+	if has_ph(u, "who are you") || has_ph(u, "what is your name") || has_ph(u, "what s your name") || has_ph(u, "your name") || has_ph(u, "what are you") { return "who_are_you"; }
+	if has_ph(u, "what time") || has_ph(u, "the time") { return "time"; }
+	if has_ph(u, "what day") || has_ph(u, "the date") || has_ph(u, "today s date") { return "day"; }
+	if has_ph(u, "joke") || has_ph(u, "make me laugh") || has_ph(u, "something funny") { return "joke"; }
+	if has_ph(u, "what can you do") || has_ph(u, "help") || has_ph(u, "commands") { return "help"; }
+	if has_ph(u, "what do you see") || has_ph(u, "can you see") || has_ph(u, "see me") || has_ph(u, "look at this") || has_ph(u, "what is this") || has_ph(u, "what s this") { return "see"; }
+	if has_ph(u, "dance") { return "cmd_dance"; }
+	if has_ph(u, "sit") || has_ph(u, "sit down") { return "cmd_sit"; }
+	if has_ph(u, "stand up") || has_ph(u, "get up") { return "cmd_stand"; }
+	if has_ph(u, "jump") { return "cmd_jump"; }
+	if has_ph(u, "wave") { return "cmd_wave"; }
+	if has_ph(u, "spin") || has_ph(u, "turn around") { return "cmd_spin"; }
+	if has_ph(u, "come here") || has_ph(u, "come closer") || has_ph(u, "come to me") || has_ph(u, "follow me") { return "cmd_come"; }
+	if has_ph(u, "go back") || has_ph(u, "go home") || has_ph(u, "back up") { return "cmd_home"; }
+	if has_ph(u, "walk around") || has_ph(u, "explore") || has_ph(u, "wander") { return "cmd_roam"; }
+	if has_ph(u, "stop") || has_ph(u, "stay") || has_ph(u, "freeze") { return "cmd_stop"; }
+	if has_ph(u, "look at me") { return "cmd_look"; }
+	if has_ph(u, "punch") || has_ph(u, "fight") { return "cmd_punch"; }
+	if has_ph(u, "bow") { return "cmd_bow"; }
+	if has_ph(u, "thank you") || has_ph(u, "thanks") || has_ph(u, "thx") || has_ph(u, "ty") { return "thanks"; }
+	if has_ph(u, "love you") || has_ph(u, "like you") || has_ph(u, "you re cute") || has_ph(u, "you re pretty") || has_ph(u, "you re cool") || has_ph(u, "you re awesome") || has_ph(u, "you re smart") || has_ph(u, "good job") || has_ph(u, "nice") { return "compliment"; }
+	if has_ph(u, "stupid") || has_ph(u, "dumb") || has_ph(u, "hate you") || has_ph(u, "useless") || has_ph(u, "shut up") { return "insult"; }
+	if has_ph(u, "bye") || has_ph(u, "goodbye") || has_ph(u, "good night") || has_ph(u, "goodnight") || has_ph(u, "see you") || has_ph(u, "gotta go") { return "bye"; }
+	if has_ph(u, "weather") || has_ph(u, "news") || has_ph(u, "search") || has_ph(u, "google") || has_ph(u, "look up") { return "needs_brain"; }
+	if greet { return "greet"; }
+	if is_whole(u, "yes") || is_whole(u, "yeah") || is_whole(u, "yep") || is_whole(u, "sure") || is_whole(u, "ok") || is_whole(u, "okay") || is_whole(u, "no") || is_whole(u, "nope") || is_whole(u, "nah") { return "ack"; }
+	var q = u.len;
+	while q > 0 && u[q - 1] == ' ' { q--; }
+	if q > 0 && u[q - 1] == '?' { return "fallback_q"; }
+	"fallback"
+}
+fn put_num2(dst byte[:], n int&, v int) {
+	if v >= 10 { put_b(dst, n, ('0' + (v / 10) % 10) as byte); }
+	put_b(dst, n, ('0' + v % 10) as byte);
+}
+fn put_time(dst byte[:], n int&, hour int, minute int) {
+	let h = hour % 24;
+	var h12 = h % 12;
+	if h12 == 0 { h12 = 12; }
+	put_num2(dst, n, h12);
+	put_b(dst, n, ':');
+	let m = minute % 60;
+	put_b(dst, n, ('0' + m / 10) as byte);
+	put_b(dst, n, ('0' + m % 10) as byte);
+	put_b(dst, n, ' ');
+	if h >= 12 { put_str(dst, n, "PM"); } else { put_str(dst, n, "AM"); }
+}
+fn brain_reply(input const byte[:], out byte[:]) int {
+	var persona const byte[:] = "";
+	var name const byte[:] = "";
+	var cname const byte[:] = "";
+	var day const byte[:] = "";
+	var seen const byte[:] = "";
+	var person const byte[:] = "";
+	var hour = 0;
+	var minute = 0;
+	var seed = 0;
+	var pos = 0;
+	while pos < input.len {
+		var e = pos;
+		while e < input.len && input[e] != '\n' { e++; }
+		var hdr = input[pos..e];
+		if hdr.len > 0 && hdr[hdr.len - 1] == '\r' { hdr = hdr[..hdr.len - 1]; }
+		pos = e + 1;
+		if hdr.len == 0 { break; }
+		var eq = 0;
+		while eq < hdr.len && hdr[eq] != '=' { eq++; }
+		if eq >= hdr.len { continue; }
+		let key = hdr[..eq];
+		let val = hdr[eq + 1..];
+		if key == "persona" {
+			persona = val;
+		} else if key == "name" {
+			name = val;
+		} else if key == "cname" {
+			cname = val;
+		} else if key == "day" {
+			day = val;
+		} else if key == "seen" {
+			seen = val;
+		} else if key == "person" {
+			person = val;
+		} else if key == "hour" {
+			let n, ok = parse_int(trim(val));
+			if ok { hour = n; }
+		} else if key == "minute" {
+			let n, ok = parse_int(trim(val));
+			if ok { minute = n; }
+		} else if key == "seed" {
+			let n, ok = parse_int(trim(val));
+			if ok { seed = n; }
+		}
+	}
+	if pos > input.len { pos = input.len; }
+	let utt = trim(input[pos..]);
+	var arg byte[..64] = [];
+	var intent = intent_of(utt, arg);
+	if intent == "name_ask" && name.len == 0 { intent = "name_unknown"; }
+	if intent == "see" {
+		if seen.len > 0 {
+			intent = "see_obj";
+		} else if person == "1" {
+			intent = "see_person";
+		} else {
+			intent = "see_none";
+		}
+	}
+	if intent.len == 0 { return 0; }
+	let line = pick_line(intent, persona, seed);
+	if line.len == 0 { return 0; }
+	var first = 0;
+	while first < seen.len && seen[first] != ',' { first++; }
+	let seen1 = seen[..first];
+	var n = 0;
+	var i = 0;
+	while i < line.len {
+		let c = line[i];
+		if c == '{' {
+			var j = i + 1;
+			while j < line.len && line[j] != '}' { j++; }
+			if j < line.len {
+				let key = line[i + 1..j];
+				var known = true;
+				if key == "name" {
+					if intent == "name_set" {
+						put_str(out, n, arg);
+					} else if name.len == 0 {
+						put_str(out, n, "friend");
+					} else {
+						put_str(out, n, name);
+					}
+				} else if key == "cname" {
+					if cname.len == 0 { put_str(out, n, "your companion"); } else { put_str(out, n, cname); }
+				} else if key == "time" {
+					put_time(out, n, hour, minute);
+				} else if key == "day" {
+					put_str(out, n, day);
+				} else if key == "tod" {
+					if hour < 12 {
+						put_str(out, n, "morning");
+					} else if hour < 17 {
+						put_str(out, n, "afternoon");
+					} else {
+						put_str(out, n, "evening");
+					}
+				} else if key == "seen" {
+					put_str(out, n, seen1);
+				} else if key == "arg" {
+					put_str(out, n, arg);
+				} else {
+					known = false;
+				}
+				if known {
+					i = j + 1;
+					continue;
+				}
+			}
+		}
+		put_b(out, n, c);
+		i++;
+	}
+	n
+}

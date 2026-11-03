@@ -1,0 +1,170 @@
+into cv/talk.amni
+namespace talk
+lang amni
+use companion
+
+Text side of the companion: splitting action tags out of a brain's reply, and an offline brain that answers with no network. No growable arrays: outputs are written into caller-provided byte slices (stop writing at the slice's end) and lengths are returned.
+
+`tags_split(text const byte[:], clean byte[:], tags byte[:], lens i32[:]) int`: copy text into clean without its tags and write one line `kind:arg\n` per tag into tags (just `kind\n` when there is no arg); set lens[0] = clean length and lens[1] = tags length; return the tag count. A tag is `[[kind:arg]]` or `[[kind]]` where kind is 1 to 17 letters or '_' (lowercase it) and arg is up to 80 bytes without ']'. Also an action between single asterisks, `*...*` up to 40 bytes with no newline, is removed from clean and becomes a tag by the first match on its lowercased text: "wave" emote:wave, "danc" anim:dance, "nod" emote:nod, "laugh" or "giggl" emote:laugh, "bow" emote:bow, "jump" anim:jump, "spin" or "twirl" anim:spin, "sit" anim:sit, "wink" face:wink, "smil" or "grin" face:smile, "think" or "ponder" emote:think, "shrug" emote:shrug, "clap" emote:clap; otherwise it is just removed. Afterwards collapse runs of spaces in clean to one space and trim spaces at both ends.
+
+A reply line is struct `Line { intent const byte[:], persona const byte[:], text const byte[:] }`. Persona "holo" is a bubbly, playful punk girl; "dex" is a calm engineer with dry wit; "*" lines are neutral and friendly and are used for any persona that has no line of its own for that intent. Placeholders: {name} the user's name, {cname} the companion's name, {time} like "2:05 PM", {day} the weekday, {tod} "morning" (hour < 12), "afternoon" (hour < 17) or "evening", {seen} the newest seen object, {arg} the event or command argument.
+
+```table LINES Line
+greet|*|Hi {name}! Good {tod}. [[emote:wave]]
+"|*|Hello {name}, nice to see you. [[emote:wave]]
+"|holo|Heyyy {name}! Good {tod}! I was hoping you'd show up. [[emote:wave]]
+"|holo|Oh hi hi! {name}'s here, best part of my {tod}. [[emote:wave]]
+"|dex|Good {tod}, {name}. Systems nominal, coffee pending. [[emote:wave]]
+"|dex|Hey {name}. Good to see you. [[emote:nod]]
+how_are_you|*|I'm doing well, thanks for asking. How about you?
+"|holo|Honestly? Fantastic, now that you're talking to me. You?
+"|holo|Buzzing with energy! Like, a lot of it. How are you doing?
+"|dex|Running smoothly. No errors in the log today. How about you?
+"|dex|Pretty good. Fewer bugs than yesterday, which I count as a win. You?
+who_are_you|*|I'm {cname}, your companion. You can talk to me, show me things, and I'll keep you company.
+"|holo|I'm {cname}! Your holo buddy. I dance, I chat, I judge your snacks. Lovingly.
+"|dex|I'm {cname}. Engineer by trade, companion by choice. I like clean code and good questions.
+name_set|*|Nice to meet you, {arg}! I'll remember that. [[remember:name={arg}]]
+"|holo|{arg}! Ooh, I like it. Saved forever. Well, in this browser anyway. [[remember:name={arg}]] [[face:smile]]
+"|dex|{arg}. Got it, stored locally. Nice to meet you. [[remember:name={arg}]] [[emote:nod]]
+name_ask|*|You're {name}, of course.
+"|holo|You're {name}! Like I could forget. [[face:smile]]
+"|dex|You told me you're {name}. My memory's better than my handwriting.
+name_unknown|*|You haven't told me yet. What should I call you?
+"|holo|Hmm, you never told me! What's your name?
+"|dex|I don't have that on file yet. What's your name?
+time|*|It's {time}.
+"|holo|It's {time}! Time flies when you're with me.
+"|dex|{time}, give or take your clock's drift.
+day|*|Today is {day}.
+"|holo|It's {day}! Make it a good one.
+"|dex|It's {day}.
+joke|*|Why did the scarecrow win an award? He was outstanding in his field. [[emote:laugh]]
+"|*|I told my computer I needed a break. It said no problem, it would go to sleep. [[emote:laugh]]
+"|*|Why don't skeletons fight each other? They don't have the guts. [[emote:laugh]]
+"|holo|What do you call a sleeping dinosaur? A dino-snore! Ehehe. [[emote:laugh]]
+"|holo|Why did the cookie go to the doctor? It felt crummy! [[emote:laugh]]
+"|holo|I'd tell you a joke about pizza, but it's a little cheesy. [[emote:laugh]]
+"|dex|There are 10 kinds of people: those who understand binary, and those who don't. [[emote:shrug]]
+"|dex|I'd tell you a UDP joke, but you might not get it. [[emote:shrug]]
+"|dex|A SQL query walks into a bar, walks up to two tables and asks: may I join you? [[emote:shrug]]
+help|*|I can chat, dance, sit, jump, wave, walk around and come to you. Try AR mode and I'll notice waves, smiles and what you show me. Connect an AI brain in Settings for real conversation.
+"|holo|Ooh, lots! Ask me to dance, jump, spin, come here or go explore. Turn on the camera and I'll catch your waves and smiles. And hook up a brain in Settings so I get extra smart!
+"|dex|Commands: dance, sit, jump, wave, spin, come here, go back, explore, stop. The camera lets me read gestures and expressions. For open conversation, add an AI brain in Settings.
+see_obj|*|I can see a {seen}!
+"|holo|Is that a {seen}? Ooh, show me closer!
+"|dex|Looks like a {seen} to me.
+see_person|*|I can see you, {name}. [[look:user]]
+"|holo|I see you! Hi! [[emote:wave]] [[look:user]]
+"|dex|I see you clearly. Lighting's decent too. [[look:user]]
+see_none|*|I can't see anything right now. Turn on the camera in AR mode and show me.
+"|holo|Nothing yet! Flip on the camera and show me stuff!
+"|dex|No camera feed at the moment. Start AR mode and I'll take a look.
+cmd_dance|*|Let's dance! [[anim:dance]]
+"|holo|Dance break! Watch this! [[anim:dance]]
+"|holo|Ooh, my favorite! [[anim:dance]]
+"|dex|Fine, but only because nobody's recording. [[anim:dance]]
+cmd_sit|*|Taking a seat. [[anim:sit]]
+"|holo|Sitting! Comfy. [[anim:sit]]
+"|dex|Sitting down. [[anim:sit]]
+cmd_stand|*|Up I get. [[anim:idle]]
+cmd_jump|*|Jump! [[anim:jump]]
+"|holo|Boing! [[anim:jump]]
+cmd_wave|*|Hi there! [[emote:wave]]
+cmd_spin|*|Spinning! [[anim:spin]]
+"|holo|Wheee! [[anim:spin]]
+cmd_come|*|Coming over! [[walk:user]]
+"|holo|On my way! [[walk:user]]
+"|dex|Heading over. [[walk:user]]
+cmd_home|*|Heading back. [[walk:home]]
+cmd_roam|*|I'll look around a bit. [[walk:roam]]
+"|holo|Exploring time! [[walk:roam]]
+cmd_stop|*|Okay, I'll stay right here. [[walk:stop]]
+cmd_look|*|Looking at you. [[look:user]]
+cmd_punch|*|Hyah! [[anim:punch]]
+cmd_bow|*|A proper bow. [[emote:bow]]
+thanks|*|You're welcome!
+"|holo|Anytime! That's what I'm here for. [[face:smile]]
+"|dex|Happy to help.
+compliment|*|Aw, thank you. That's kind of you. [[face:smile]]
+"|holo|Stop it, you're making me glitch! Thank you! [[face:smile]] [[emote:laugh]]
+"|dex|Appreciated. I'll add that to the changelog. [[face:smile]]
+insult|*|I'm sorry you feel that way. I'll keep trying.
+"|holo|Rude! But I still like you. [[emote:shrug]]
+"|dex|Noted. Filing it under feedback. [[emote:shrug]]
+bye|*|Goodbye, {name}! See you soon. [[emote:wave]]
+"|holo|Bye bye, {name}! Come back soon, okay? [[emote:wave]]
+"|dex|Take care, {name}. [[emote:wave]]
+needs_brain|*|I can't reach the internet in offline mode. Connect an AI brain in Settings and I can help with that.
+"|holo|Ahh, I can't look that up while offline! Plug a brain into Settings and I'm all yours.
+"|dex|That needs live data, and I'm offline. Add an AI brain in Settings.
+ack|*|Got it.
+"|holo|Okie!
+"|dex|Understood.
+fallback|*|I'm in offline mode, so I only know a few things. Connect an AI brain in Settings for real conversation, or ask me what I can do.
+"|holo|Hmm, my offline brain's tiny! Hook me up to an AI in Settings and I'll chat about anything. Or say "help"!
+"|dex|That's beyond my offline rules. Connect an AI brain in Settings for that, or say "help" for what I can do now.
+fallback_q|*|Good question. I'd need an AI brain for that one. You can connect one in Settings.
+"|holo|Ooh, great question! I need my big brain for that one. Settings, then AI brain!
+"|dex|Good question. My offline rules can't answer it; an AI brain in Settings can.
+ev_enter|*|Oh, hi {name}! [[emote:wave]] [[look:user]]
+"|holo|There you are! Hiii! [[emote:wave]] [[look:user]]
+"|dex|Hey, {name}. Welcome back. [[emote:nod]] [[look:user]]
+ev_leave|*|Bye for now!
+"|holo|Aww, where'd you go?
+"|dex|Stepping out? I'll be here.
+ev_wave|*|Hi! [[emote:wave]]
+"|holo|Hiii! [[emote:wave]]
+"|dex|Hey there. [[emote:wave]]
+ev_hands_up|*|Woo! [[anim:jump]]
+"|holo|Yeah! Hands up! [[anim:jump]]
+ev_clap|*|Thank you, thank you. [[emote:bow]]
+"|holo|Ehehe, thank you! [[emote:bow]]
+ev_point|*|Over there? [[look:{arg}]]
+ev_arms_crossed|*|Uh oh, crossed arms. Everything okay?
+"|holo|Uh oh, the crossed arms! What did I do?
+"|dex|Crossed arms. Skeptical, or just cold?
+ev_t_pose|*|A perfect T-pose. Very official. [[anim:tpose]]
+"|holo|T-pose! Asserting dominance, I see. [[anim:tpose]]
+ev_approach|*|Oh, hello up close! [[face:smile]]
+ev_back_away|*|Don't go too far!
+ev_thumbs_up|*|Thumbs up right back! [[emote:thumbs_up]]
+ev_thumbs_down|*|Thumbs down? I'll do better. [[emote:shrug]]
+ev_peace|*|Peace! [[emote:peace]]
+ev_love|*|Love you too! [[face:smile]]
+ev_fist|*|Fist bump! [[emote:fist_bump]]
+ev_pointing_up|*|Up there? [[look:up]]
+ev_smile|*|I love that smile. [[face:smile]]
+"|holo|Ooh, that smile! Okay now I'm smiling too. [[face:smile]]
+"|dex|Good to see you smiling. [[face:smile]]
+ev_surprise|*|Whoa, what happened? [[face:surprised]]
+ev_frown|*|Hey, you okay? I'm here if you want to talk.
+"|holo|Hey, why the frown? Want to talk about it?
+"|dex|You look a bit down. Want to talk it through?
+ev_wink|*|Hehe, wink right back. [[face:wink]]
+ev_nod|*|Glad we agree. [[emote:nod]]
+ev_head_shake|*|No? Okay. [[emote:shrug]]
+ev_object|*|Is that a {arg}?
+"|holo|Ooh, is that a {arg}? Show me!
+"|dex|I see a {arg}.
+ev_object_food|*|Is that a {arg}? Looks tasty.
+"|holo|A {arg}! Are you sharing? Please say yes!
+"|dex|A {arg}. Fuel for the build.
+ev_object_pet|*|Oh, a {arg}! Hello there!
+"|holo|A {arg}!! Hi, cutie! Hiii!
+"|dex|A {arg}. Best coworker in the room.
+ev_object_tech|*|I see a {arg}.
+"|holo|Ooh, a {arg}! Is that where I live?
+"|dex|A {arg}. Nice hardware.
+ev_object_book|*|A book! What are you reading?
+"|holo|Ooh, a book! Read me a line?
+"|dex|A book. Anything good?
+```
+
+`pick_line(intent const byte[:], persona const byte[:], seed int) const byte[:]`: among LINES with that intent and that persona, pick the (seed mod count)-th; when the persona has none, use the "*" lines; when the intent has none at all, return "".
+
+Object categories by detector label: food for "banana", "apple", "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "cup", "bottle", "wine glass", "bowl"; pet for "dog", "cat", "bird", "horse", "teddy bear"; tech for "cell phone", "laptop", "keyboard", "mouse", "remote", "tv"; book for "book". `object_intent(label const byte[:]) const byte[:]` returns "ev_object_food", "ev_object_pet", "ev_object_tech", "ev_object_book" or "ev_object".
+
+`intent_of(u const byte[:], arg byte[..70]&) const byte[:]` on the utterance u. When u starts with '@': the word after '@' up to a space is the event name and the rest (trimmed) goes to arg; "object" maps to `object_intent(arg)`, "open_palm" to "", any other name n to "ev_" + n when that intent exists in LINES, else "". Otherwise lowercase u, turn every non-letter, non-digit byte into a space, pad with one space on each side as w, and test in this order (a phrase matches when " phrase " occurs in w): name_set for "my name is X", "my name s X", "call me X" or "i m called X" where X is the next word (letters only, up to 24, first letter uppercased in arg; skip when there is no next word); name_ask for "what is my name", "what s my name", "do you know my name", "who am i"; greet for "hi", "hello", "hey", "yo", "hiya", "howdy", "good morning", "good afternoon", "good evening"; how_are_you for "how are you", "how r u", "how s it going", "how are things", "what s up", "whats up", "sup"; who_are_you for "who are you", "what is your name", "what s your name", "your name", "what are you"; time for "what time", "the time"; day for "what day", "the date", "today s date"; joke for "joke", "make me laugh", "something funny"; help for "what can you do", "help", "commands"; see for "what do you see", "can you see", "see me", "look at this", "what is this", "what s this"; cmd_dance "dance"; cmd_sit "sit", "sit down"; cmd_stand "stand up", "get up"; cmd_jump "jump"; cmd_wave "wave"; cmd_spin "spin", "turn around"; cmd_come "come here", "come closer", "come to me", "follow me"; cmd_home "go back", "go home", "back up"; cmd_roam "walk around", "explore", "wander"; cmd_stop "stop", "stay", "freeze"; cmd_look "look at me"; cmd_punch "punch", "fight"; cmd_bow "bow"; thanks "thank you", "thanks", "thx", "ty"; compliment "love you", "like you", "you re cute", "you re pretty", "you re cool", "you re awesome", "you re smart", "good job", "nice"; insult "stupid", "dumb", "hate you", "useless", "shut up"; bye "bye", "goodbye", "good night", "goodnight", "see you", "gotta go"; needs_brain "weather", "news", "search", "google", "look up"; ack when the whole trimmed text is one of "yes", "yeah", "yep", "sure", "ok", "okay", "no", "nope", "nah"; then fallback_q when the original u ends with '?' (ignoring trailing spaces), else fallback. A greeting followed by more words that match a later intent (like "hi what time is it") uses the later intent instead.
+
+`brain_reply(input const byte[:], out byte[:]) int`: input starts with header lines `key=value` up to the first empty line, then the utterance. Keys: persona, name, cname, hour, minute, day, seen (comma separated, newest first), person ("1" when someone is on camera), seed. Find the intent with `intent_of`. Special cases: name_ask with an empty name uses name_unknown; see becomes see_obj when seen is not empty, else see_person when person is "1", else see_none. An empty intent returns 0. Pick the line with `pick_line(intent, persona, seed)`, then fill the placeholders: {name} = name, or "friend" when empty, except that a name_set line uses arg; {cname} = cname, or "your companion" when empty; {time} = hour and minute as 12-hour time like "2:05 PM" (hour 0 is 12 AM, 12 is 12 PM); {day} = day; {tod} from hour; {seen} = the first entry of seen; {arg} = arg. Write the result into out and return its length.

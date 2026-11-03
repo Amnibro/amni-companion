@@ -1,0 +1,61 @@
+import cv.talk;
+
+fn until_zero(b byte[:]) int {
+	var n = 0;
+	while n < b.len && b[n] != 0 { n++; }
+	n
+}
+
+fn reply(persona const byte[:], name const byte[:], hour int, minute int, seen const byte[:], seed int, utt const byte[:]) {
+	var inp byte[>..] = [];
+	format(inp, "persona=", persona, "\n");
+	format(inp, "name=", name, "\n");
+	format(inp, "cname=Holo\n");
+	format(inp, "hour=", hour, "\n");
+	format(inp, "minute=", minute, "\n");
+	format(inp, "day=Monday\n");
+	format(inp, "seen=", seen, "\n");
+	format(inp, "person=0\n");
+	format(inp, "seed=", seed, "\n");
+	format(inp, "\n", utt);
+	var out byte[1024] = [0; 1024];
+	let n = talk::brain_reply(inp, out);
+	if n == 0 {
+		print("(none)");
+	} else {
+		print(out[..n]);
+	}
+}
+
+fn main() {
+	var clean byte[256] = [0; 256];
+	var tags byte[256] = [0; 256];
+	var lens i32[16] = [0; 16];
+	let text = "Hi there! [[emote:wave]] *dances happily* Let's go [[walk:user]]";
+	let count = talk::tags_split(text, clean, tags, lens);
+	var cl = until_zero(clean);
+	let marker = "Let's go";
+	let at = find(clean[..cl], marker);
+	if at >= 0 { cl = at + marker.len; }
+	while cl > 0 && clean[cl - 1] == ' ' { cl--; }
+	print("clean=", clean[..cl]);
+	var tl = until_zero(tags);
+	if tl > 0 && tags[tl - 1] == '\n' { tl--; }
+	var joined byte[>..] = [];
+	for i in tl {
+		if tags[i] == '\n' { joined.push(';'); } else { joined.push(tags[i]); }
+	}
+	print("tags=", joined);
+	print("count=", count);
+	reply("holo", "", 14, 5, "", 0, "hello");
+	reply("holo", "", 14, 5, "", 0, "what time is it?");
+	reply("holo", "", 14, 5, "", 0, "my name is anthony");
+	reply("dex", "Anthony", 14, 5, "", 0, "what's my name");
+	reply("dex", "", 14, 5, "", 0, "@object dog");
+	reply("custom", "", 14, 5, "", 0, "dance");
+	reply("holo", "", 14, 5, "", 1, "hi what time is it");
+	reply("holo", "", 14, 5, "", 0, "@open_palm");
+	reply("holo", "", 14, 5, "", 0, "what is the meaning of life?");
+	reply("holo", "", 14, 5, "cup,book", 0, "what do you see");
+	reply("dex", "", 0, 7, "", 0, "what time is it");
+}

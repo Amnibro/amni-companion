@@ -1,0 +1,26 @@
+into cv/qm.amni
+namespace qm
+lang amni
+use math
+
+Vector and quaternion math for the companion's skeleton work. Quaternions are x, y, z, w with w the scalar part; `q_mul(a, b)` is the Hamilton product a·b, meaning rotate by b first and then by a. Right-handed, Y up.
+
+Struct `V3 { x real, y real, z real }` and struct `Q4 { x real, y real, z real, w real }`.
+
+`v3(x, y, z) V3`, `v_add(a, b) V3`, `v_sub(a, b) V3`, `v_scale(a V3, k real) V3`, `v_dot(a, b) real`, `v_cross(a, b) V3`, `v_len(a) real`, `v_lerp(a, b, t) V3`, and `v_norm(a) V3` which returns a/|a|, or (0, 0, 0) when |a| < 1e-12.
+
+`q_ident() Q4` is (0, 0, 0, 1). `q_conj(q) Q4` negates x, y, z. `q_norm(q) Q4` divides by the length, returning identity when the length is below 1e-12. `q_dot(a, b) real`.
+
+`q_mul(a, b Q4) Q4`: x = aw*bx + ax*bw + ay*bz - az*by, y = aw*by - ax*bz + ay*bw + az*bx, z = aw*bz + ax*by - ay*bx + az*bw, w = aw*bw - ax*bx - ay*by - az*bz.
+
+`q_rot(q Q4, v V3) V3` rotates v by unit q: t = 2·cross(q.xyz, v), result v + w·t + cross(q.xyz, t).
+
+`q_axis_angle(axis V3, ang real) Q4` for a unit axis and an angle in radians.
+
+`q_from_to(a, b V3) Q4`: the shortest rotation taking unit vector a onto unit vector b. d = dot(a, b). When d < -0.999999, rotate 180 degrees about cross(a, (1,0,0)) normalized, or about cross(a, (0,1,0)) normalized if that first cross is shorter than 1e-6. Otherwise c = cross(a, b) and the result is q_norm((c.x, c.y, c.z, 1 + d)).
+
+`q_slerp(a, b Q4, t real) Q4`: spherical interpolation along the shorter arc (negate b when dot < 0); when the dot is above 0.9995 use normalized linear interpolation instead.
+
+`q_from_axes(x, y, z V3) Q4`: the rotation whose matrix columns are the orthonormal axes x, y, z (it maps (1,0,0) to x, (0,1,0) to y, (0,0,1) to z). Use the trace method with m00 = x.x, m11 = y.y, m22 = z.z, m21 = y.z, m12 = z.y, m02 = z.x, m20 = x.z, m10 = x.y, m01 = y.x: if trace > 0, s = 0.5/sqrt(trace+1), w = 0.25/s, x = (m21-m12)·s, y = (m02-m20)·s, z = (m10-m01)·s; else pick the largest diagonal entry and use the matching standard branch. Normalize the result.
+
+`q_get(a real[:], at int) Q4` reads a[at..at+4] as x, y, z, w; `q_put(a real[:], at int, q Q4)` writes it. `v_get(a real[:], at int) V3` and `v_put(a real[:], at int, v V3)` do the same with three values.
