@@ -55,13 +55,32 @@ When the camera is on and you ask what it sees, the connected brain gets a singl
 
 - `core/` is the companion's core, written in **Gold** (plain English specs) and compiled to checked **Helium**, then to WebAssembly (`web/companion.wasm`). It does the skeleton matching, motion retargeting, the pose solver behind look-at and emotes, body-tracking filtering and solving, gesture and expression recognition, reply-tag parsing and the offline brain.
 - `web/` is the shell: three.js rendering, MediaPipe Tasks vision models (pose, hands and gestures, face, objects), Web Speech, WebXR, and the panels.
-- `art/` holds the stock character concepts. `tools/reskin.py` rigs a humanoid GLB: it fills the mesh into voxels, centers the limb joints in the limbs, and weights each vertex by geodesic distance through the body, so hair and skirts don't follow the arms and legs.
+- `art/` holds the stock character concepts and the body and face templates. `tools/reskin.py` rigs a humanoid GLB: it fills the mesh into voxels, centers the limb joints in the limbs, and weights each vertex by geodesic distance through the body, so hair and skirts don't follow the arms and legs.
 
 ```bash
 tools/build.sh   # rebuild core/*.amni from Gold (if installed) and web/companion.wasm
 tools/test.sh    # build and run the core tests natively, then rebuild the wasm
-tools/stock.sh   # rebuild the stock models: Amni-CAD bake of the TRELLIS mesh at 70,000 triangles, then tools/reskin.py
+tools/stock.sh   # rebuild Holo and Dex with tools/character.sh
 ```
+
+## Make your own companion from concept art
+
+`tools/character.sh` turns a front-view concept image, plus a TRELLIS mesh generated from it, into a rigged and textured companion in one command:
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r tools/requirements.txt
+FACE=1 HAIR=1 tools/character.sh nova nova_trellis.glb nova_concept.png female 1.68
+```
+
+Each step is also a `tools/reskin.py` command you can run on its own:
+
+1. **Base mesh and skeleton.** 70,000 triangles with an auto-rig from Mosaic and Amni-CAD, or pass `RIG=` a rigged GLB of the same mesh.
+2. **Proportions** (`--graft`). Rigs the mesh, then scales each bone toward the CC0 Universal Base Characters template, so the head, torso, arms and legs land in human ratios.
+3. **Face depth** (`--face`, on with `FACE=1`). Finds the face with MediaPipe and gives it the template's depth (eye sockets, nose, cheekbones, chin) while keeping every vertex's front-view position, so painted features stay where they are.
+4. **Hair clearance** (`--hairback`, on with `HAIR=1`). Moves long hair behind the shoulders and frees it from the arm bones, so arms don't pass through it.
+5. **Texture** (`--rebake`). Builds a new overlap-free UV atlas, projects the concept art onto everything visible from the front (warped to fit with optical flow), and fills the sides and back with the TRELLIS colors matched to the concept.
+
+The face step renders landmarks in headless Chromium through `tools/marks.mjs`: set `PW` to a folder whose `node_modules` has `playwright-core`, and `CHROME` to a Chromium or headless-shell binary.
 
 ## License
 

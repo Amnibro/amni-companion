@@ -1,11 +1,11 @@
 import * as THREE from 'three'
 import {GLTFLoader} from '../vendor/three/loaders/GLTFLoader.js'
 const loader=new GLTFLoader(),HEIGHT=1.7,FPS=30
-const ANIM={idle:'Idle_Loop',talk:'Idle_Talking_Loop',walk:'Walk_Loop',run:'Jog_Fwd_Loop',dance:'Dance_Loop',sit:['Sitting_Enter','Sitting_Idle_Loop'],stand:['Sitting_Exit'],jump:['Jump_Start','Jump_Land'],punch:['Punch_Jab','Punch_Cross'],tpose:'A_TPose',fix:'Fixing_Kneeling',interact:'Interact',pickup:'PickUp_Table',roll:'Roll',spell:['Spell_Simple_Enter','Spell_Simple_Shoot','Spell_Simple_Exit'],crouch:'Crouch_Idle_Loop',hit:'Hit_Chest',swim:'Swim_Idle_Loop',drive:'Driving_Loop',push:'Push_Loop',sword:'Sword_Attack',death:'Death01'}
+const ANIM={idle:'Relax_Loop',talk:'Relax_Talk_Loop',walk:'Walk_Loop',run:'Jog_Fwd_Loop',dance:'Dance_Loop',sit:['Sitting_Enter','Sitting_Idle_Loop'],stand:['Sitting_Exit'],jump:['Jump_Start','Jump_Land'],punch:['Punch_Jab','Punch_Cross'],tpose:'A_TPose',fix:'Fixing_Kneeling',interact:'Interact',pickup:'PickUp_Table',roll:'Roll',spell:['Spell_Simple_Enter','Spell_Simple_Shoot','Spell_Simple_Exit'],crouch:'Crouch_Idle_Loop',hit:'Hit_Chest',swim:'Swim_Idle_Loop',drive:'Driving_Loop',push:'Push_Loop',sword:'Sword_Attack',death:'Death01'}
 const MORPH={open:/^(jawopen|mouthopen|aa|a|vrc\.v_aa|fcl_mth_a|mth_a|viseme_aa|mouth_a|v_aa)$/i,blink:/^(eyeblink|blink|eyesclosed|eyes_closed|fcl_eye_close|eye_close|blink_both|eyeblinkleft|eyeblinkright|blinkleft|blinkright)$/i,smile:/^(mouthsmile|smile|happy|joy|fcl_all_joy|fun|mouthsmileleft|mouthsmileright|fcl_mth_smile)$/i,surprised:/(surprise|fcl_all_surprised|eyewide)/i,sad:/(^sad$|sorrow|fcl_all_sorrow|mouthfrown)/i,wink:/^(wink|winkleft|eyeblinkleft|blink_l|blinkleft|fcl_eye_close_l)$/i}
 const v3=(x,y,z)=>new THREE.Vector3(x,y,z),sm=u=>u<=0?0:u>=1?1:u*u*(3-2*u),osc=(t,f)=>Math.sin(t*f*Math.PI*2)
 const EMOTE={
-  wave:{d:2.4,w:t=>[[11,v3(-.55,.8,.22)],[12,v3(.28*osc(t,2.2)-.05,1,.18)]]},
+  wave:{d:2.4,w:t=>[[11,v3(-.8,-.42,.42)],[12,v3(.2*osc(t,2.2)-.22,1,.15)]]},
   heart:{d:2.2,w:()=>[[7,v3(.45,.85,.2)],[8,v3(-.7,.7,.2)],[11,v3(-.45,.85,.2)],[12,v3(.7,.7,.2)]]},
   clap:{d:2,w:t=>{const s=.07+.22*Math.abs(osc(t,2.5));return[[7,v3(.25,-.35,.9)],[8,v3(-s-.15,.35,.9)],[11,v3(-.25,-.35,.9)],[12,v3(s+.15,.35,.9)]]}},
   thumbs_up:{d:1.8,w:()=>[[11,v3(-.3,-.25,.9)],[12,v3(-.05,.75,.75)]]},
@@ -53,16 +53,24 @@ export async function loadAvatar(core,src,lib){
   return new Avatar({core,g,root,holder,mixer,actions,f,restQ,morphs,lib,cons})
 }
 class Avatar{
-  constructor(o){Object.assign(this,o);this.slot=o.f.slot;this.bones=o.f.bones;this.rest=o.f.rest;this.cur=null;this.queue=[];this.emotes=[];this.face={};this.faceT={};this.talk=0;this.blinkT=2;this.look=null;this.lookW=0;this.live=new Float64Array(264);this.want=new Float64Array(110);this.track=null;this.trackW=0;this.time=0
+  constructor(o){Object.assign(this,o);this.slot=o.f.slot;this.bones=o.f.bones;this.rest=o.f.rest;this.cur=null;this.queue=[];this.emotes=[];this.face={};this.faceT={};this.talk=0;this.blinkT=2;this.look=null;this.lookW=0;this.live=new Float64Array(264);this.want=new Float64Array(110);this.track=null;this.trackW=0;this.time=0;this.relax()
     this.mixer.addEventListener('finished',e=>{if(e.action!==this.cur)return;const n=this.queue.shift();n?this.playClip(n,.2):this.base()});this.base(0)}
   has(n){return!!this.actions[n]}
-  base(fade=.35){this.playClip(this.sitting?'Sitting_Idle_Loop':this.talk>0&&this.has('Idle_Talking_Loop')?'Idle_Talking_Loop':'Idle_Loop',fade)}
+  base(fade=.35){this.playClip(this.sitting?'Sitting_Idle_Loop':this.talk>0?'Relax_Talk_Loop':'Relax_Loop',fade)}
+  relax(){const s=this.slot,B=this.bones,hips=B[s[0]],hp=hips.position.clone(),nf=4*FPS+1,times=Float32Array.from({length:nf},(_,i)=>i/FPS),W=new Float64Array(110),Q=THREE.Quaternion,rr=this.root.quaternion.clone(),keep=B.map(b=>b.quaternion.clone());this.root.quaternion.identity()
+    for(const talk of[0,1]){const vals=s.map(()=>new Float32Array(4*nf)),pv=new Float32Array(3*nf)
+      for(let i=0;i<nf;i++){const ph=Math.PI*2*i/(nf-1),g=k=>talk?Math.max(0,Math.sin(ph*2+k*Math.PI)):0;B.forEach((b,k)=>b.quaternion.copy(this.restQ[k]));const L=this.livePack();W.fill(0)
+        for(const[u,f,x,k]of[[7,8,1,0],[11,12,-1,1]]){const d=v3(x*.15,-.985,.1+.02*Math.sin(ph+k)).normalize(),e=v3(x*(.05-.1*g(k)),-.92+.62*g(k),.38+.45*g(k)).normalize();W.set([d.x,d.y,d.z,0,2],5*u);W.set([e.x,e.y,e.z,0,2],5*f)}
+        for(const[k,a,ax]of[[3,.012*Math.sin(ph),'x'],[5,talk?.05*Math.sin(ph*3):.015*Math.sin(ph+1),'x']]){const q=new Q().setFromAxisAngle(v3(ax==='x'?1:0,0,0),a).multiply(new Q().fromArray(L,12*k));W.set([q.x,q.y,q.z,q.w,1],5*k)}
+        const out=this.core.solve(s,L,W);s.forEach((bi,k)=>{bi>=0&&vals[k].set(out[5*k+4]>.5?out.subarray(5*k,5*k+4):this.restQ[bi].toArray(),4*i)});pv.set([hp.x,hp.y,hp.z],3*i)}
+      const tracks=s.flatMap((bi,k)=>bi<0?[]:[new THREE.QuaternionKeyframeTrack(B[bi].uuid+'.quaternion',times,vals[k])]).concat(new THREE.VectorKeyframeTrack(hips.uuid+'.position',times,pv)),a=this.mixer.clipAction(new THREE.AnimationClip(talk?'Relax_Talk_Loop':'Relax_Loop',(nf-1)/FPS,tracks));a.loop=THREE.LoopRepeat;this.actions[a.getClip().name]=a}
+    B.forEach((b,k)=>b.quaternion.copy(keep[k]));this.root.quaternion.copy(rr)}
   playClip(name,fade=.3){const a=this.actions[name];if(!a||a===this.cur&&a.isRunning())return!!a;a.reset().setEffectiveWeight(1).play();this.cur?a.crossFadeFrom(this.cur,fade,false):a.fadeIn(fade);this.cur=a;return true}
   anim(n){if(n==='spin'){this.spin=1.2;return true}if(n==='idle'||n==='stand'){const was=this.sitting;this.sitting=false;this.queue=[];was&&this.has('Sitting_Exit')?this.playClip('Sitting_Exit'):this.base();return true}const s=ANIM[n];if(!s)return false;const l=[].concat(s).filter(x=>this.has(x));if(!l.length)return false;this.sitting=n==='sit';this.queue=l.slice(1);return this.playClip(l[0])}
   loco(on,run){on?this.playClip(run&&this.has('Jog_Fwd_Loop')?'Jog_Fwd_Loop':'Walk_Loop',.25):(this.cur===this.actions.Walk_Loop||this.cur===this.actions.Jog_Fwd_Loop)&&this.base(.3)}
   emote(n){if(n==='tpose')return this.anim('tpose');const e=EMOTE[n];if(!e)return false;this.emotes=this.emotes.filter(x=>x.n!==n);this.emotes.push({n,e,t:0});return true}
   setFace(n,v=1,hold=2.5){this.faceT[n]=v;hold&&setTimeout(()=>this.faceT[n]=0,hold*1000)}
-  speaking(on){this.talk=on?1:0;!this.sitting&&(this.cur===this.actions.Idle_Loop||this.cur===this.actions.Idle_Talking_Loop)&&this.base(.5)}
+  speaking(on){this.talk=on?1:0;!this.sitting&&(this.cur===this.actions.Relax_Loop||this.cur===this.actions.Relax_Talk_Loop)&&this.base(.5)}
   lookAt(p,w=1){this.look=p;this.lookTarget=w}
   pose(out,w=1){this.track=out;this.trackTarget=w}
   applyCons(){const Q=THREE.Quaternion,V=THREE.Vector3;for(const c of this.cons){const ds=new Q().copy(c.sr).invert().multiply(c.s.quaternion)
