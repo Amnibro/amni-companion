@@ -1,5 +1,6 @@
 numpy
 scipy
 pillow
-opencv-python-headless
 xatlas
+scikit-image
+fast-simplification

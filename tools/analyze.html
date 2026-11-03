@@ -1,0 +1,14 @@
+<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0">
+<script type="module">
+import {FilesetResolver,PoseLandmarker,FaceLandmarker,ImageSegmenter} from '/web/vendor/mediapipe/vision_bundle.mjs'
+const fs=await FilesetResolver.forVisionTasks(new URL('/web/vendor/mediapipe',location.href).href),u=f=>new URL(f,location.href).href
+const pose=await PoseLandmarker.createFromOptions(fs,{baseOptions:{modelAssetPath:u('/@cache/pose_landmarker_heavy.task')},runningMode:'IMAGE',numPoses:1}),face=await FaceLandmarker.createFromOptions(fs,{baseOptions:{modelAssetPath:u('/web/vendor/mediapipe/face_landmarker.task')},runningMode:'IMAGE',numFaces:1,minFaceDetectionConfidence:.2}),seg=await ImageSegmenter.createFromOptions(fs,{baseOptions:{modelAssetPath:u('/@cache/selfie_multiclass_256x256.tflite')},runningMode:'IMAGE',outputCategoryMask:true,outputConfidenceMasks:false})
+const cv=(w,h)=>{const c=document.createElement('canvas');c.width=w;c.height=h;return c}
+globalThis.analyze=async url=>{const im=new Image();im.src=url;await im.decode();const W=im.width,H=im.height,c=cv(W,H),g=c.getContext('2d');g.fillStyle='#7f7f7f';g.fillRect(0,0,W,H);g.drawImage(im,0,0)
+  const p=pose.detect(c),L=p.landmarks[0];let fl=null
+  if(L){const k=[0,1,2,3,4,5,6,7,8,9,10].map(i=>L[i]),xs=k.map(q=>q.x*W),ys=k.map(q=>q.y*H),cx=(Math.min(...xs)+Math.max(...xs))/2,cy=(Math.min(...ys)+Math.max(...ys))/2,s=Math.max(Math.max(...xs)-Math.min(...xs),Math.abs(L[11].x-L[12].x)*W*.5)*2.4,S=512,fc=cv(S,S),fg=fc.getContext('2d');fg.fillStyle='#7f7f7f';fg.fillRect(0,0,S,S);fg.drawImage(c,cx-s/2,cy-s/2,s,s,0,0,S,S)
+    const f=face.detect(fc).faceLandmarks[0];fl=f?f.map(q=>({x:(cx-s/2+q.x*s)/W,y:(cy-s/2+q.y*s)/H,z:q.z*s/W})):null}
+  const m=seg.segment(c).categoryMask,arr=m.getAsUint8Array(),mc=cv(m.width,m.height),id=mc.getContext('2d').createImageData(m.width,m.height);for(let i=0;i<arr.length;i++){id.data[4*i]=arr[i];id.data[4*i+3]=255}mc.getContext('2d').putImageData(id,0,0)
+  return{w:W,h:H,pose:L||null,face:fl,classes:mc.toDataURL('image/png')}}
+globalThis.ready=true
+</script></body></html>
