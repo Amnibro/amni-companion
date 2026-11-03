@@ -11,6 +11,6 @@ for g in *_test.gold; do
   sed -n '/^expect:$/,$p' "$g" | tail -n +2 > "$out/$t.want"
   if "$out/$t" | diff -u "$out/$t.want" - > "$out/$t.diff"; then echo "pass $t"; else echo "FAIL $t"; cat "$out/$t.diff"; fail=1; fi
 done
-HC_LIB=$H/hc/lib "$H/build/hc" companion.amni ../web/companion.wasm --web >/dev/null
+HC_LIB=$H/hc/lib "$H/build/hc" companion.amni ../web/companion.wasm --web >/dev/null && rm -f ../web/helium.js
 echo "wasm $(stat -c%s ../web/companion.wasm) bytes"
 exit $fail
