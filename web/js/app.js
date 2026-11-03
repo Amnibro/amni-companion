@@ -14,7 +14,7 @@ const COOL={wave:7000,clap:7000,hands_up:7000,thumbs_up:7000,thumbs_down:7000,pe
 let S=store.load(),core,lib,av=null,avMeta={name:'',persona:'neutral'},senses=null,listener=null,xr=null,mode='room',busy=false,talking=false,lastReact=0,home=new THREE.Vector3(),go=null,roam=0,lookOff=null,history=S.remember?S.history||[]:[],ctrl=null,roomView=null,greeted=false
 const save=()=>{S.history=history;store.save(S)}
 const canvas=$('#stage'),renderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:true});renderer.setPixelRatio(Math.min(2,devicePixelRatio));renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.05;renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap
-const scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera(35,1,.05,100),clock=new THREE.Clock();camera.position.set(0,1.27,4.2)
+const scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera(35,1,.05,100),clock=new THREE.Clock();camera.position.set(0,1.27,4.7)
 scene.environment=new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(),.04).texture
 const keyL=new THREE.DirectionalLight(0xffffff,1.7);keyL.position.set(1.4,3.2,2.1);keyL.castShadow=true;keyL.shadow.mapSize.set(1024,1024);Object.assign(keyL.shadow.camera,{left:-2,right:2,top:2,bottom:-2,near:.5,far:10});keyL.shadow.radius=4;scene.add(keyL)
 const rim=new THREE.DirectionalLight(0xa98bff,1.1);rim.position.set(-2,2.4,-2.8);scene.add(rim,new THREE.HemisphereLight(0xc4dcff,0x1e1530,.55))
