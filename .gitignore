@@ -11,3 +11,6 @@ art/gen.json
 art/wave_*.png
 art/photo.py
 web/helium.js
+.venv/
+__pycache__/
+.stock/

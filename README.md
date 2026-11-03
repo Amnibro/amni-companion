@@ -55,11 +55,12 @@ When the camera is on and you ask what it sees, the connected brain gets a singl
 
 - `core/` is the companion's core, written in **Gold** (plain English specs) and compiled to checked **Helium**, then to WebAssembly (`web/companion.wasm`). It does the skeleton matching, motion retargeting, the pose solver behind look-at and emotes, body-tracking filtering and solving, gesture and expression recognition, reply-tag parsing and the offline brain.
 - `web/` is the shell: three.js rendering, MediaPipe Tasks vision models (pose, hands and gestures, face, objects), Web Speech, WebXR, and the panels.
-- `art/` holds the stock character concepts.
+- `art/` holds the stock character concepts. `tools/reskin.py` rigs a humanoid GLB: it fills the mesh into voxels, centers the limb joints in the limbs, and weights each vertex by geodesic distance through the body, so hair and skirts don't follow the arms and legs.
 
 ```bash
 tools/build.sh   # rebuild core/*.amni from Gold (if installed) and web/companion.wasm
 tools/test.sh    # build and run the core tests natively, then rebuild the wasm
+tools/stock.sh   # rebuild the stock models: Amni-CAD bake of the TRELLIS mesh at 70,000 triangles, then tools/reskin.py
 ```
 
 ## License

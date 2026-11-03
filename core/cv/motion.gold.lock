@@ -66,8 +66,20 @@ fn retarget_corr(sslot i32[:], srest real[:], tslot i32[:], trest real[:], corr 
 		}
 	}
 }
-=== 6eff6d0274023cf1
+=== -64c3670e3fbf9488
 import math;
+fn leg_ratio(sslot i32[:], srest real[:], tslot i32[:], trest real[:]) real {
+	if sslot[14] >= 0 && sslot[16] >= 0 && sslot[18] >= 0 && sslot[20] >= 0 && tslot[14] >= 0 && tslot[16] >= 0 && tslot[18] >= 0 && tslot[20] >= 0 {
+		let den = (rest_p0(srest, 14).y - rest_p0(srest, 16).y) + (rest_p0(srest, 18).y - rest_p0(srest, 20).y);
+		if den > 1e-7 {
+			return ((rest_p0(trest, 14).y - rest_p0(trest, 16).y) + (rest_p0(trest, 18).y - rest_p0(trest, 20).y)) / den;
+		}
+	}
+	let sy = rest_p0(srest, 0).y;
+	if sy > 1e-7 { return rest_p0(trest, 0).y / sy; }
+	return 1.0;
+}
+=== -3f9373089067a59b
 fn rf_dir(want real[:], k int, d qm::V3) {
 	want[5 * k] = d.x;
 	want[5 * k + 1] = d.y;
@@ -80,84 +92,86 @@ fn rf_d(sw real[:], srest real[:], k int) qm::Q4 {
 	qm::q_mul(qm::q_get(sw, 4 * k), qm::q_conj(rest_w0(srest, k)))
 }
 fn rf_leg(sslot i32[:], srest real[:], tslot i32[:], trest real[:], corr real[:], sw real[:], want real[:], u int, l int, f int) {
-	if sslot[0] < 0 || tslot[0] < 0 { return; }
-	if sslot[u] < 0 || tslot[u] < 0 { return; }
-	if sslot[l] < 0 || tslot[l] < 0 { return; }
-	if sslot[f] < 0 || tslot[f] < 0 { return; }
+	if sslot[u] < 0 || sslot[l] < 0 || sslot[f] < 0 || sslot[0] < 0 { return; }
+	if tslot[u] < 0 || tslot[l] < 0 || tslot[f] < 0 || tslot[0] < 0 { return; }
 	let d0 = rf_d(sw, srest, 0);
 	let du = rf_d(sw, srest, u);
 	let dl = rf_d(sw, srest, l);
 	let hs = qm::q_rot(d0, qm::v_sub(rest_p0(srest, u), rest_p0(srest, 0)));
 	let ks = qm::q_rot(du, qm::v_sub(rest_p0(srest, l), rest_p0(srest, u)));
 	let vs = qm::v_add(ks, qm::q_rot(dl, qm::v_sub(rest_p0(srest, f), rest_p0(srest, l))));
-	let sy = rest_p0(srest, 0).y;
-	let r = if sy > 1e-7 { rest_p0(trest, 0).y / sy } else { 1.0 };
+	let r = leg_ratio(sslot, srest, tslot, trest);
 	let ht = qm::q_rot(qm::q_mul(d0, qm::q_get(corr, 0)), qm::v_sub(rest_p0(trest, u), rest_p0(trest, 0)));
-	let lift = qm::v3(0.0, rest_p0(trest, f).y - r * rest_p0(srest, f).y, 0.0);
-	let big_l = qm::v_add(qm::v_sub(qm::v_scale(qm::v_add(hs, vs), r), ht), lift);
+	var xa = qm::q_rot(d0, qm::v3(1.0, 0.0, 0.0));
+	if sslot[14] >= 0 && sslot[18] >= 0 {
+		xa = qm::v_norm(qm::q_rot(d0, qm::v_sub(rest_p0(srest, 14), rest_p0(srest, 18))));
+	}
+	let ll = qm::v_add(qm::v_scale(vs, r), qm::v_scale(xa, qm::v_dot(xa, qm::v_sub(qm::v_scale(hs, r), ht))));
 	let a = rf_len(qm::v_sub(rest_p0(trest, l), rest_p0(trest, u)));
 	let b = rf_len(qm::v_sub(rest_p0(trest, f), rest_p0(trest, l)));
-	let lo = abs(a - b) + 1e-4;
-	let hi = 0.999 * (a + b);
-	let d = max(lo, min(hi, rf_len(big_l)));
-	let n = qm::v_norm(big_l);
+	let d = min(max(rf_len(ll), abs(a - b) + 1e-4), 0.999 * (a + b));
+	let n = qm::v_norm(ll);
 	let ns = qm::v_norm(vs);
 	let p0 = qm::v_sub(ks, qm::v_scale(ns, qm::v_dot(ks, ns)));
-	var pv = qm::v_sub(p0, qm::v_scale(n, qm::v_dot(p0, n)));
-	if rf_len(p0) < 1e-6 || rf_len(pv) < 1e-6 {
+	let pp = qm::v_sub(p0, qm::v_scale(n, qm::v_dot(p0, n)));
+	var pole = qm::v_norm(pp);
+	if rf_len(p0) < 1e-6 || rf_len(pp) < 1e-6 {
 		let fw = qm::q_rot(d0, qm::v3(0.0, 0.0, 1.0));
-		pv = qm::v_sub(fw, qm::v_scale(n, qm::v_dot(fw, n)));
+		pole = qm::v_norm(qm::v_sub(fw, qm::v_scale(n, qm::v_dot(fw, n))));
 	}
-	let p = qm::v_norm(pv);
 	let x = (a * a - b * b + d * d) / (2.0 * d);
 	let h = sqrt(max(0.0, a * a - x * x));
-	let kn = qm::v_add(qm::v_scale(n, x), qm::v_scale(p, h));
+	let kn = qm::v_add(qm::v_scale(n, x), qm::v_scale(pole, h));
 	let ft = qm::v_scale(n, d);
 	rf_dir(want, u, qm::v_norm(kn));
 	rf_dir(want, l, qm::v_norm(qm::v_sub(ft, kn)));
 }
 fn retarget_frame(sslot i32[:], srest real[:], tslot i32[:], trest real[:], corr real[:], sw real[:], want real[:]) {
 	for k in 22 {
-		for c in 5 { want[5 * k + c] = 0.0; }
+		want[5 * k] = 0.0;
+		want[5 * k + 1] = 0.0;
+		want[5 * k + 2] = 0.0;
+		want[5 * k + 3] = 1.0;
+		want[5 * k + 4] = 0.0;
 		if sslot[k] >= 0 && tslot[k] >= 0 {
 			let dk = rf_d(sw, srest, k);
-			let w = qm::q_mul(qm::q_mul(dk, qm::q_get(corr, 4 * k)), rest_w0(trest, k));
-			qm::q_put(want, 5 * k, w);
+			qm::q_put(want, 5 * k, qm::q_mul(qm::q_mul(dk, qm::q_get(corr, 4 * k)), rest_w0(trest, k)));
 			want[5 * k + 4] = 1.0;
 		}
 	}
 	rf_leg(sslot, srest, tslot, trest, corr, sw, want, 14, 15, 16);
 	rf_leg(sslot, srest, tslot, trest, corr, sw, want, 18, 19, 20);
 }
-=== -222211967c12307b
+=== 7648d959fc713478
 fn retarget_clip(sslot i32[:], srest real[:], tslot i32[:], trest real[:], nf int, frames real[:], out real[:]) {
 	var corr real[88] = [0.0; 88];
+	retarget_corr(sslot, srest, tslot, trest, corr);
+	let ratio = leg_ratio(sslot, srest, tslot, trest);
 	var sw real[88] = [0.0; 88];
 	var want real[110] = [0.0; 110];
 	var loc real[110] = [0.0; 110];
-	retarget_corr(sslot, srest, tslot, trest, corr);
-	let sy = srest[5];
-	let ty = trest[5];
-	let ratio = if sy > 1e-7 { ty / sy } else { 1.0 };
 	for f in nf {
-		let fb = 91 * f;
-		for i in 88 { sw[i] = frames[fb + i]; }
+		let base = 91 * f;
+		for i in 88 { sw[i] = frames[base + i]; }
 		retarget_frame(sslot, srest, tslot, trest, corr, sw, want);
 		solve_local(tslot, trest, want, loc);
 		for k in 22 {
-			for c in 4 { out[fb + 4 * k + c] = loc[5 * k + c]; }
+			var neg = false;
 			if f > 0 {
 				let pb = 91 * (f - 1) + 4 * k;
-				var d = 0.0;
-				for c in 4 { d += out[fb + 4 * k + c] * out[pb + c]; }
-				if d < 0.0 {
-					for c in 4 { out[fb + 4 * k + c] = -out[fb + 4 * k + c]; }
-				}
+				let dt = out[pb] * loc[5 * k] + out[pb + 1] * loc[5 * k + 1] + out[pb + 2] * loc[5 * k + 2] + out[pb + 3] * loc[5 * k + 3];
+				neg = dt < 0.0;
+			}
+			for c in 4 {
+				let v = loc[5 * k + c];
+				out[base + 4 * k + c] = if neg { -v } else { v };
 			}
 		}
-		for c in 3 {
-			out[fb + 88 + c] = trest[4 + c] + (frames[fb + 88 + c] - srest[4 + c]) * ratio;
-		}
+		let sp = qm::v_get(frames, base + 88);
+		let hp = qm::v_add(rest_p0(trest, 0), qm::v_scale(qm::v_sub(sp, rest_p0(srest, 0)), ratio));
+		out[base + 88] = hp.x;
+		out[base + 89] = hp.y;
+		out[base + 90] = hp.z;
 	}
 }
 === -18876e3fb95b51bd
