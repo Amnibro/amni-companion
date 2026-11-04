@@ -78,11 +78,25 @@ It takes about 20 seconds and needs no 3D generator. What happens:
 2. **Fit a real body.** A CC0 base body from Quaternius (full skeleton with finger bones, clean shoulders, elbows and hands) is posed and proportioned to the concept, then widened or slimmed slice by slice until its outline matches. Limbs stay round, and the posture stays upright.
 3. **Fit the face.** The template face keeps its real depth (brow, nose, lips, chin) while its features move onto the concept's landmarks, so it holds up in profile and when the head turns.
 4. **Add hair and skirts.** Hair becomes a sculpted volume grown from the concept's hair outline and the scalp. A skirt or dress becomes a pleated tube sized row by row from the outline. Both get their own bones, so arms and legs don't drag them.
-5. **Paint it.** The concept is projected onto everything the front view shows. The back and sides are filled from the same part, never across parts, so no face on the back of the head and no skirt plaid on legs.
+5. **Shoes.** If the concept's feet are covered, the base body's toes are shrink-wrapped into a toe box, so boots and sneakers don't read as bare feet.
+6. **Paint it.** The concept is projected onto everything the front view shows. The back is rebuilt by rules, never by copying the front:
+   - The back of the head is hair, continued strand by strand from the hair beside the face, with a natural parting.
+   - Front-only details (necklaces, pendants, buckles, buttons, drawstrings, pockets, logos, cleavage shading) are found and painted out before anything is mirrored.
+   - Tops and skirts continue their side fabric around the back, so plaids, stripes and belts wrap while the details don't. Straps and necklines keep their shape.
+   - Skin on the back is smooth skin, and hair sides sample the strands rather than stretching the silhouette edge.
+7. **Review it.** `tools/review.mjs` renders a contact sheet (front, three-quarter back, side, back, close-ups of the head, torso and shoes, plus walk, sit, dance and idle) to `.stock/review/<id>.png`. Look at it before you ship a character.
+
+Have a back view too? Pass it and the back is painted from it instead (same pose, same framing, plain background):
+
+```bash
+tools/character.sh nova nova_front.png female 1.68 --back nova_back.png
+```
+
+`AMNI_SRC_DEBUG=1` paints every texel by where its color came from (green front, magenta back view, yellow rebuilt back, blue mirrored, red filled), which makes texture problems easy to find.
 
 The analysis runs in headless Chromium through `tools/analyze.mjs`: set `PW` to a folder whose `node_modules` has `playwright-core`, and `CHROME` to a Chromium or headless-shell binary. The first run downloads two MediaPipe models (Apache-2.0) to `~/.cache/amni-companion/mediapipe`.
 
-Limits: the back is inferred from the front, loose garments other than skirts and dresses (capes, big coats) follow the body, and hands, glasses and jewelry are painted rather than modeled.
+Limits: without a back view the back is a best guess (no hoods, back pockets or back prints), loose garments other than skirts and dresses (capes, big coats) follow the body, hands, glasses and jewelry are painted rather than modeled, and thick hair seen from the side is smoother than in the concept.
 
 ## License
 

@@ -1,5 +1,6 @@
 import io,json,os,struct,subprocess,sys,xatlas,numpy as np
-from scipy.spatial import cKDTree
+from scipy.spatial import cKDTree,ConvexHull
+from scipy import sparse
 from PIL import Image,ImageDraw
 from scipy import ndimage
 from skimage.measure import marching_cubes
@@ -228,22 +229,80 @@ def xweights(name,X,H,T):
     else:
         yw,yh=X[:,1].max(),X[:,1].min();t=np.clip((yw-X[:,1])/(yw-yh),0,1);xc=(X[:,0].max()+X[:,0].min())/2;c=np.clip((X[:,0]-xc)/np.maximum(np.abs(X[:,0]-xc).max(),1e-6),-1,1);wl=.6*t*(.5+.5*c);wr=.6*t*(.5-.5*c);J[:,0],J[:,1],J[:,2]=ix['pelvis'],ix['thigh_l'],ix['thigh_r'];W[:,0],W[:,1],W[:,2]=1-wl-wr,wl,wr
     return J,W
-def bakeall(Pe,Pf,F,pid,grp,owner_parts,cm,img,al,cls,kinds,sk=None,unroll={},sz=2048):
+def toebox(X,p,T,it=4):
+    nm=T['names'];X=X.copy();sm=lambda t:t*t*(3-2*t);pk=np.unique(np.round(X/1e-5).astype(np.int64),axis=0,return_inverse=True)[1].ravel();F=p['F'];n=pk.max()+1;e=np.r_[pk[F[:,[0,1]]],pk[F[:,[1,2]]],pk[F[:,[2,0]]]];A=sparse.coo_matrix((np.ones(len(e)),(e[:,0],e[:,1])),(n,n)).tocsr();A=((A+A.T)>0).astype(float);A=sparse.diags(1/np.maximum(A.sum(1).A1,1))@A
+    for sd in('_l','_r'):
+        w=sum((p['W']*(p['J']==nm.index(b+sd))).sum(1) for b in('foot','ball','ball_leaf') if b+sd in nm);sel=np.nonzero(w>.05)[0]
+        if (w>.5).sum()<20:continue
+        P=X[sel];E=ConvexHull(X[w>.5]).equations;dist=-(P@E[:,:3].T+E[:,3]);k=dist.argmin(1);dm=np.clip(dist[np.arange(len(P)),k],0,.03);ws=sm(np.clip((w[sel]-.05)/.45,0,1));X[sel]=P+(ws*dm)[:,None]*E[k,:3]
+        Y=np.zeros((n,3));np.add.at(Y,pk,X);Y/=np.bincount(pk,minlength=n)[:,None];f=np.zeros(n);np.maximum.at(f,pk[sel],ws)
+        for _ in range(it):Y=Y+.5*f[:,None]*(A@Y-Y)
+        X[sel]=Y[pk[sel]]
+    return X
+def shod(d,cls,al):
+    P,_=marks(d);r0=int(min(P[27,1],P[28,1]));z=al[r0:];return z.sum()<50 or (cls[r0:][z]==2).mean()<.35
+def backview(path,al,work):
+    bj=os.path.join(work,'back.json');bd=analyze(path,bj);im=np.asarray(Image.open(path).convert('RGBA')).copy();ba=im[...,3]>127;bc=np.asarray(Image.open(bj.replace('.json','_cls.png')).resize(ba.shape[::-1],Image.NEAREST))[...,0]
+    if ba.all():ba=cutout(im,bc,bd)
+    im,ba=im[:,::-1],ba[:,::-1];h,w=al.shape;rf,rb=np.nonzero(al.any(1))[0],np.nonzero(ba.any(1))[0];k=(rf[-1]-rf[0])/max(1,rb[-1]-rb[0]);lo=lambda a,r:np.nonzero(a[int(r[0]+.6*(r[-1]-r[0])):].any(0))[0].mean();ox=lo(al,rf)-lo(ba,rb)*k;oy=rf[0]-rb[0]*k
+    yy,xx=np.mgrid[0:h,0:w];sy=np.clip(((yy-oy)/k).astype(int),0,ba.shape[0]-1);sx=np.clip(((xx-ox)/k).astype(int),0,ba.shape[1]-1);inb=((yy-oy)/k>=0)&((yy-oy)/k<ba.shape[0])&((xx-ox)/k>=0)&((xx-ox)/k<ba.shape[1]);m=ba[sy,sx]&inb;m=ndimage.binary_erosion(m,iterations=2)
+    return m,pad(im[sy,sx,:3].astype(np.float32)/255,m)
+def declutter(C,cls,R0,Z,m,tau=.09):
+    h,w=R0.shape;B=C.copy();D=np.zeros((h,w),bool);area=R0.sum();Bm=C.copy()
+    for k in(2,4,5):
+        R=R0&(cls==k)&Z
+        if R.sum()<50:continue
+        L,Rr=runs(R);yy,xx=np.nonzero(R);key=yy*w+L[yy,xx];u,inv=np.unique(key,return_inverse=True);inv=inv.ravel();cnt=np.bincount(inv).astype(float);px=C[yy,xx];mu=np.stack([np.bincount(inv,px[:,i])/cnt for i in range(3)],1)
+        for _ in range(3):dv=np.abs(px-mu[inv]).max(1);keep=dv<=1.2*(np.bincount(inv,dv,len(u))/cnt)[inv]+1e-3;cn=np.maximum(np.bincount(inv,keep,len(u)),1);mu=np.stack([np.bincount(inv,px[:,i]*keep,len(u))/cn for i in range(3)],1)
+        Bm[yy,xx]=mu[inv];dv=np.abs(px-mu[inv]).max(1);pp=(xx-L[yy,xx])/np.maximum(Rr[yy,xx]-L[yy,xx]+1,1);f_=(dv>tau)&(pp>.04)&(pp<.96);cand=np.zeros((h,w),bool);cand[yy[f_],xx[f_]]=True;lab,nl=ndimage.label(cand)
+        if not nl:continue
+        sl=ndimage.find_objects(lab);wdm=np.zeros((h,w));wdm[yy,xx]=(Rr-L)[yy,xx]+1
+        for i_,s_ in enumerate(sl):
+            cm_=lab[s_]==i_+1;ar=cm_.sum();cr=cm_.sum(1);wz=wdm[s_];rw=np.array([wz[i][cm_[i]].max() if cr[i] else 1 for i in range(len(cr))]);lo=(cr/np.maximum(rw,1)<.6)[:,None];ar<.025*area and ar>=2 and D[s_].__setitem__(cm_&lo,True)
+    D=ndimage.binary_dilation(D,iterations=3)&R0;B[D]=Bm[D]
+    return B
+def interior(B,cls,fg,sg):
+    B=B.copy()
+    for k in np.unique(cls[fg]):
+        A=fg&(cls==k);In=ndimage.binary_erosion(A,iterations=3);In=In if In.sum()>50 else A;E=A&~In;ri,ci=ndimage.distance_transform_edt(~In,return_distances=False,return_indices=True);B[E]=B[ri[E],ci[E]]
+        if k in(2,3):m_=In.astype(np.float32);B[A]=(np.stack([ndimage.gaussian_filter(B[...,i]*m_,sg) for i in range(3)],-1)/np.maximum(ndimage.gaussian_filter(m_,sg),1e-3)[...,None])[A]
+    return B
+def runs(M):
+    h,w=M.shape;k=np.broadcast_to(np.arange(w),(h,w));st=M&~np.c_[np.zeros((h,1),bool),M[:,:-1]];en=M&~np.c_[M[:,1:],np.zeros((h,1),bool)];return np.maximum.accumulate(np.where(st,k,-1),1),np.minimum.accumulate(np.where(en,k,w)[:,::-1],1)[:,::-1]
+WRAP=(0,1,4,5,6,14,15);FAM=np.array([0,1,2,2,4,4,6,7,8,9])
+def bakeall(Pe,Pf,F,pid,grp,owner_parts,cm,img,al,cls,kinds,sk=None,unroll={},sz=2048,bk=None,Bc=None):
     cx,sole,m=cm;_,u0,inv=np.unique(np.c_[np.round(Pf/1e-5).astype(np.int64),pid],axis=0,return_index=True,return_inverse=True);xa=xatlas.Atlas();xa.add_mesh(Pf[u0].astype(np.float32),inv.ravel()[F].astype(np.uint32));po=xatlas.PackOptions();po.resolution=sz;po.padding=4;po.bilinear=True;xa.generate(pack_options=po);vm,F2,UV=xa[0];F2=F2.astype(np.int64);vm=u0[vm]
     h,w=al.shape;Zb=np.full((h,w),-np.inf);own=np.full((h,w),-1)
     for k,(X,Fk) in enumerate(owner_parts):_,A,Z=render(X,Fk,np.zeros((len(X),2)),None,-cx*m,sole*m,m,(h,w));nb=A&(Z>Zb);Zb[nb]=Z[nb];own[nb]=k
-    ok=al.copy();ok=ndimage.binary_erosion(ok,iterations=2);Cc=pad(img[...,:3].astype(np.float32)/255,ok)
+    ok=ndimage.binary_erosion(al,iterations=2);I0=img[...,:3].astype(np.float32)/255;bgp=I0[~al];bgc=np.median(bgp,0) if len(bgp)>100 else None;fg=ok&(np.abs(I0-bgc).max(-1)>.08) if bgc is not None else ok;Cc=pad(I0,fg)
     _,ys,xs,tt,bc=texels(UV,F2,sz);V=vm[F2[tt]];X=(Pe[V]*bc[...,None]).sum(1);Nv=snorm(Pe,F);n=(Nv[V]*bc[...,None]).sum(1);n/=np.maximum(np.linalg.norm(n,axis=1,keepdims=True),1e-9);pt=pid[V[:,0]];gt=grp[V[:,0]]
     c=np.clip((X[:,0]/m+cx).astype(int),0,w-1);r=np.clip((sole-X[:,1]/m).astype(int),0,h-1);inside=(X[:,0]/m+cx>=0)&(X[:,0]/m+cx<w)&(sole-X[:,1]/m>=0)&(sole-X[:,1]/m<h);vis=inside&(Zb[r,c]-X[:,2]<.006)&(n[:,2]>.08)
-    ko=np.array(kinds)[pt];cl=cls[r,c];hc=ndimage.binary_erosion(al&(cls==1),iterations=max(2,int(.005/m)))[r,c];hd_=ndimage.binary_dilation(al&(cls==1),iterations=max(2,int(.006/m)))[r,c];band=(r>=sk[0])&(r<=sk[1]+int(.008/m)) if sk else np.zeros(len(r),bool);bad=((ko=='body')&(hd_|band))|((ko=='hair')&~hc);vis&=~bad;mir=inside&(own[r,c]==pt)&al[r,c]&~((ko=='body')&(cl==3)&(n[:,2]<0))&~bad
+    ko=np.array(kinds)[pt];cl=cls[r,c];HC=ndimage.binary_erosion(al&(cls==1),iterations=max(2,int(.005/m)));HD=ndimage.binary_dilation(al&(cls==1),iterations=max(2,int(.006/m)));BD=np.zeros((h,w),bool);sk and BD.__setitem__(slice(sk[0],sk[1]+int(.008/m)+1),True);hc,hd_,band=HC[r,c],HD[r,c],BD[r,c];bad=((ko=='body')&(hd_|band))|((ko=='hair')&~hc);vis&=~bad;mir=inside&(own[r,c]==pt)&al[r,c]&~((ko=='body')&(cl==3)&(n[:,2]<0))&~bad
     src=vis|mir;col=Cc[r,c].copy();fc_=ndimage.binary_erosion(al&(cls==3),iterations=max(2,int(.01/m)));lum=Cc[r,c].mean(1);sk_l=np.median(Cc[fc_].mean(1)) if fc_.any() else 0
+    Gi=np.full((h,w),-1);Gi[r[vis],c[vis]]=gt[vis];wr=np.zeros(len(r),bool);Zk=None if bk is None else np.maximum.reduce([render(X_*np.array([1,1,-1]),Fk,np.zeros((len(X_),2)),None,-cx*m,sole*m,m,(h,w))[2] for X_,Fk in owner_parts]);back=None if bk is None else bk[r,c]&~vis&(n[:,2]<-.05)&np.isin(ko,['body','hair','skirt'])&(-X[:,2]>=Zk[r,c]-.006);Zw=np.isin(ndimage.grey_dilation(Gi,size=5),WRAP);Bk=declutter(declutter(Cc,cls,fg&~HD,Zw,m),cls,fg&~HD,Zw,m);Bk=interior(Bk,cls,fg,.015*h)
+    mb=mir&~vis&(ko=='body');col[mb]=Bk[r[mb],c[mb]]
+    for g in(0,1,6):
+        M=ndimage.binary_closing(Gi==g,iterations=2)&fg&~(HD|BD);q=np.nonzero((gt==g)&~vis&(ko=='body')&M[r,c])[0]
+        if not len(q):continue
+        L,R=runs(M);rr,cc=r[q],c[q];l0,r0=L[rr,cc],R[rr,cc];wd=r0-l0+1;d0,d1=cc-l0,r0-cc;sw=np.maximum(2,(.2*wd).astype(int));t=np.minimum(d0,d1)%(2*sw);off=np.where(t<sw,t,2*sw-1-t);mg=np.minimum((.12*wd).astype(int),wd//2-sw).clip(0);sc=np.clip(np.where(d0<=d1,l0+mg+off,r0-mg-off),l0,r0);us=(FAM[cls[rr,sc]]==FAM[cls[rr,cc]])|~mir[q]
+        Gn=np.ones((h,w),np.float32);lm=Bk.mean(-1);sg=.02*h
+        Cr=Bk.copy()
+        for k in np.unique(cls[M]):Mk=(M&(cls==k)).astype(np.float32);Lb=ndimage.gaussian_filter(lm*Mk,sg)/np.maximum(ndimage.gaussian_filter(Mk,sg),1e-3);dn=np.maximum(ndimage.gaussian_filter1d(Mk,.15*w,1),1e-3);Lr=ndimage.gaussian_filter1d(lm*Mk,.15*w,1)/dn;Gn[Mk>0]=np.clip(Lr/np.maximum(Lb,.02),.75,1.6)[Mk>0];k>3 and Cr.__setitem__(Mk>0,np.stack([ndimage.gaussian_filter1d(Bk[...,i]*Mk,.15*w,1)/dn for i in range(3)],-1)[Mk>0])
+        col[q]=np.where(us[:,None],np.clip(.5*Bk[rr,sc]*Gn[rr,sc][:,None]+.5*Cr[rr,sc],0,1),Bk[rr,cc]);src[q]=True;wr[q]=us
     for k,cen in unroll.items():
-        sel=pt==k;y=X[sel,1];o=np.argsort(cen[:,0]);xc,zc,a=[np.interp(y,cen[o,0],cen[o,i]) for i in(1,2,3)];u=np.abs(np.arctan2(X[sel,2]-zc,X[sel,0]-xc))/np.pi;cs=np.clip(((xc+a*(1-2*u)*.97)/m+cx).astype(int),0,w-1);rs=np.clip((sole-np.maximum(y,cen[:,0].min()+.022)/m).astype(int),0,h-1);col[sel]=Cc[rs,cs];src[sel]=True
+        sel=pt==k;y=X[sel,1];o=np.argsort(cen[:,0]);xc,zc,a=[np.interp(y,cen[o,0],cen[o,i]) for i in(1,2,3)];u=np.abs(np.arctan2(X[sel,2]-zc,X[sel,0]-xc))/np.pi;bh=X[sel,2]<zc;ds=np.minimum(u,1-u);t=ds%.4;off=.06+np.where(t<.2,t,.4-t);u=np.where(bh,np.where(u<.5,off,1-off),u);cs=np.clip(((xc+a*(1-2*u)*.97)/m+cx).astype(int),0,w-1);rs=np.clip((sole-np.maximum(y,cen[:,0].min()+.022)/m).astype(int),0,h-1);col[sel]=Cc[rs,cs];src[sel]=True
+    hs=(gt==30)&(ko=='hair');M=ndimage.binary_erosion(HC,iterations=2)&fg
+    if hs.any() and M.sum()>=20:
+        ri,ci=ndimage.distance_transform_edt(~M,sampling=(400,1),return_distances=False,return_indices=True);L,R=runs(M);q=np.nonzero(hs)[0];rr,cc=r[q],c[q];a,b=ri[rr,cc],ci[rr,cc];l0,r0=L[a,b],R[a,b];wd=r0-l0+1
+        ky=np.unique(a*w+l0,return_inverse=True)[1].ravel();zl=np.full(ky.max()+1,np.inf);zh=-zl.copy();np.minimum.at(zl,ky,X[q,2]);np.maximum.at(zh,ky,X[q,2]);xc=(l0+r0)/2;ah=wd/2;dx=cc-xc;th=np.arctan2(dx,(X[q,2]-(zl[ky]+zh[ky])/2)/m);uu=1-np.abs(1-2*np.abs(th)/np.pi);ins=(cc>=l0)&(cc<=r0);do=np.where(cc<l0,l0-cc,cc-r0);t=do%(2*wd);off=np.where(t<wd,t,2*wd-1-t)
+        at=np.abs(th);wt=np.clip((at-.52)/.44,0,1);wt=wt*wt*(3-2*wt);xl=xc+np.sign(dx)*ah*np.where(at<=np.pi/4,np.sin(at),.707*(np.pi-at)/(.75*np.pi));sc=np.where(ins,np.clip(np.rint(cc*(1-wt)+xl*wt),l0,r0).astype(int),np.where(cc<l0,l0+off,r0-off));Tv,Bv=[x_.T for x_ in runs(M.T)];dr=rr-a;Hh=np.maximum(Bv[a,sc]-Tv[a,sc]+1,1);tv=np.abs(dr)%(2*Hh);ov=np.where(tv<Hh,tv,2*Hh-1-tv);sr=np.clip(np.where(dr>0,a-ov,np.where(dr<0,a+ov,a)),0,h-1);k_=~vis[q]|(wt>0);col[q[k_]]=Cc[sr[k_],sc[k_]];src[q[k_]]=True;wr[q[k_&~vis[q]]]=True
+    if back is not None:col[back]=Bc[r[back],c[back]];src|=back;wr&=~back
     for g in np.unique(gt):
         sel=gt==g;a=sel&src&~((cl==3)&(g!=0));a=sel&src&(lum>=.75*sk_l) if g==6 else a;a=a if a.any() else sel&src;b=sel&~(a|vis) if g==6 else sel&~src
         if b.any() and a.any():kd=cKDTree(X[a]);d,i=kd.query(X[b],k=min(24,int(a.sum())));col[np.nonzero(b)[0]]=np.median(Cc[r[a],c[a]][i],axis=1)
+    os.environ.get('AMNI_SRC_DEBUG') and col.__setitem__(slice(None),np.select([q_[:,None] for q_ in(vis,back if back is not None else np.zeros(len(r),bool),wr,mir)],[np.array(c_)[None] for c_ in([0,.8,0],[.9,0,.9],[.9,.8,0],[0,0,.9])],.9*np.eye(3)[0]))
     tex=np.zeros((sz,sz,3),np.float32);msk=np.zeros((sz,sz),bool);tex[ys,xs]=col;msk[ys,xs]=True;tex=pad(tex,msk)
-    print('  texels',len(tt),'front',int(vis.sum()),'mirror',int((mir&~vis).sum()),'filled',int((~src).sum()))
+    print('  texels',len(tt),'front',int(vis.sum()),'back view',int(back.sum()) if back is not None else 0,'wrapped',int(wr.sum()),'mirror',int((mir&~vis&~wr).sum()),'filled',int((~src).sum()))
     return vm,F2,UV,tex
 def mat4(t,q):
     M=np.eye(4);M[:3,:3]=Rr.from_quat(q).as_matrix();M[:3,3]=t;return M
@@ -267,7 +326,7 @@ def cutout(im,cls,d):
     P,_=marks(d);ank=int(min(P[27,1],P[28,1]));fg=(np.abs(a-B).max(-1)>16)&ndimage.binary_dilation(per,iterations=max(3,int(.02*S)));low=np.arange(h)[:,None]>ank;fg&=~low|ndimage.binary_dilation(per,iterations=3);fg|=ndimage.binary_erosion(per,iterations=max(2,int(.006*S)))
     fg=ndimage.binary_opening(fg,iterations=2);lab,n=ndimage.label(fg);fg=lab==(np.bincount(lab.ravel())[1:].argmax()+1) if n else fg;return ndimage.binary_fill_holes(fg)
 ROOT=os.path.dirname(os.path.dirname(os.path.abspath(__file__)));UBC=os.path.join(ROOT,'art','ubc')
-def make(concept,body,hgt,out,blend=.5,work=None):
+def make(concept,body,hgt,out,blend=.5,work=None,back=None):
     work=work or os.path.join(ROOT,'.stock','img3d');os.makedirs(work,exist_ok=True);B={'female':'Female','male':'Male'}[body];T=tpl(os.path.join(UBC,f'Superhero_{B}_FullBody.gltf'));T['parts']=[p for p in T['parts'] if p['name']!='Eyebrows'];tj=os.path.join(UBC,f'tpl_{body}.json')
     if not os.path.exists(tj):png=os.path.join(work,'tpl.png');look(T,png);analyze(png,tj);os.path.exists(tj.replace('.json','_cls.png')) and os.remove(tj.replace('.json','_cls.png'))
     tm=json.load(open(tj));aj=os.path.join(work,'concept.json');d=analyze(concept,aj);im=np.asarray(Image.open(concept).convert('RGBA')).copy();al=im[...,3]>127;cls=np.asarray(Image.open(aj.replace('.json','_cls.png')).resize(al.shape[::-1],Image.NEAREST))[...,0]
@@ -279,13 +338,13 @@ def make(concept,body,hgt,out,blend=.5,work=None):
     cx,sole,m=cm;Fp=marks(d)[1];CFm=np.c_[(Fp[:,0]-cx)*m,(sole-Fp[:,1])*m];TL=lm3d(T,TF);hd=T['names'].index('Head');pv=T['names'].index('pelvis');He=None
     def fitted(bl):
         Xs,H,R=deform(T,mc,mt,glob,bl,gw);A=T['A'].copy();src=(TL@A[hd][:,:3].T+A[hd][:,3])[:,:2];o=np.zeros(2) if He is None else (H[hd]-He[hd])[:2];Xs=swell(Xs,T,H,G,cm,0 if He is None else H[pv,1]-He[pv,1]);D,_,_=facewarp(Xs,T,src,CFm+o);return [X+Dp for X,Dp in zip(Xs,D)],H,R
-    Xe,He,Re=fitted(1);Xf,Hf,Rf=fitted(blend);ex=[]
+    Xe,He,Re=fitted(1);Xf,Hf,Rf=fitted(blend);ex=[];ft=shod(d,cls,al);ft and (Xe.__setitem__(bi,toebox(Xe[bi],bp,T)),Xf.__setitem__(bi,toebox(Xf[bi],bp,T)));bk,Bc=backview(back,al,work) if back else (None,None)
     hv=hairvol(Xe[bi],bp['F'],He,T,hair,al&(cls==3),al,cm,(CFm[152,1]+(He[hd,1]-He[hd,1]),CFm[13,1]));ex+=[('Hair',)+hv] if hv else [];sm_=skirtmesh(Xe[bi],sk,al,cm) if sk else None;ex+=[('Skirt',)+sm_[:2]] if sk else []
     parts=[dict(kind='body',Pe=X,Pf=Y,F=p['F'],J=p['J'],W=p['W'],g=(lambda g_:np.where((g_==0)&(X[:,1]<CFm[152,1]),6,g_))(np.array([20 if p['name']=='Eyes' else grpof(T['names'][j]) for j in p['J'][np.arange(len(X)),p['W'].argmax(1)]]))) for X,Y,p in zip(Xe,Xf,T['parts'])]
     for n,X,F in ex:J,W=xweights(n,X,He,T);parts.append(dict(kind=n.lower(),Pe=X,Pf=X+(W[...,None]*(Hf[J]-He[J])).sum(1),F=F,J=J,W=W,g=np.full(len(X),30 if n=='Hair' else 31)))
     o=np.cumsum([0]+[len(p['Pe']) for p in parts]);Pe,Pf,J,W,g=[np.concatenate([p[k] for p in parts]) for k in('Pe','Pf','J','W','g')];F=np.concatenate([p['F']+o[i] for i,p in enumerate(parts)]);pid=np.concatenate([np.full(len(p['Pe']),i) for i,p in enumerate(parts)])
-    vm,F2,UV,tex=bakeall(Pe,Pf,F,pid,g,[(p['Pe'],p['F']) for p in parts],cm,im,al,cls,[p['kind'] for p in parts],sk,{len(parts)-1:sm_[2]} if sk else {});N=snorm(Pf[vm],F2)
+    vm,F2,UV,tex=bakeall(Pe,Pf,F,pid,g,[(p['Pe'],p['F']) for p in parts],cm,im,al,cls,[p['kind'] for p in parts],sk,{len(parts)-1:sm_[2]} if sk else {},bk=bk,Bc=Bc);N=snorm(Pf[vm],F2)
     Wr=np.array([np.r_[np.c_[Rf[k]@T['W'][k][:3,:3],Hf[k]],[[0,0,0,1]]] for k in range(len(T['names']))]);glb(out,T['names'],T['par'],Wr,Pf[vm],N,UV,J[vm],W[vm],F2,tex)
-    print(out,f'{len(vm)} verts {len(F2)} tris','skirt' if sk else 'no skirt','hair' if hv else 'no hair',f'height {Pf[:,1].max()*39.37:.1f}in ({Pf[:,1].max():.2f}m)',f'{os.path.getsize(out)/1048576:.1f} MB')
+    print(out,f'{len(vm)} verts {len(F2)} tris','skirt' if sk else 'no skirt','hair' if hv else 'no hair','shoes' if ft else 'bare feet','back view' if back else 'front only',f'height {Pf[:,1].max()*39.37:.1f}in ({Pf[:,1].max():.2f}m)',f'{os.path.getsize(out)/1048576:.1f} MB')
     return out
-if __name__=='__main__':make(sys.argv[1],sys.argv[2],float(sys.argv[3]),sys.argv[4],*map(float,sys.argv[5:6]))
+if __name__=='__main__':a=sys.argv[1:];b=a[a.index('--back')+1] if '--back' in a else None;a=[x for i,x in enumerate(a) if x!='--back' and (i==0 or a[i-1]!='--back')];make(a[0],a[1],float(a[2]),a[3],*map(float,a[4:5]),back=b)

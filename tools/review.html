@@ -1,0 +1,15 @@
+<!doctype html><html><head><meta charset="utf-8"><script type="importmap">{"imports":{"three":"/web/vendor/three/three.module.js"}}</script></head><body style="margin:0">
+<script type="module">
+import * as THREE from 'three'
+import {RoomEnvironment} from '/web/vendor/three/environments/RoomEnvironment.js'
+import {loadCore} from '/web/js/core.js'
+import {loadLibrary,loadAvatar} from '/web/js/avatar.js'
+const TW=384,TH=576,R=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});R.setSize(TW,TH);R.outputColorSpace=THREE.SRGBColorSpace;R.toneMapping=THREE.ACESFilmicToneMapping
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x9aa0aa);scene.environment=new THREE.PMREMGenerator(R).fromScene(new RoomEnvironment(),.04).texture
+const key=new THREE.DirectionalLight(0xffffff,1.7);key.position.set(1.4,3.2,2.1);scene.add(key,new THREE.HemisphereLight(0xc4dcff,0x1e1530,.55))
+const cam=new THREE.PerspectiveCamera(30,TW/TH,.05,100),core=await loadCore(new URL('/web/companion.wasm',location.href)),lib=await loadLibrary(core,new URL('/web/anim/AnimationLibrary_Godot_Standard.gltf',location.href).href)
+globalThis.review=async(src,views)=>{const av=await loadAvatar(core,src,lib);scene.add(av.root);const cols=4,rows=Math.ceil(views.length/cols),cv=Object.assign(document.createElement('canvas'),{width:cols*TW,height:rows*TH}),g=cv.getContext('2d');g.font='bold 18px sans-serif'
+  views.forEach(([label,clip,t,yaw,cy,dist,ty],i)=>{av.queue=[];av.emotes=[];if(clip==='rest'){av.mixer.stopAllAction();av.bones.forEach((b,k)=>b.quaternion.copy(av.restQ[k]))}else{av.playClip(clip,0);av.cur.time=t;av.mixer.update(1e-4)}av.root.updateMatrixWorld(true);const a=yaw*Math.PI/180;cam.position.set(Math.sin(a)*dist,cy,Math.cos(a)*dist);cam.lookAt(0,ty,0);R.render(scene,cam);const x=i%cols*TW,y=Math.floor(i/cols)*TH;g.drawImage(R.domElement,x,y);g.fillStyle='#0008';g.fillRect(x,y,TW,30);g.fillStyle='#fff';g.fillText(label,x+9,y+21)})
+  return cv.toDataURL('image/png')}
+globalThis.ready=true
+</script></body></html>
