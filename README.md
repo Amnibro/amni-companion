@@ -72,8 +72,13 @@ Holo and Dex are specs, not hand-edited meshes. `art/holo.json` and `art/dex.jso
 3. Dresses it in CC0 MakeHuman clothing, or generates clothing MakeHuman lacks: tank top, pleated tartan skirt, studded belt, striped socks, fingerless gloves, choker, chain, hoodie with hood, pocket and drawstrings, and glasses fitted to the face. Clothing drapes over the body, and covered skin is removed so it can't poke through.
 4. Grows sculpted hair from the scalp: a short swept-back cut with faded sides, or hair pulled back into a three-strand braid with curtain bangs. The hairline is read from the portrait and follows the temples and ears.
 5. Paints extra makeup if asked (eyeshadow, winged liner, lips, blush, brows), extends the beard along the jaw, adds soft facial shading, rigs the game-engine skeleton, and writes the `.glb` plus a review sheet in `.stock/review/`.
+6. Bakes the head's own texture set with the Amni-CAD human engine (written in Helium through Gold): the head's UV islands get a 4096×2048 texture of their own (about 2.5× sharper than the body texture), the portrait is projected into it with its baked-in lighting removed, and it writes a normal map of creases and stubble plus a map of occlusion, roughness (oily T-zone, wet lips, matte brows and beard) and pore strength. `skinmaps` in the spec tunes it (`relief`, `delight`, `ao`, `rough`, `tzone`, `lips`, `brows`, `beard`, `pores`).
 
 Change a value and rerun to adjust a character. The builder reads MakeHuman assets from `AMNI_MH` (default `~/.cache/amni-mh`) and downloads the ANSUR II tables on first use.
+
+### Skin shading
+
+Materials tagged `amni: skin` in their glTF extras get the app's skin shader: light scattering through the skin from a pre-integrated table (`web/models/skin_lut.png`, from Penner and Borshukov's pre-integrated skin shading with d'Eon and Luebke's six-Gaussian skin profile), red light taken from the smoother surface normal, two specular lobes, and a seamless pore tile (`web/models/pores.png`) scaled to about 8 mm of skin. Eyes tagged `amni: eye` get a wet cornea layer. Both images come from the human engine (`human lut`, `human pores`).
 
 ## Make your own companion from concept art
 
