@@ -13,7 +13,7 @@
 
 ## Features
 
-- **Stock companions.** Holo (bubbly, punk-pop) and Dex (calm engineer, dry wit), modeled with Amni-CAD, plus a plain mannequin.
+- **Stock companions.** Holo (bubbly, punk-pop, 5'2") and Dex (calm engineer, dry wit, 5'11"), built with the Amni-CAD character builder on bodies fitted to real measurements, plus a plain mannequin.
 - **Bring your own model.** Drop in any rigged humanoid `.glb` or `.vrm`: Mixamo, VRoid (VRM 0.x and 1.0, including node constraints), Ready Player Me, Unreal, Blender Rigify and Amni-CAD rigs. The skeleton is matched automatically, and the built-in animation library is retargeted onto it. Models stay in your browser (IndexedDB).
 - **Bring your own brain.** Claude, OpenAI, Grok, Gemini, OpenRouter, Ollama, LM Studio or any OpenAI-compatible endpoint, called directly from your browser with your own key. A small offline brain works with no key and no network.
 - **It moves when it talks.** Replies can carry tags like `[[emote:wave]]`, `[[anim:dance]]`, `[[walk:user]]`, `[[look:left]]` and `[[face:smile]]`, so the companion waves, dances, walks over, looks around and changes expression.
@@ -55,13 +55,23 @@ When the camera is on and you ask what it sees, the connected brain gets a singl
 
 - `core/` is the companion's core, written in **Gold** (plain English specs) and compiled to checked **Helium**, then to WebAssembly (`web/companion.wasm`). It does the skeleton matching, motion retargeting, the pose solver behind look-at and emotes, body-tracking filtering and solving, gesture and expression recognition, reply-tag parsing and the offline brain.
 - `web/` is the shell: three.js rendering, MediaPipe Tasks vision models (pose, hands and gestures, face, objects), Web Speech, WebXR, and the panels.
-- `art/` holds the stock character concepts and the two CC0 base bodies (`art/ubc/`). `tools/image3d.py` turns one concept image into a rigged, textured companion (see below).
+- `art/` holds the stock character concepts and specs (`holo.json`, `dex.json`) and the two CC0 base bodies (`art/ubc/`). `tools/image3d.py` turns one concept image into a rigged, textured companion (see below).
 
 ```bash
 tools/build.sh   # rebuild core/*.amni from Gold (if installed) and web/companion.wasm
 tools/test.sh    # build and run the core tests natively, then rebuild the wasm
-tools/stock.sh   # rebuild Holo and Dex with tools/character.sh
+tools/stock.sh   # rebuild Holo and Dex from art/*.json (needs AMNI_SCIENT, see below)
 ```
+
+## Stock companions
+
+Holo and Dex are specs, not hand-edited meshes. `art/holo.json` and `art/dex.json` set sex, height in inches, build, body preferences (`prefs`: chest, waist, hips, thighs, calves, legs), skin, eyes, hair and wear. `tools/stock.sh` passes them to the Amni-CAD character builder (`tools/build-characters.py` in the Amni-Scient checkout named by `AMNI_SCIENT`, default `~/ai/Amni-Scient`), which:
+
+1. Solves the height exactly and fits the body to median breadths, depths and girths of fit adults from the ANSUR II survey, so bellies, hips and chests have real depth.
+2. Dresses it in CC0 MakeHuman clothing, or generates clothing MakeHuman lacks: tank top, pleated tartan skirt, studded belt, striped socks, fingerless gloves, choker, chain, hoodie with hood, pocket and drawstrings, and glasses. Clothing drapes over the body, and covered skin is removed so it can't poke through.
+3. Paints eyeshadow or a beard, rigs the game-engine skeleton, and writes the `.glb` plus a review sheet in `.stock/review/`.
+
+Change a value and rerun to adjust a character. The builder reads MakeHuman assets from `AMNI_MH` (default `~/.cache/amni-mh`) and downloads the ANSUR II tables on first use.
 
 ## Make your own companion from concept art
 
