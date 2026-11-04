@@ -65,9 +65,9 @@ tools/stock.sh   # rebuild Holo and Dex from art/*.json (needs AMNI_SCIENT, see 
 
 ## Stock companions
 
-Holo and Dex are specs, not hand-edited meshes. `art/holo.json` and `art/dex.json` set sex, height in inches, build, body preferences (`prefs`: chest, waist, hips, thighs, calves, legs), skin, eyes, hair and wear. `tools/stock.sh` passes them to the Amni-CAD character builder (`tools/build-characters.py` in the Amni-Scient checkout named by `AMNI_SCIENT`, default `~/ai/Amni-Scient`), which:
+Holo and Dex are specs, not hand-edited meshes. `art/holo.json` and `art/dex.json` set sex, height in inches, build, body preferences (`prefs`: chest, waist, hips, thighs, calves, legs, arms, shoulders, head), skin, eyes, hair and wear. `tools/stock.sh` passes them to the Amni-CAD character builder (`tools/build-characters.py` in the Amni-Scient checkout named by `AMNI_SCIENT`, default `~/ai/Amni-Scient`), which:
 
-1. Solves the height exactly and fits the body to median breadths, depths and girths of fit adults from the ANSUR II survey, so bellies, hips and chests have real depth.
+1. Solves the height exactly and fits the body to median measurements of fit adults from the ANSUR II survey: breadths, depths and girths (so bellies, hips and chests have real depth), shoulder width, arm length and head size. Legs stand parallel, feet under the hips (`stance` changes the spacing).
 2. Dresses it in CC0 MakeHuman clothing, or generates clothing MakeHuman lacks: tank top, pleated tartan skirt, studded belt, striped socks, fingerless gloves, choker, chain, hoodie with hood, pocket and drawstrings, and glasses. Clothing drapes over the body, and covered skin is removed so it can't poke through.
 3. Paints eyeshadow or a beard, rigs the game-engine skeleton, and writes the `.glb` plus a review sheet in `.stock/review/`.
 
