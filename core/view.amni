@@ -7,6 +7,7 @@ import gfx.motion;
 import gfx.shapes;
 import gfx.scene3d;
 import hair;
+import spring;
 var P f32[10240];
 var C f32[16];
 var N byte[16384];
@@ -21,11 +22,13 @@ var pad_item = -1;
 var ring = -1;
 var head = -1;
 var rest_inv = gfx::mat4_identity;
-var bone_rest gfx::mat4[>..];
+var bone_rest gfx::mat4[>..] = [];
 var teeth_mat = -1;
 var teeth_base = float4 { 1.0, 1.0, 1.0, 1.0 };
 var sw = 0;
 var sh = 0;
+var springs = 0;
+var last_t = -1.0;
 extern fn hv_f32(id i32, xs f32[:]);
 extern fn hv_i32(id i32, xs i32[:]);
 extern fn hv_bytes(id i32, xs byte[:]);
@@ -81,6 +84,7 @@ fn main() {
 	pm.catcher = 0.35;
 	pad_item = s3d::add(shapes::plane(1.7, pm));
 	s3d::place(pad_item, gfx::mat4_identity);
+	springs = spring_open(asset, item);
 	let rt = gltf::add_texture_file("/m/ring.png");
 	if rt >= 0 {
 		var rm = shapes::material(float3 { 1.0, 1.0, 1.0 }, 0.0, 1.0);
@@ -189,14 +193,18 @@ export fn he_frame(t real) {
 			gltf::materials[teeth_mat].roughness = C[13];
 		}
 	}
+	if springs > 0 {
+		let dt = if last_t < 0.0 { 0.0 } else { min(0.05, (t - last_t) / 1000.0) };
+		s3d::pose(item);
+		spring_step(dt as f32);
+	}
+	last_t = t;
 	let z = gfx::screen_size();
-	if (z.x as int) != sw || (z.y as int) != sh {
+	if z.x as int != sw || z.y as int != sh {
 		sw = z.x as int;
 		sh = z.y as int;
 		s3d::init(sw, sh);
-		if on {
-			hair_size(sw, sh);
-		}
+		if on { hair_size(sw, sh); }
 	}
 	if s3d::render_begin() {
 		if on && head >= 0 {
