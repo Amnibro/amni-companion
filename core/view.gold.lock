@@ -1,4 +1,4 @@
-=== -770dfa1158cc476a
+=== -5b51b99191b9a807
 import os;
 import web;
 import gfx;
@@ -7,7 +7,8 @@ import gfx.gltf;
 import gfx.motion;
 import gfx.shapes;
 import gfx.scene3d;
-=== -55c4009f5a4dae09
+import hair;
+=== 60dba4b8cfe6242b
 var P f32[10240];
 var C f32[16];
 var N byte[16384];
@@ -17,14 +18,16 @@ var B int[1024] = [-1; 1024];
 var nb = 0;
 var asset = -1;
 var item = -1;
-var pad_item = -1;
+var pad_id = -1;
+var head = -1;
+var rest_inv = gfx::mat4_identity;
 var sw = 0;
 var sh = 0;
 === 7953a64120c37d49
 extern fn hv_f32(id i32, xs f32[:]);
 extern fn hv_i32(id i32, xs i32[:]);
 extern fn hv_bytes(id i32, xs byte[:]);
-=== 008be54dbf7f9fce
+=== -5ed1a884a081f49d
 fn main() {
 	hv_f32(0, P[..]);
 	hv_f32(1, C[..]);
@@ -38,6 +41,24 @@ fn main() {
 		print("view: ", gltf::error());
 		return;
 	}
+	if a.len > 2 {
+		let first = gltf::assets[asset].nodes.first;
+		let count = gltf::assets[asset].nodes.count;
+		for i in count {
+			let n = first + i;
+			if gltf::nodes[n].mesh >= 0 {
+				if gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "hair" {
+					gltf::nodes[n].mesh = -1;
+				}
+			}
+		}
+		head = gltf::find_node(asset, "head");
+		if head >= 0 {
+			motion::rest(asset);
+			motion::update(asset, gfx::mat4_identity);
+			rest_inv = linalg::inverse(motion::world[head]);
+		}
+	}
 	if !gfx::open("amni companion", 640, 800) {
 		print("view: ", gfx::error());
 		return;
@@ -48,8 +69,8 @@ fn main() {
 	pm.alpha_mode = gltf::ALPHA_BLEND;
 	pm.no_shadow = true;
 	pm.catcher = 0.35;
-	pad_item = s3d::add(shapes::plane(1.7, pm));
-	s3d::place(pad_item, gfx::mat4_identity);
+	pad_id = s3d::add(shapes::plane(1.7, pm));
+	s3d::place(pad_id, gfx::mat4_identity);
 	s3d::view = s3d::Camera { eye: float3 { 0.0, 1.2, 3.5 }, target: float3 { 0.0, 0.9, 0.0 }, up: float3 { 0.0, 1.0, 0.0 }, fov_y: 0.5236, near: 0.05, far: 100.0 };
 	s3d::sun = s3d::Sun { to_sun: linalg::unit3(float3 { 1.4, 3.2, 2.1 }), rgb: float3 { 2.8, 2.8, 2.8 }, shadows: true, shadow_far: 10.0, map_size: 2048 };
 	s3d::add_light(float3 { -11.9, 14.3, -16.7 }, float3 { 273.0, 177.0, 688.0 }, 1000.0);
@@ -71,24 +92,23 @@ fn main() {
 	sw = z.x as int;
 	sh = z.y as int;
 	s3d::init(sw, sh);
+	if a.len > 2 {
+		hair_open(a[2], sw, sh, 96);
+	}
 	web::frames(true);
 }
 === -5fa4345944d6f2ee
 export fn hv_bones(len i32) i32 {
 	var k = 0;
 	var found = 0;
-	var start = 0;
-	let n = min(len as int, 16384);
-	for i in 0..n + 1 {
-		if i == n || N[i] == 10 {
-			if i > start {
-				if k < 1024 {
-					B[k] = gltf::find_node(asset, N[start..i]);
-					if B[k] >= 0 { found += 1; }
-				}
-				k += 1;
+	let parts = split(N[0..len as int], 10);
+	for p in parts {
+		if p.len > 0 {
+			if k < 1024 {
+				B[k] = gltf::find_node(asset, p);
+				if B[k] >= 0 { found += 1; }
 			}
-			start = i + 1;
+			k += 1;
 		}
 	}
 	nb = k;
@@ -96,12 +116,14 @@ export fn hv_bones(len i32) i32 {
 }
 === -18765f2da9e54b28
 export fn hv_nodes(n i32) i32 {
+	let m = clamp(n as int, 0, 1024);
+	let first = gltf::assets[asset].nodes.first;
+	let count = gltf::assets[asset].nodes.count;
 	var set = 0;
-	let m = min(n as int, 1024);
 	for k in m {
 		let q = Q[k] as int;
-		if q >= 0 && q < gltf::assets[asset].nodes.count {
-			B[k] = gltf::assets[asset].nodes.first + q;
+		if q >= 0 && q < count {
+			B[k] = first + q;
 			set += 1;
 		} else {
 			B[k] = -1;
@@ -115,23 +137,31 @@ export fn hv_stop() {
 	web::frames(false);
 	gfx::close();
 }
-=== -79b730dd9a53bb2f
+=== -74f1109064b0af90
 export fn he_frame(t real) {
 	if !gfx::frame() { return; }
-	for k in min(nb, 1024) {
-		if B[k] >= 0 {
-			let o = k * 10;
-			s3d::set_node(item, B[k], float3 { P[o], P[o + 1], P[o + 2] }, linalg::Quat { P[o + 3], P[o + 4], P[o + 5], P[o + 6] }, float3 { P[o + 7], P[o + 8], P[o + 9] });
+	for k in nb {
+		if k < 1024 {
+			if B[k] >= 0 {
+				let o = k * 10;
+				s3d::set_node(item, B[k], float3 { P[o], P[o + 1], P[o + 2] }, linalg::Quat { P[o + 3], P[o + 4], P[o + 5], P[o + 6] }, float3 { P[o + 7], P[o + 8], P[o + 9] });
+			}
 		}
 	}
 	s3d::place(item, gfx::mat4 { float4 { M[0], M[1], M[2], M[3] }, float4 { M[4], M[5], M[6], M[7] }, float4 { M[8], M[9], M[10], M[11] }, float4 { M[12], M[13], M[14], M[15] } });
-	s3d::place(pad_item, gfx::translate(float3 { C[8], C[9] + 0.002, C[10] }));
+	s3d::place(pad_id, gfx::translate(float3 { C[8], C[9] + 0.002, C[10] }));
 	s3d::view = s3d::Camera { eye: float3 { C[0], C[1], C[2] }, target: float3 { C[3], C[4], C[5] }, up: float3 { 0.0, 1.0, 0.0 }, fov_y: C[6], near: 0.05, far: 100.0 };
 	let z = gfx::screen_size();
-	if z.x as int != sw || z.y as int != sh {
+	if (z.x as int) != sw || (z.y as int) != sh {
 		sw = z.x as int;
 		sh = z.y as int;
 		s3d::init(sw, sh);
+		if on { hair_size(sw, sh); }
 	}
-	s3d::render(gfx::screen());
+	if s3d::render_begin() {
+		if on && head >= 0 {
+			hair_draw(gfx::mul(motion::world[head], rest_inv));
+		}
+		s3d::render_end(gfx::screen());
+	}
 }

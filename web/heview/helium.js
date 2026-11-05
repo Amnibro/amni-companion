@@ -209,6 +209,7 @@ function sdlgpu(R) {
     for (let k = 0; k < s.n[5]; k++, o += 4) s.usz.push(u32(o));
     o += 2 * b[7]; for (let k = u16(64); k > 0; k--, o += 4) s.binds.push({ group: b[o], binding: b[o + 1], kind: b[o + 2], info: b[o + 3] });
     for (const [, gr, bi, d] of s.wgsl.matchAll(/@group\((\d+)\)\s*@binding\((\d+)\)\s*var\s*\w+\s*:\s*texture_storage_(2d_array|2d|3d)/g)) s.dims[gr + ' ' + bi] = d.replace('_', '-');
+    s.nofilt = new Set([...s.wgsl.matchAll(/@group\((\d+)\)\s*@binding\((\d+)\)\s*var\s+(\w+)\s*:\s*texture_(?:2d|2d_array|3d|cube|cube_array)<f32>/g)].filter(([, , , v]) => !new RegExp(`texture(Sample\\w*|Gather\\w*)\\(\\s*(\\d+\\s*,\\s*)?${v}\\b`).test(s.wgsl)).map(([, gr, bi]) => gr + ' ' + bi));
     return s;
   };
   const role = (b, sh, comp) => {
@@ -221,7 +222,7 @@ function sdlgpu(R) {
     const G = [], vis = [GPUShaderStage.VERTEX, GPUShaderStage.FRAGMENT, GPUShaderStage.COMPUTE], comp = shs[0].stage === 2;
     for (const sh of shs) for (const b of sh.binds) {
       const k = b.kind, e = { binding: b.binding, visibility: vis[sh.stage] }, [src, slot] = role(b, sh, comp);
-      if (k <= 3) e.buffer = { type: ['uniform', 'read-only-storage', 'storage'][k - 1], hasDynamicOffset: k === 1 }; else if (k <= 6) e.texture = { sampleType: ['float', 'uint', 'depth'][k - 4], viewDimension: DIM[b.info] }; else if (k <= 8) e.sampler = { type: k === 7 ? 'filtering' : 'comparison' }; else e.storageTexture = { access: ['write-only', 'read-only', 'read-write'][k - 9], format: SFMT[b.info], viewDimension: sh.dims[b.group + ' ' + b.binding] || '2d' };
+      if (k <= 3) e.buffer = { type: ['uniform', 'read-only-storage', 'storage'][k - 1], hasDynamicOffset: k === 1 }; else if (k <= 6) e.texture = { sampleType: k === 4 && sh.nofilt?.has(b.group + ' ' + b.binding) ? 'unfilterable-float' : ['float', 'uint', 'depth'][k - 4], viewDimension: DIM[b.info] }; else if (k <= 8) e.sampler = { type: k === 7 ? 'filtering' : 'comparison' }; else e.storageTexture = { access: ['write-only', 'read-only', 'read-write'][k - 9], format: SFMT[b.info], viewDimension: sh.dims[b.group + ' ' + b.binding] || '2d' };
       (G[b.group] ||= { ents: [], es: [] }).ents.push({ ...b, st: sh.stage, src, slot, size: k === 1 ? sh.usz[b.info] : 0, dim: e.texture?.viewDimension || e.storageTexture?.viewDimension }); G[b.group].es.push(e);
     }
     const n = G.length, gs = []; for (let i = 0; i < n; i++) { const x = G[i] || { ents: [], es: [] }; x.ents.sort((a, b) => a.binding - b.binding); x.es.sort((a, b) => a.binding - b.binding); x.lay = dev.createBindGroupLayout({ entries: x.es }); x.id = nid++; gs.push(x); }
