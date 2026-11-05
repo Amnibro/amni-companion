@@ -87,7 +87,7 @@ let yaw=0;function tick(t,frame){
     if(mode==='camera'&&S.track&&senses?.world){const res=core.pose(senses.world,S.mirror,now()/1000,av.slot,av.rest);av.pose(res.out,res.n?1:0)}else av.pose(null)
     av.update(dt)
     const b=$('#bubble');if(!b.hidden){const hb=av.bones[av.slot[5]],p=hb.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0,.32*r.scale.x,0)).project(xr?renderer.xr.getCamera():camera),x=(p.x*.5+.5)*innerWidth,y=(-p.y*.5+.5)*innerHeight;b.style.left=Math.max(110,Math.min(innerWidth-110,x))+'px';b.style.top=Math.max(120,Math.min(innerHeight-170,y))+'px';now()>bubbleT&&(b.style.opacity=0,now()>bubbleT+400&&(b.hidden=true))}}
-  xr||controls.update();renderer.render(scene,camera);xr||hm?.sync(camera)
+  xr||controls.update();renderer.render(scene,camera);xr||hm?.sync(camera,pad.position)
 }
 async function modelBytes(id){if(id.startsWith('user:')){const m=await store.models.get(id);if(!m)throw new Error('That model is no longer saved here.');avMeta={name:m.name.replace(/\.(glb|vrm)$/i,''),persona:m.persona||'neutral'};return m.blob.arrayBuffer()}const k=id.replace('stock:',''),s=STOCK[k]||STOCK.holo;avMeta={name:s.cname||s.name,persona:s.persona};if(k==='mannequin')return new URL(s.file,BASE).href;const r=await fetch(new URL(s.file,BASE));if(!r.ok)throw new Error(`${s.name} isn't available yet.`);return r.arrayBuffer()}
 async function useModel(id,quiet){
