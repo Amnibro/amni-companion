@@ -22,7 +22,7 @@ var sh = 0;
 extern fn hv_f32(id i32, xs f32[:]);
 extern fn hv_i32(id i32, xs i32[:]);
 extern fn hv_bytes(id i32, xs byte[:]);
-=== -591f77e912a2d01
+=== 41162d5505780a24
 fn main() {
 	hv_f32(0, P[..]);
 	hv_f32(1, C[..]);
@@ -43,7 +43,15 @@ fn main() {
 	item = s3d::add(asset);
 	s3d::place(item, gfx::mat4_identity);
 	s3d::view = s3d::Camera { eye: float3 { 0.0, 1.2, 3.5 }, target: float3 { 0.0, 0.9, 0.0 }, up: float3 { 0.0, 1.0, 0.0 }, fov_y: 0.5236, near: 0.05, far: 100.0 };
-	s3d::sun.shadows = true;
+	s3d::sun = s3d::Sun { to_sun: linalg::unit3(float3 { 1.4, 3.2, 2.1 }), rgb: float3 { 2.8, 2.8, 2.8 }, shadows: true, shadow_far: 10.0, map_size: 2048 };
+	s3d::add_light(float3 { -11.9, 14.3, -16.7 }, float3 { 273.0, 177.0, 688.0 }, 1000.0);
+	s3d::add_light(float3 { -17.3, 8.65, 15.85 }, float3 { 207.0, 227.0, 281.0 }, 1000.0);
+	s3d::add_light(float3 { 0.0, 9.0, 23.0 }, float3 { 900.0, 900.0, 900.0 }, 1000.0);
+	s3d::sky = s3d::Sky { zenith: float3 { 0.0308, 0.0366, 0.0967 }, horizon: float3 { 0.0154, 0.0182, 0.0436 }, ground: float3 { 0.0082, 0.0096, 0.0185 }, ambient: 2.5, draw: true };
+	s3d::look.exposure = 1.12;
+	s3d::look.bloom = 0.0;
+	s3d::look.desaturate = 0.0;
+	s3d::look.curve = 1;
 	C[0] = 0.0;
 	C[1] = 1.2;
 	C[2] = 3.5;
@@ -60,41 +68,40 @@ fn main() {
 === -5fa4345944d6f2ee
 export fn hv_bones(len i32) i32 {
 	let n = len as int;
-	let s = N[0..n];
 	var k = 0;
+	var s = 0;
 	var ok = 0;
-	var start = 0;
 	for i in 0..n + 1 {
-		if i == n || s[i] == 10 {
-			if i > start {
+		if i == n || N[i] == 10 {
+			if i > s {
 				if k < 1024 {
-					B[k] = gltf::find_node(asset, s[start..i]);
+					B[k] = gltf::find_node(asset, N[s..i]);
 					if B[k] >= 0 { ok += 1; }
 				}
 				k += 1;
 			}
-			start = i + 1;
+			s = i + 1;
 		}
 	}
 	nb = k;
-	ok as i32
+	return ok as i32;
 }
 === -18765f2da9e54b28
 export fn hv_nodes(n i32) i32 {
-	var set = 0;
+	var ok = 0;
 	let cnt = n as int;
 	for k in 0..cnt {
 		if k >= 1024 { break; }
 		let q = Q[k] as int;
 		if q >= 0 && q < gltf::assets[asset].nodes.count {
 			B[k] = gltf::assets[asset].nodes.first + q;
-			set += 1;
+			ok += 1;
 		} else {
 			B[k] = -1;
 		}
 	}
-	nb = if cnt > 1024 { 1024 } else { cnt };
-	set as i32
+	nb = min(cnt, 1024);
+	return ok as i32;
 }
 === 19984cc14d7a4625
 export fn hv_stop() {
