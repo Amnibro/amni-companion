@@ -1,0 +1,6 @@
+use std
+into render_test.amni
+
+Imports: os, gfx, math, gfx.linalg, gfx.gltf, gfx.motion and gfx.scene3d.
+
+`main()` renders a glTF character headless and saves a PNG. Arguments (os args after the program name): the .glb path, the output .png path, then six reals: eye x y z and target x y z in metres, each parsed as a real and converted `as f32` for the `float3`s. It opens a headless device of 768×1024 with `gfx::open_headless` (on failure print "gpu: skipped (no device: " plus `gfx::error()` plus ")" and return), loads the file with `gltf::load` (print "load failed" and return when the asset index is negative), adds it with `s3d::add` and places that item (the index `s3d::add` returned, not the asset) at the origin with `s3d::place` and `gfx::translate` of zero. It sets `s3d::view` to an `s3d::Camera` from the eye to the target with up (0, 1, 0), fov_y 0.5, near 0.02 and far 60, keeps `s3d::sun` but with shadows on, initializes with `s3d::init(768, 1024)`, makes `gfx::render_target(768, 1024, gfx::RGBA8)`, calls `s3d::render` on it three times, saves it with `gfx::save_png` and prints "saved " plus the path.

@@ -1,0 +1,39 @@
+import os;
+import gfx;
+import math;
+import gfx.linalg;
+import gfx.gltf;
+import gfx.motion;
+import gfx.scene3d;
+fn num(s const byte[:]) real {
+	let v, ok = parse_flt(s);
+	v
+}
+
+fn main() {
+	let a = args();
+	let path = a[1];
+	let out_path = a[2];
+	let eye = float3 { num(a[3]) as f32, num(a[4]) as f32, num(a[5]) as f32 };
+	let target = float3 { num(a[6]) as f32, num(a[7]) as f32, num(a[8]) as f32 };
+	if !gfx::open_headless(768, 1024) {
+		print("gpu: skipped (no device: ", gfx::error(), ")");
+		return;
+	}
+	let asset = gltf::load(path);
+	if asset < 0 {
+		print("load failed");
+		return;
+	}
+	let item = s3d::add(asset);
+	s3d::place(item, gfx::translate(float3 { 0.0, 0.0, 0.0 }));
+	s3d::view = s3d::Camera { eye: eye, target: target, up: float3 { 0.0, 1.0, 0.0 }, fov_y: 0.5, near: 0.02, far: 60.0, .. };
+	s3d::sun.shadows = true;
+	s3d::init(768, 1024);
+	let t = gfx::render_target(768, 1024, gfx::RGBA8);
+	s3d::render(t);
+	s3d::render(t);
+	s3d::render(t);
+	gfx::save_png(t, out_path);
+	print("saved ", out_path);
+}
