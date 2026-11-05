@@ -3,7 +3,7 @@ const FEMALE=/female|samantha|zira|aria|jenny|ava|allison|karen|moira|tessa|sere
 export const canListen=!!SR,canSpeak=!!syn
 export function voices(){return syn?syn.getVoices().filter(v=>/^en/i.test(v.lang)).concat(syn.getVoices().filter(v=>!/^en/i.test(v.lang))):[]}
 export function pickVoice(uri,persona){const all=voices();return all.find(v=>v.voiceURI===uri)||(persona==='dex'?all.find(v=>MALE.test(v.name)):persona==='holo'?all.find(v=>FEMALE.test(v.name)):null)||all.find(v=>v.default)||all[0]||null}
-export function speak(text,o={}){return new Promise(res=>{if(!syn||!text){res();return}syn.cancel();const u=new SpeechSynthesisUtterance(text.slice(0,700)),v=pickVoice(o.voice,o.persona);v&&(u.voice=v,u.lang=v.lang);u.rate=o.rate||1;u.pitch=o.pitch??(o.persona==='holo'?1.15:o.persona==='dex'?.95:1);u.onstart=()=>o.onstart?.();u.onend=u.onerror=()=>{o.onend?.();res()};syn.speak(u)})}
+export function speak(text,o={}){return new Promise(res=>{if(!syn||!text){res();return}syn.cancel();const u=new SpeechSynthesisUtterance(text.slice(0,700)),v=pickVoice(o.voice,o.persona);v&&(u.voice=v,u.lang=v.lang);u.rate=o.rate||1;u.pitch=o.pitch??(o.persona==='holo'?1.15:o.persona==='dex'?.95:1);u.onstart=()=>o.onstart?.();u.onboundary=e=>e.name==='word'&&o.onword?.(e.charIndex,e.charLength);u.onend=u.onerror=()=>{o.onend?.();res()};syn.speak(u)})}
 export function hush(){syn?.cancel()}
 export class Listener{
   constructor(onText,onState){this.onText=onText;this.onState=onState;this.on=false;this.paused=false;this.local=false}

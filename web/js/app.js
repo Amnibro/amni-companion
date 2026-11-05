@@ -47,8 +47,8 @@ function nextRoam(){if(roam-->0){const a=Math.random()*Math.PI*2,r=.5+Math.rando
 function respond(reply,record){
   if(!reply)return;const{clean,tags}=core.tags(reply);record&&(history.push({role:'assistant',content:reply}),save());tags.forEach(t=>act(t.kind,t.arg))
   if(!clean)return;bubble(clean);logLine('bot',clean)
-  if(S.speak&&voice.canSpeak){listener?.pause(true);voice.speak(clean,{voice:S.voice,persona:persona(),rate:S.rate,onstart:()=>{talking=true;av?.speaking(true)},onend:()=>{talking=false;av?.speaking(false);listener?.pause(false)}})}
-  else{av?.speaking(true);setTimeout(()=>av?.speaking(false),Math.min(7000,clean.length*55))}
+  if(S.speak&&voice.canSpeak){listener?.pause(true);voice.speak(clean,{voice:S.voice,persona:persona(),rate:S.rate,onstart:()=>{talking=true;av?.speaking(true);av?.lipStart(clean,S.rate||1)},onword:(ci,n)=>av?.lip(clean,ci,n,S.rate||1),onend:()=>{talking=false;av?.speaking(false);listener?.pause(false)}})}
+  else{av?.speaking(true);av?.lipStart(clean,1);setTimeout(()=>av?.speaking(false),Math.min(7000,clean.length*55))}
 }
 async function send(text){
   text=(text||'').trim();if(!text||!core)return;greeted=true;voice.hush();logLine('user',text);history.push({role:'user',content:text});save()
