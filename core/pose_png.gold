@@ -1,0 +1,8 @@
+use std
+into pose_png.amni
+
+Imports: os, gfx, math, gfx.linalg, gfx.gltf, gfx.motion and gfx.scene3d.
+
+`num(s const byte[:]) f32` parses one argument or token as a real and returns it `as f32`.
+
+`main()` renders a glTF character in a pose given as text and saves a PNG. With `a = args()`: `a[1]` the .glb path, `a[2]` the pose file path, `a[3]` the output .png path, `a[4]`..`a[6]` eye x y z and `a[7]`..`a[9]` target x y z (each read as `num(a[i])`). Open headless with `gfx::open_headless(768, 1024)` (on failure print "gpu: skipped (no device: " plus `gfx::error()` plus ")" and return). Load the glb with `gltf::load` (negative: print "load failed: " plus `gltf::error()` and return), add it with `s3d::add` and place the returned item with `s3d::place(item, gfx::translate(float3 { 0.0, 0.0, 0.0 }))`. Read the pose file with the unqualified `read_file(path, data)` into a `byte[>..]` (on failure print "pose failed" and return). Each non-empty line is a node name followed by ten reals separated by single spaces: translation x y z, rotation quaternion x y z w, scale x y z. For each line find the node with `gltf::find_node(asset, name)`; when it is negative count it as missing, else call `s3d::set_node(item, node, float3 { tx, ty, tz }, linalg::Quat { qx, qy, qz, qw }, float3 { sx, sy, sz })` and count it as set. Print "pose set " plus the set count plus " missing " plus the missing count. Set `s3d::view` to an `s3d::Camera` from eye to target, up (0, 1, 0), fov_y 0.5236, near 0.05, far 100; set `s3d::sun.shadows = true`; `s3d::init(768, 1024)`; make `out = gfx::render_target(768, 1024, gfx::RGBA8)`, call `s3d::render(out)` three times, save it with `gfx::save_png(out, a[3])` and print "saved " plus the path.

@@ -1,0 +1,69 @@
+import os;
+import gfx;
+import math;
+import gfx.linalg;
+import gfx.gltf;
+import gfx.motion;
+import gfx.scene3d;
+fn num(s const byte[:]) f32 {
+	let v, ok = parse_flt(s);
+	v as f32
+}
+fn main() {
+	let a = args();
+	if !gfx::open_headless(768, 1024) {
+		print("gpu: skipped (no device: ", gfx::error(), ")");
+		return;
+	}
+	let asset = gltf::load(a[1]);
+	if asset < 0 {
+		print("load failed: ", gltf::error());
+		return;
+	}
+	let item = s3d::add(asset);
+	s3d::place(item, gfx::translate(float3 { 0.0, 0.0, 0.0 }));
+	var data byte[>..] = [];
+	if !read_file(a[2], data) {
+		print("pose failed");
+		return;
+	}
+	var set_count = 0;
+	var missing = 0;
+	for raw in split(data, '\n') {
+		let line = trim(raw);
+		if line.len == 0 { continue; }
+		var name byte[>..] = [];
+		var v f32[10] = [0.0; 10];
+		for p, i in split(line, ' ') {
+			if i == 0 {
+				name.append(p);
+			} else if i <= 10 {
+				v[i - 1] = num(p);
+			}
+		}
+		let node = gltf::find_node(asset, name);
+		if node < 0 {
+			missing += 1;
+		} else {
+			s3d::set_node(item, node, float3 { v[0], v[1], v[2] }, linalg::Quat { v[3], v[4], v[5], v[6] }, float3 { v[7], v[8], v[9] });
+			set_count += 1;
+		}
+	}
+	print("pose set ", set_count, " missing ", missing);
+	s3d::view = s3d::Camera {
+		eye: float3 { num(a[4]), num(a[5]), num(a[6]) },
+		target: float3 { num(a[7]), num(a[8]), num(a[9]) },
+		up: float3 { 0.0, 1.0, 0.0 },
+		fov_y: 0.5236,
+		near: 0.05,
+		far: 100.0,
+	};
+	s3d::sun.shadows = true;
+	s3d::init(768, 1024);
+	let out = gfx::render_target(768, 1024, gfx::RGBA8);
+	s3d::render(out);
+	s3d::render(out);
+	s3d::render(out);
+	gfx::save_png(out, a[3]);
+	print("saved ", a[3]);
+}
