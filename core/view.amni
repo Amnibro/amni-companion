@@ -21,6 +21,8 @@ var pad_id = -1;
 var head = -1;
 var rest_inv = gfx::mat4_identity;
 var bone_rest gfx::mat4[>..];
+var teeth_mat = -1;
+var teeth_base = float4 { 1.0, 1.0, 1.0, 1.0 };
 var sw = 0;
 var sh = 0;
 extern fn hv_f32(id i32, xs f32[:]);
@@ -42,13 +44,10 @@ fn main() {
 	}
 	if a.len > 2 {
 		let first = gltf::assets[asset].nodes.first;
-		let count = gltf::assets[asset].nodes.count;
-		for i in count {
+		for i in gltf::assets[asset].nodes.count {
 			let n = first + i;
-			if gltf::nodes[n].mesh >= 0 {
-				if gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "hair" {
-					gltf::nodes[n].mesh = -1;
-				}
+			if gltf::nodes[n].mesh >= 0 && gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "hair" {
+				gltf::nodes[n].mesh = -1;
 			}
 		}
 		head = gltf::find_node(asset, "head");
@@ -56,6 +55,17 @@ fn main() {
 			motion::rest(asset);
 			motion::update(asset, gfx::mat4_identity);
 			rest_inv = linalg::inverse(motion::world[head]);
+		}
+	}
+	let tfirst = gltf::assets[asset].nodes.first;
+	for i in gltf::assets[asset].nodes.count {
+		let n = tfirst + i;
+		if gltf::nodes[n].mesh >= 0 && gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "teeth" {
+			teeth_mat = gltf::prims[gltf::meshes[gltf::nodes[n].mesh].prims.first].material;
+			if teeth_mat >= 0 {
+				teeth_base = gltf::materials[teeth_mat].base;
+			}
+			break;
 		}
 	}
 	if !gfx::open("amni companion", 640, 800) {
@@ -159,12 +169,20 @@ export fn he_frame(t real) {
 	s3d::place(item, gfx::mat4 { float4 { M[0], M[1], M[2], M[3] }, float4 { M[4], M[5], M[6], M[7] }, float4 { M[8], M[9], M[10], M[11] }, float4 { M[12], M[13], M[14], M[15] } });
 	s3d::place(pad_id, gfx::translate(float3 { C[8], C[9] + 0.002, C[10] }));
 	s3d::view = s3d::Camera { eye: float3 { C[0], C[1], C[2] }, target: float3 { C[3], C[4], C[5] }, up: float3 { 0.0, 1.0, 0.0 }, fov_y: C[6], near: 0.05, far: 100.0 };
+	if teeth_mat >= 0 && C[12] > 0.0 {
+		gltf::materials[teeth_mat].base = float4 { teeth_base.x * C[12], teeth_base.y * C[12], teeth_base.z * C[12], teeth_base.w };
+		if C[13] > 0.0 {
+			gltf::materials[teeth_mat].roughness = C[13];
+		}
+	}
 	let z = gfx::screen_size();
-	if (z.x as int) != sw || (z.y as int) != sh {
+	if z.x as int != sw || z.y as int != sh {
 		sw = z.x as int;
 		sh = z.y as int;
 		s3d::init(sw, sh);
-		if on { hair_size(sw, sh); }
+		if on {
+			hair_size(sw, sh);
+		}
 	}
 	if s3d::render_begin() {
 		if on && head >= 0 {
