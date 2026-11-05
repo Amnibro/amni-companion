@@ -82,7 +82,7 @@ Materials tagged `amni: skin` in their glTF extras get the app's skin shader: li
 
 ### Hair shading
 
-Materials tagged `amni: hair` get the app's hair shader, a strand model after Marschner et al. 2003 with the real-time fits from Karis 2016: a white primary reflection shifted toward the root, a colored secondary reflection shifted toward the tip, and light passing through loose hair when it is backlit. The strand direction comes from the card's vertex tangents, a per-strand id in the engine's data map jitters the highlight, depth in the atlas and the card's distance from the scalp darken inner hair, and alpha to coverage with mip-scaled alpha keeps thin strands smooth and visible at a distance.
+Materials tagged `amni: hair` get the app's hair shader, a strand model after Marschner et al. 2003 with the real-time fits from Karis 2016: a white primary reflection shifted toward the root, a colored secondary reflection shifted toward the tip, and light passing through loose hair when it is backlit. The strand direction comes from the card's vertex tangents, a per-strand id in the engine's data map jitters the highlight, depth in the atlas and the card's distance from the scalp darken inner hair, and alpha to coverage with mip-scaled alpha keeps thin strands smooth and visible at a distance. The material's `hairSpec` extra scales the primary reflection per groom (the blond braid uses 0.7 with roughness 0.42, so converging strands don't break it into gray patches), and environment reflections on hair are tinted by the strand color, since card normals aren't fiber normals.
 
 ## Make your own companion from concept art
 
