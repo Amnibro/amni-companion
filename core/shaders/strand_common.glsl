@@ -1,0 +1,1 @@
+layout(set = 2, binding = 0) uniform Hair { mat4 view_proj; mat4 view; mat4 proj; vec4 size; vec4 cam; vec4 to_sun; vec4 sun_rgb; vec4 hair; vec4 sky; vec4 params; vec4 look; mat4 light_vp; vec4 light; };

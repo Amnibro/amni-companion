@@ -1,0 +1,157 @@
+=== 630a7d269c7d618e
+import os;
+import binary;
+import gfx;
+import math;
+import gfx.linalg;
+import gfx.gltf;
+import gfx.motion;
+import gfx.scene3d;
+=== 49b31a2b782ee6db
+struct HairU {
+	view_proj gfx::mat4,
+	view gfx::mat4,
+	proj gfx::mat4,
+	size float4,
+	cam float4,
+	to_sun float4,
+	sun_rgb float4,
+	hair float4,
+	sky float4,
+	params float4,
+	look float4,
+	light_vp gfx::mat4,
+	light float4,
+}
+=== 5f548c2e399b5f2e
+fn real_arg(s const byte[:]) f32 {
+	let v, ok = parse_flt(s);
+	v as f32
+}
+=== 6526dfc23c0664eb
+fn main() {
+	let a = args();
+	if !gfx::open_headless(768, 1024) {
+		print("gpu: skipped (no device: ", gfx::error(), ")");
+		return;
+	}
+	let ex = real_arg(a[4]);
+	let ey = real_arg(a[5]);
+	let ez = real_arg(a[6]);
+	let tx = real_arg(a[7]);
+	let ty = real_arg(a[8]);
+	let tz = real_arg(a[9]);
+	let spc, spc_ok = parse_int(a[10], 10);
+	let model = gltf::load(a[1]);
+	if model < 0 {
+		print("load failed: ", gltf::error());
+		return;
+	}
+	let item = s3d::add(model);
+	s3d::place(item, gfx::translate(float3 { 0.0, 0.0, 0.0 }));
+	s3d::view = s3d::Camera { eye: float3 { ex, ey, ez }, target: float3 { tx, ty, tz }, up: float3 { 0.0, 1.0, 0.0 }, fov_y: 0.5, near: 0.02, far: 60.0 };
+	s3d::sun.shadows = true;
+	s3d::init(768, 1024);
+	let scene = gfx::render_target(768, 1024, gfx::RGBA8);
+	for i in 3 { s3d::render(scene); }
+	var data byte[>..] = [];
+	if !read_file(a[2], data) {
+		print("guides failed");
+		return;
+	}
+	if !binary::fits(data, 0, 16) {
+		print("guides failed");
+		return;
+	}
+	let points = binary::gather(data, 8, 4) as int;
+	let segments = binary::gather(data, 12, 4) as int;
+	if !binary::fits(data, 16, points * 48 + segments * 16) {
+		print("guides failed");
+		return;
+	}
+	let seg_at = 16 + points * 48;
+	let pts = gfx::buffer(gfx::BUFFER_COMPUTE_READ, points * 48, data[16..seg_at]);
+	let segs = gfx::buffer(gfx::BUFFER_COMPUTE_READ, segments * 16, data[seg_at..seg_at + segments * 16]);
+	var zeros byte[>..] = [];
+	zeros.resize(768 * 1024 * 64, 0);
+	let front = gfx::buffer(gfx::BUFFER_COMPUTE_WRITE | gfx::BUFFER_COMPUTE_READ, 768 * 1024 * 4, zeros[..768 * 1024 * 4]);
+	let acc = gfx::buffer(gfx::BUFFER_COMPUTE_WRITE | gfx::BUFFER_COMPUTE_READ, 768 * 1024 * 64, zeros[..]);
+	let lfront = gfx::buffer(gfx::BUFFER_COMPUTE_WRITE | gfx::BUFFER_COMPUTE_READ, 512 * 512 * 4, zeros[..512 * 512 * 4]);
+	let lacc = gfx::buffer(gfx::BUFFER_COMPUTE_WRITE | gfx::BUFFER_COMPUTE_READ, 512 * 512 * 64, zeros[..512 * 512 * 64]);
+	let outt = gfx::texture(gfx::TextureDesc { format: gfx::RGBA8, usage: gfx::SAMPLED | gfx::COMPUTE_WRITE, width: 768, height: 1024 });
+	let smp = gfx::sampler(gfx::NEAREST, gfx::CLAMP);
+	let clear_p = gfx::compute_pipeline(embed_shader("shaders/strand_clear.comp"));
+	let raster_p = gfx::compute_pipeline(embed_shader("shaders/strand_raster.comp"));
+	let resolve_p = gfx::compute_pipeline(embed_shader("shaders/strand_resolve.comp"));
+	var sx f32 = 0.0;
+	var sy f32 = 0.0;
+	var sz f32 = 0.0;
+	for k in points {
+		let o = 16 + k * 48;
+		sx += binary::f32_from_bits(binary::gather(data, o, 4) as u32);
+		sy += binary::f32_from_bits(binary::gather(data, o + 4, 4) as u32);
+		sz += binary::f32_from_bits(binary::gather(data, o + 8, 4) as u32);
+	}
+	let pn = max(points, 1) as f32;
+	let center = float3 { sx / pn, sy / pn, sz / pn };
+	let ld = normalize(s3d::sun.to_sun);
+	let leye = float3 { center.x + ld.x * 3.0, center.y + ld.y * 3.0, center.z + ld.z * 3.0 };
+	let sun = s3d::sun.rgb;
+	var u = HairU {
+		view_proj: s3d::view_proj_nj,
+		view: s3d::view_mat,
+		proj: s3d::proj_mat,
+		size: float4 { 768.0, 1024.0, spc as f32, segments as f32 },
+		cam: float4 { ex, ey, ez, 0.7 },
+		to_sun: float4 { ld.x, ld.y, ld.z, 0.0 },
+		sun_rgb: float4 { sun.x, sun.y, sun.z, 0.0 },
+		hair: float4 { 0.58, 0.38, 0.14, 0.42 },
+		sky: float4 { 0.12, 0.13, 0.15, 40.0 },
+		params: float4 { 0.004, 1.7, 0.004, 0.00007 },
+		look: float4 { 1.0, 6.0, 0.0, 0.7 },
+		light_vp: gfx::mul(gfx::perspective(0.24, 1.0, 2.0, 4.0), gfx::look_at(leye, center, float3 { 0.0, 1.0, 0.0 })),
+		light: float4 { 512.0, 512.0, 0.35, (256.0 / tan(0.12)) as f32 },
+	};
+	fn raster(rw0 gfx::Buffer, rw1 gfx::Buffer, ro0 gfx::Buffer, ro1 gfx::Buffer, mode int) {
+		gfx::begin_compute([rw0, rw1]);
+		gfx::bind(raster_p);
+		gfx::bind_texture(gfx::COMPUTE, 0, s3d::nd_target(), smp);
+		gfx::bind_storage_buffer(gfx::COMPUTE, 0, pts);
+		gfx::bind_storage_buffer(gfx::COMPUTE, 1, segs);
+		gfx::bind_storage_buffer(gfx::COMPUTE, 2, ro0);
+		gfx::bind_storage_buffer(gfx::COMPUTE, 3, ro1);
+		u.look.z = mode as f32;
+		gfx::uniforms(gfx::COMPUTE, 0, u);
+		gfx::dispatch((segments + 63) / 64, spc, 1);
+		gfx::end_compute();
+	}
+	gfx::begin_compute([front, acc]);
+	gfx::bind(clear_p);
+	u.look.z = 0.0;
+	gfx::uniforms(gfx::COMPUTE, 0, u);
+	gfx::dispatch((768 * 1024 + 63) / 64, 1, 1);
+	gfx::end_compute();
+	gfx::begin_compute([lfront, lacc]);
+	gfx::bind(clear_p);
+	u.look.z = 2.0;
+	gfx::uniforms(gfx::COMPUTE, 0, u);
+	gfx::dispatch((512 * 512 + 63) / 64, 1, 1);
+	gfx::end_compute();
+	raster(lfront, lacc, front, acc, 2);
+	raster(lfront, lacc, front, acc, 3);
+	raster(front, acc, lfront, lacc, 0);
+	raster(front, acc, lfront, lacc, 1);
+	gfx::begin_compute([], [outt]);
+	gfx::bind(resolve_p);
+	u.look.z = 1.0;
+	gfx::uniforms(gfx::COMPUTE, 0, u);
+	gfx::bind_texture(gfx::COMPUTE, 0, scene, smp);
+	gfx::bind_storage_buffer(gfx::COMPUTE, 0, acc);
+	gfx::dispatch((768 + 7) / 8, (1024 + 7) / 8, 1);
+	gfx::end_compute();
+	if gfx::save_png(outt, a[3]) {
+		print("saved ", a[3]);
+	} else {
+		print("error: ", gfx::error());
+	}
+}
