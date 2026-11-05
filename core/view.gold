@@ -1,0 +1,14 @@
+use std
+into view.amni
+
+Imports: os, web, gfx, gfx.linalg, gfx.gltf, gfx.motion and gfx.scene3d.
+
+Globals: `P f32[2560]` (pose: ten floats per bone), `C f32[16]` (camera and sun), `N byte[16384]` (bone names), `B int[256]` (node per bone, starts all -1), `var nb = 0`, `var asset = -1`, `var item = -1`, `var sw = 0`, `var sh = 0`.
+
+Declare `extern fn hv_f32(id i32, xs f32[:]);` and `extern fn hv_bytes(id i32, xs byte[:]);`.
+
+`main()` shares the buffers with the page: `hv_f32(0, P[..])`, `hv_f32(1, C[..])`, `hv_bytes(2, N[..])`. Set `gltf::lazy_pixels = true`. With `a = args()`, load `a[1]` with `gltf::load` into `asset` (negative: print "view: " plus `gltf::error()` and return). Open the canvas with `gfx::open("amni companion", 640, 800)` (false: print "view: " plus `gfx::error()` and return). `item = s3d::add(asset)`; `s3d::place(item, gfx::mat4_identity)`. Set `s3d::view` to an `s3d::Camera` with eye (0, 1.2, 3.5), target (0, 0.9, 0), up (0, 1, 0), fov_y 0.5236, near 0.05, far 100. Set `s3d::sun.shadows = true`. Fill `C` with eye, target and fov as C[0..7] = 0, 1.2, 3.5, 0, 0.9, 0, 0.5236. Let `z = gfx::screen_size()`; set `sw = z.x as int`, `sh = z.y as int`; `s3d::init(sw, sh)`; then `web::frames(true)`.
+
+`export fn hv_bones(len i32) i32` splits `N[0..len]` on newline bytes (10); for each non-empty name in order, at index k below 256, set `B[k] = gltf::find_node(asset, name)`; set `nb` to the number of names; return how many had `B[k] >= 0` as i32.
+
+`export fn he_frame(t real)`: return if `gfx::frame()` is false. For each k below nb with `B[k] >= 0`, with `o = k * 10`, call `s3d::set_node(item, B[k], float3 { P[o], P[o + 1], P[o + 2] }, linalg::Quat { P[o + 3], P[o + 4], P[o + 5], P[o + 6] }, float3 { P[o + 7], P[o + 8], P[o + 9] })`. Set `s3d::view` to an `s3d::Camera` with eye (C[0], C[1], C[2]), target (C[3], C[4], C[5]), up (0, 1, 0), fov_y C[6], near 0.05, far 100. Let `z = gfx::screen_size()`; when `z.x as int != sw` or `z.y as int != sh`, update sw and sh and call `s3d::init(sw, sh)`. Finally `s3d::render(gfx::screen())`.

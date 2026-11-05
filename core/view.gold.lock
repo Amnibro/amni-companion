@@ -1,0 +1,91 @@
+=== -454867b6d974a65a
+import os;
+import web;
+import gfx;
+import gfx.linalg;
+import gfx.gltf;
+import gfx.motion;
+import gfx.scene3d;
+=== 7325744ef4cf99bd
+var P f32[2560];
+var C f32[16];
+var N byte[16384];
+var B int[256] = [-1; 256];
+var nb = 0;
+var asset = -1;
+var item = -1;
+var sw = 0;
+var sh = 0;
+=== 53deb65fd4650ac2
+extern fn hv_f32(id i32, xs f32[:]);
+extern fn hv_bytes(id i32, xs byte[:]);
+=== 1bea2e673563a168
+fn main() {
+	hv_f32(0, P[..]);
+	hv_f32(1, C[..]);
+	hv_bytes(2, N[..]);
+	gltf::lazy_pixels = true;
+	let a = args();
+	asset = gltf::load(a[1]);
+	if asset < 0 {
+		print("view: ", gltf::error());
+		return;
+	}
+	if !gfx::open("amni companion", 640, 800) {
+		print("view: ", gfx::error());
+		return;
+	}
+	item = s3d::add(asset);
+	s3d::place(item, gfx::mat4_identity);
+	s3d::view = s3d::Camera { eye: float3 { 0.0, 1.2, 3.5 }, target: float3 { 0.0, 0.9, 0.0 }, up: float3 { 0.0, 1.0, 0.0 }, fov_y: 0.5236, near: 0.05, far: 100.0 };
+	s3d::sun.shadows = true;
+	C[0] = 0.0;
+	C[1] = 1.2;
+	C[2] = 3.5;
+	C[3] = 0.0;
+	C[4] = 0.9;
+	C[5] = 0.0;
+	C[6] = 0.5236;
+	let z = gfx::screen_size();
+	sw = z.x as int;
+	sh = z.y as int;
+	s3d::init(sw, sh);
+	web::frames(true);
+}
+=== -17be4156d926f48b
+export fn hv_bones(len i32) i32 {
+	let n = len as int;
+	var k = 0;
+	var good i32 = 0;
+	var start = 0;
+	for i in 0..n + 1 {
+		if i == n || N[i] == 10 {
+			if i > start && k < 256 {
+				B[k] = gltf::find_node(asset, N[start..i]);
+				if B[k] >= 0 { good += 1; }
+				k++;
+			}
+			start = i + 1;
+		}
+	}
+	nb = k;
+	good
+}
+=== -293dec0e1031254b
+export fn he_frame(t real) {
+	if !gfx::frame() { return; }
+	for k in nb {
+		if B[k] >= 0 {
+			let o = k * 10;
+			s3d::set_node(item, B[k], float3 { P[o], P[o + 1], P[o + 2] }, linalg::Quat { P[o + 3], P[o + 4], P[o + 5], P[o + 6] }, float3 { P[o + 7], P[o + 8], P[o + 9] });
+		}
+	}
+	s3d::view = s3d::Camera { eye: float3 { C[0], C[1], C[2] }, target: float3 { C[3], C[4], C[5] }, up: float3 { 0.0, 1.0, 0.0 }, fov_y: C[6], near: 0.05, far: 100.0 };
+	let z = gfx::screen_size();
+	if z.x as int != sw || z.y as int != sh {
+		sw = z.x as int;
+		sh = z.y as int;
+		s3d::init(sw, sh);
+	}
+	s3d::render(gfx::screen());
+}
