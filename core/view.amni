@@ -17,7 +17,8 @@ var B int[1024] = [-1; 1024];
 var nb = 0;
 var asset = -1;
 var item = -1;
-var pad_id = -1;
+var pad_item = -1;
+var ring = -1;
 var head = -1;
 var rest_inv = gfx::mat4_identity;
 var bone_rest gfx::mat4[>..];
@@ -78,8 +79,18 @@ fn main() {
 	pm.alpha_mode = gltf::ALPHA_BLEND;
 	pm.no_shadow = true;
 	pm.catcher = 0.35;
-	pad_id = s3d::add(shapes::plane(1.7, pm));
-	s3d::place(pad_id, gfx::mat4_identity);
+	pad_item = s3d::add(shapes::plane(1.7, pm));
+	s3d::place(pad_item, gfx::mat4_identity);
+	let rt = gltf::add_texture_file("/m/ring.png");
+	if rt >= 0 {
+		var rm = shapes::material(float3 { 1.0, 1.0, 1.0 }, 0.0, 1.0);
+		rm.unlit = true;
+		rm.alpha_mode = gltf::ALPHA_BLEND;
+		rm.no_shadow = true;
+		rm.base_tex = gltf::TexRef { rt, 0 };
+		ring = s3d::add(shapes::plane(1.05, rm));
+		s3d::place(ring, gfx::mat4_identity);
+	}
 	s3d::view = s3d::Camera { eye: float3 { 0.0, 1.2, 3.5 }, target: float3 { 0.0, 0.9, 0.0 }, up: float3 { 0.0, 1.0, 0.0 }, fov_y: 0.5236, near: 0.05, far: 100.0 };
 	s3d::sun = s3d::Sun { to_sun: linalg::unit3(float3 { 2.3, 3.0, 1.3 }), rgb: float3 { 3.1, 3.1, 3.1 }, shadows: true, shadow_far: 10.0, map_size: 2048 };
 	s3d::add_light(float3 { -11.9, 14.3, -16.7 }, float3 { 371.0, 241.0, 936.0 }, 1000.0);
@@ -167,7 +178,10 @@ export fn he_frame(t real) {
 		}
 	}
 	s3d::place(item, gfx::mat4 { float4 { M[0], M[1], M[2], M[3] }, float4 { M[4], M[5], M[6], M[7] }, float4 { M[8], M[9], M[10], M[11] }, float4 { M[12], M[13], M[14], M[15] } });
-	s3d::place(pad_id, gfx::translate(float3 { C[8], C[9] + 0.002, C[10] }));
+	s3d::place(pad_item, gfx::translate(float3 { C[8], C[9] + 0.002, C[10] }));
+	if ring >= 0 {
+		s3d::place(ring, gfx::translate(float3 { C[8], C[9] + 0.003, C[10] }));
+	}
 	s3d::view = s3d::Camera { eye: float3 { C[0], C[1], C[2] }, target: float3 { C[3], C[4], C[5] }, up: float3 { 0.0, 1.0, 0.0 }, fov_y: C[6], near: 0.05, far: 100.0 };
 	if teeth_mat >= 0 && C[12] > 0.0 {
 		gltf::materials[teeth_mat].base = float4 { teeth_base.x * C[12], teeth_base.y * C[12], teeth_base.z * C[12], teeth_base.w };
@@ -176,7 +190,7 @@ export fn he_frame(t real) {
 		}
 	}
 	let z = gfx::screen_size();
-	if z.x as int != sw || z.y as int != sh {
+	if (z.x as int) != sw || (z.y as int) != sh {
 		sw = z.x as int;
 		sh = z.y as int;
 		s3d::init(sw, sh);
