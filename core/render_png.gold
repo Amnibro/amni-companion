@@ -1,5 +1,5 @@
 use std
-into render_test.amni
+into render_png.amni
 
 Imports: os, gfx, math, gfx.linalg, gfx.gltf, gfx.motion and gfx.scene3d.
 

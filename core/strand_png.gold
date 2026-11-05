@@ -1,5 +1,5 @@
 use std
-into strand_test.amni
+into strand_png.amni
 
 Imports: os, binary, gfx, math, gfx.linalg, gfx.gltf, gfx.motion and gfx.scene3d.
 
