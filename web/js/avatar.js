@@ -59,7 +59,7 @@ export async function loadAvatar(core,src,lib){
   const byNode=new Map();g.scene.traverse(o=>{const a=g.parser.associations.get(o);a?.nodes!==undefined&&!byNode.has(a.nodes)&&byNode.set(a.nodes,o)})
   const cs=(json.nodes||[]).flatMap((n,i)=>{const c=n.extensions?.VRMC_node_constraint?.constraint,d=byNode.get(i),[kind,v]=c?Object.entries(c)[0]||[]:[],src=v&&byNode.get(v.source);return d&&src?[{kind,d,s:src,w:v.weight??1,axis:v.rollAxis||v.aimAxis,dr:d.quaternion.clone(),sr:src.quaternion.clone()}]:[]}),cons=[];while(cs.length){const i=cs.findIndex(c=>!cs.some(o=>o!==c&&o.d===c.s));cons.push(...cs.splice(Math.max(0,i),1))}
   const morphs={};g.scene.traverse(o=>{if(!o.morphTargetDictionary)return;for(const[n,i]of Object.entries(o.morphTargetDictionary))for(const[k,re]of Object.entries(MORPH))re.test(n)&&(morphs[k]=morphs[k]||[]).push([o,i])})
-  return new Avatar({core,g,root,holder,mixer,actions,f,restQ,morphs,lib,cons})
+  return new Avatar({core,g,root,holder,mixer,actions,f,restQ,morphs,lib,cons,byNode})
 }
 class Avatar{
   constructor(o){Object.assign(this,o);this.slot=o.f.slot;this.bones=o.f.bones;this.rest=o.f.rest;this.cur=null;this.queue=[];this.emotes=[];this.face={};this.faceT={};this.talk=0;this.blinkT=2;this.look=null;this.lookW=0;this.live=new Float64Array(264);this.want=new Float64Array(110);this.track=null;this.trackW=0;this.time=0;this.relax()

@@ -6,24 +6,29 @@ import gfx.linalg;
 import gfx.gltf;
 import gfx.motion;
 import gfx.scene3d;
-=== 7325744ef4cf99bd
-var P f32[2560];
+=== 1a093e8e3e6150d8
+var P f32[10240];
 var C f32[16];
 var N byte[16384];
-var B int[256] = [-1; 256];
+var Q i32[1024];
+var M f32[16] = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0];
+var B int[1024] = [-1; 1024];
 var nb = 0;
 var asset = -1;
 var item = -1;
 var sw = 0;
 var sh = 0;
-=== 53deb65fd4650ac2
+=== 7953a64120c37d49
 extern fn hv_f32(id i32, xs f32[:]);
+extern fn hv_i32(id i32, xs i32[:]);
 extern fn hv_bytes(id i32, xs byte[:]);
-=== 1bea2e673563a168
+=== -591f77e912a2d01
 fn main() {
 	hv_f32(0, P[..]);
 	hv_f32(1, C[..]);
 	hv_bytes(2, N[..]);
+	hv_i32(3, Q[..]);
+	hv_f32(4, M[..]);
 	gltf::lazy_pixels = true;
 	let a = args();
 	asset = gltf::load(a[1]);
@@ -52,34 +57,60 @@ fn main() {
 	s3d::init(sw, sh);
 	web::frames(true);
 }
-=== -17be4156d926f48b
+=== -5fa4345944d6f2ee
 export fn hv_bones(len i32) i32 {
 	let n = len as int;
+	let s = N[0..n];
 	var k = 0;
-	var good i32 = 0;
+	var ok = 0;
 	var start = 0;
 	for i in 0..n + 1 {
-		if i == n || N[i] == 10 {
-			if i > start && k < 256 {
-				B[k] = gltf::find_node(asset, N[start..i]);
-				if B[k] >= 0 { good += 1; }
-				k++;
+		if i == n || s[i] == 10 {
+			if i > start {
+				if k < 1024 {
+					B[k] = gltf::find_node(asset, s[start..i]);
+					if B[k] >= 0 { ok += 1; }
+				}
+				k += 1;
 			}
 			start = i + 1;
 		}
 	}
 	nb = k;
-	good
+	ok as i32
 }
-=== -293dec0e1031254b
+=== -18765f2da9e54b28
+export fn hv_nodes(n i32) i32 {
+	var set = 0;
+	let cnt = n as int;
+	for k in 0..cnt {
+		if k >= 1024 { break; }
+		let q = Q[k] as int;
+		if q >= 0 && q < gltf::assets[asset].nodes.count {
+			B[k] = gltf::assets[asset].nodes.first + q;
+			set += 1;
+		} else {
+			B[k] = -1;
+		}
+	}
+	nb = if cnt > 1024 { 1024 } else { cnt };
+	set as i32
+}
+=== 19984cc14d7a4625
+export fn hv_stop() {
+	web::frames(false);
+	gfx::close();
+}
+=== 6d2ef69544f53e85
 export fn he_frame(t real) {
 	if !gfx::frame() { return; }
-	for k in nb {
+	for k in 0..nb {
 		if B[k] >= 0 {
 			let o = k * 10;
 			s3d::set_node(item, B[k], float3 { P[o], P[o + 1], P[o + 2] }, linalg::Quat { P[o + 3], P[o + 4], P[o + 5], P[o + 6] }, float3 { P[o + 7], P[o + 8], P[o + 9] });
 		}
 	}
+	s3d::place(item, gfx::mat4 { float4 { M[0], M[1], M[2], M[3] }, float4 { M[4], M[5], M[6], M[7] }, float4 { M[8], M[9], M[10], M[11] }, float4 { M[12], M[13], M[14], M[15] } });
 	s3d::view = s3d::Camera { eye: float3 { C[0], C[1], C[2] }, target: float3 { C[3], C[4], C[5] }, up: float3 { 0.0, 1.0, 0.0 }, fov_y: C[6], near: 0.05, far: 100.0 };
 	let z = gfx::screen_size();
 	if z.x as int != sw || z.y as int != sh {
