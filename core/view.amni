@@ -42,9 +42,10 @@ fn main() {
 		print("view: ", gltf::error());
 		return;
 	}
+	let first = gltf::assets[asset].nodes.first;
+	let count = gltf::assets[asset].nodes.count;
 	if a.len > 2 {
-		let first = gltf::assets[asset].nodes.first;
-		for i in gltf::assets[asset].nodes.count {
+		for i in count {
 			let n = first + i;
 			if gltf::nodes[n].mesh >= 0 && gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "hair" {
 				gltf::nodes[n].mesh = -1;
@@ -57,9 +58,8 @@ fn main() {
 			rest_inv = linalg::inverse(motion::world[head]);
 		}
 	}
-	let tfirst = gltf::assets[asset].nodes.first;
-	for i in gltf::assets[asset].nodes.count {
-		let n = tfirst + i;
+	for i in count {
+		let n = first + i;
 		if gltf::nodes[n].mesh >= 0 && gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "teeth" {
 			teeth_mat = gltf::prims[gltf::meshes[gltf::nodes[n].mesh].prims.first].material;
 			if teeth_mat >= 0 {
@@ -81,10 +81,10 @@ fn main() {
 	pad_id = s3d::add(shapes::plane(1.7, pm));
 	s3d::place(pad_id, gfx::mat4_identity);
 	s3d::view = s3d::Camera { eye: float3 { 0.0, 1.2, 3.5 }, target: float3 { 0.0, 0.9, 0.0 }, up: float3 { 0.0, 1.0, 0.0 }, fov_y: 0.5236, near: 0.05, far: 100.0 };
-	s3d::sun = s3d::Sun { to_sun: linalg::unit3(float3 { 1.4, 3.2, 2.1 }), rgb: float3 { 2.8, 2.8, 2.8 }, shadows: true, shadow_far: 10.0, map_size: 2048 };
-	s3d::add_light(float3 { -11.9, 14.3, -16.7 }, float3 { 273.0, 177.0, 688.0 }, 1000.0);
-	s3d::add_light(float3 { -17.3, 8.65, 15.85 }, float3 { 207.0, 227.0, 281.0 }, 1000.0);
-	s3d::add_light(float3 { 0.0, 9.0, 23.0 }, float3 { 900.0, 900.0, 900.0 }, 1000.0);
+	s3d::sun = s3d::Sun { to_sun: linalg::unit3(float3 { 2.3, 3.0, 1.3 }), rgb: float3 { 3.1, 3.1, 3.1 }, shadows: true, shadow_far: 10.0, map_size: 2048 };
+	s3d::add_light(float3 { -11.9, 14.3, -16.7 }, float3 { 371.0, 241.0, 936.0 }, 1000.0);
+	s3d::add_light(float3 { -17.3, 8.65, 15.85 }, float3 { 124.0, 136.0, 169.0 }, 1000.0);
+	s3d::add_light(float3 { 0.0, 9.0, 23.0 }, float3 { 600.0, 600.0, 600.0 }, 1000.0);
 	s3d::sky = s3d::Sky { zenith: float3 { 0.0308, 0.0366, 0.0967 }, horizon: float3 { 0.0154, 0.0182, 0.0436 }, ground: float3 { 0.0082, 0.0096, 0.0185 }, ambient: 2.5, draw: true };
 	s3d::look.exposure = 1.12;
 	s3d::look.bloom = 0.0;
