@@ -12,11 +12,12 @@ var C f32[16];
 var N byte[16384];
 var Q i32[1024];
 var M f32[16] = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0];
+var W f32[12288];
 var B int[1024] = [-1; 1024];
 var nb = 0;
 var asset = -1;
 var item = -1;
-var pad_id = -1;
+var padi = -1;
 var head = -1;
 var rest_inv = gfx::mat4_identity;
 var sw = 0;
@@ -30,6 +31,7 @@ fn main() {
 	hv_bytes(2, N[..]);
 	hv_i32(3, Q[..]);
 	hv_f32(4, M[..]);
+	hv_f32(5, W[..]);
 	gltf::lazy_pixels = true;
 	let a = args();
 	asset = gltf::load(a[1]);
@@ -39,9 +41,8 @@ fn main() {
 	}
 	if a.len > 2 {
 		let first = gltf::assets[asset].nodes.first;
-		let count = gltf::assets[asset].nodes.count;
-		for i in count {
-			let n = first + i;
+		let cnt = gltf::assets[asset].nodes.count;
+		for n in first..first + cnt {
 			if gltf::nodes[n].mesh >= 0 {
 				if gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "hair" {
 					gltf::nodes[n].mesh = -1;
@@ -65,8 +66,8 @@ fn main() {
 	pm.alpha_mode = gltf::ALPHA_BLEND;
 	pm.no_shadow = true;
 	pm.catcher = 0.35;
-	pad_id = s3d::add(shapes::plane(1.7, pm));
-	s3d::place(pad_id, gfx::mat4_identity);
+	padi = s3d::add(shapes::plane(1.7, pm));
+	s3d::place(padi, gfx::mat4_identity);
 	s3d::view = s3d::Camera { eye: float3 { 0.0, 1.2, 3.5 }, target: float3 { 0.0, 0.9, 0.0 }, up: float3 { 0.0, 1.0, 0.0 }, fov_y: 0.5236, near: 0.05, far: 100.0 };
 	s3d::sun = s3d::Sun { to_sun: linalg::unit3(float3 { 1.4, 3.2, 2.1 }), rgb: float3 { 2.8, 2.8, 2.8 }, shadows: true, shadow_far: 10.0, map_size: 2048 };
 	s3d::add_light(float3 { -11.9, 14.3, -16.7 }, float3 { 273.0, 177.0, 688.0 }, 1000.0);
@@ -94,57 +95,63 @@ fn main() {
 	web::frames(true);
 }
 export fn hv_bones(len i32) i32 {
+	let n = len as int;
+	let parts = split(N[..n], 10);
 	var k = 0;
-	var found = 0;
-	let parts = split(N[0..len as int], 10);
+	var got i32 = 0;
 	for p in parts {
-		if p.len > 0 {
-			if k < 1024 {
-				B[k] = gltf::find_node(asset, p);
-				if B[k] >= 0 { found += 1; }
-			}
-			k += 1;
+		if p.len == 0 { continue; }
+		if k < 1024 {
+			B[k] = gltf::find_node(asset, p);
+			if B[k] >= 0 { got += 1; }
 		}
+		k++;
 	}
 	nb = k;
-	found as i32
+	return got;
 }
 export fn hv_nodes(n i32) i32 {
-	let m = clamp(n as int, 0, 1024);
-	let first = gltf::assets[asset].nodes.first;
-	let count = gltf::assets[asset].nodes.count;
-	var set = 0;
-	for k in m {
+	var got i32 = 0;
+	let cnt = n as int;
+	for k in cnt {
+		if k >= 1024 { break; }
 		let q = Q[k] as int;
-		if q >= 0 && q < count {
-			B[k] = first + q;
-			set += 1;
+		if q >= 0 && q < gltf::assets[asset].nodes.count {
+			B[k] = gltf::assets[asset].nodes.first + q;
+			got += 1;
 		} else {
 			B[k] = -1;
 		}
 	}
-	nb = m;
-	set as i32
+	nb = min(cnt, 1024);
+	return got;
+}
+export fn hv_weights(n i32) {
+	let cnt = n as int;
+	for i in cnt {
+		if i >= 4096 { break; }
+		let k = W[i * 3] as int;
+		if k >= 0 && k < nb && B[k] >= 0 {
+			s3d::set_weight(item, B[k], W[i * 3 + 1] as int, W[i * 3 + 2]);
+		}
+	}
 }
 export fn hv_stop() {
 	web::frames(false);
-	gfx::close();
 }
 export fn he_frame(t real) {
 	if !gfx::frame() { return; }
 	for k in nb {
-		if k < 1024 {
-			if B[k] >= 0 {
-				let o = k * 10;
-				s3d::set_node(item, B[k], float3 { P[o], P[o + 1], P[o + 2] }, linalg::Quat { P[o + 3], P[o + 4], P[o + 5], P[o + 6] }, float3 { P[o + 7], P[o + 8], P[o + 9] });
-			}
+		if B[k] >= 0 {
+			let o = k * 10;
+			s3d::set_node(item, B[k], float3 { P[o], P[o + 1], P[o + 2] }, linalg::Quat { P[o + 3], P[o + 4], P[o + 5], P[o + 6] }, float3 { P[o + 7], P[o + 8], P[o + 9] });
 		}
 	}
 	s3d::place(item, gfx::mat4 { float4 { M[0], M[1], M[2], M[3] }, float4 { M[4], M[5], M[6], M[7] }, float4 { M[8], M[9], M[10], M[11] }, float4 { M[12], M[13], M[14], M[15] } });
-	s3d::place(pad_id, gfx::translate(float3 { C[8], C[9] + 0.002, C[10] }));
+	s3d::place(padi, gfx::translate(float3 { C[8], C[9] + 0.002, C[10] }));
 	s3d::view = s3d::Camera { eye: float3 { C[0], C[1], C[2] }, target: float3 { C[3], C[4], C[5] }, up: float3 { 0.0, 1.0, 0.0 }, fov_y: C[6], near: 0.05, far: 100.0 };
 	let z = gfx::screen_size();
-	if (z.x as int) != sw || (z.y as int) != sh {
+	if z.x as int != sw || z.y as int != sh {
 		sw = z.x as int;
 		sh = z.y as int;
 		s3d::init(sw, sh);
