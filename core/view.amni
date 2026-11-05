@@ -17,9 +17,10 @@ var B int[1024] = [-1; 1024];
 var nb = 0;
 var asset = -1;
 var item = -1;
-var padi = -1;
+var pad_id = -1;
 var head = -1;
 var rest_inv = gfx::mat4_identity;
+var bone_rest gfx::mat4[>..];
 var sw = 0;
 var sh = 0;
 extern fn hv_f32(id i32, xs f32[:]);
@@ -41,8 +42,9 @@ fn main() {
 	}
 	if a.len > 2 {
 		let first = gltf::assets[asset].nodes.first;
-		let cnt = gltf::assets[asset].nodes.count;
-		for n in first..first + cnt {
+		let count = gltf::assets[asset].nodes.count;
+		for i in count {
+			let n = first + i;
 			if gltf::nodes[n].mesh >= 0 {
 				if gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "hair" {
 					gltf::nodes[n].mesh = -1;
@@ -66,8 +68,8 @@ fn main() {
 	pm.alpha_mode = gltf::ALPHA_BLEND;
 	pm.no_shadow = true;
 	pm.catcher = 0.35;
-	padi = s3d::add(shapes::plane(1.7, pm));
-	s3d::place(padi, gfx::mat4_identity);
+	pad_id = s3d::add(shapes::plane(1.7, pm));
+	s3d::place(pad_id, gfx::mat4_identity);
 	s3d::view = s3d::Camera { eye: float3 { 0.0, 1.2, 3.5 }, target: float3 { 0.0, 0.9, 0.0 }, up: float3 { 0.0, 1.0, 0.0 }, fov_y: 0.5236, near: 0.05, far: 100.0 };
 	s3d::sun = s3d::Sun { to_sun: linalg::unit3(float3 { 1.4, 3.2, 2.1 }), rgb: float3 { 2.8, 2.8, 2.8 }, shadows: true, shadow_far: 10.0, map_size: 2048 };
 	s3d::add_light(float3 { -11.9, 14.3, -16.7 }, float3 { 273.0, 177.0, 688.0 }, 1000.0);
@@ -91,6 +93,13 @@ fn main() {
 	s3d::init(sw, sh);
 	if a.len > 2 {
 		hair_open(a[2], sw, sh, 96);
+		if bones > 0 {
+			motion::rest(asset);
+			motion::update(asset, gfx::mat4_identity);
+			for i in bones {
+				bone_rest.push(linalg::inverse(motion::world[gltf::assets[asset].nodes.first + hair_bone(i)]));
+			}
+		}
 	}
 	web::frames(true);
 }
@@ -148,10 +157,10 @@ export fn he_frame(t real) {
 		}
 	}
 	s3d::place(item, gfx::mat4 { float4 { M[0], M[1], M[2], M[3] }, float4 { M[4], M[5], M[6], M[7] }, float4 { M[8], M[9], M[10], M[11] }, float4 { M[12], M[13], M[14], M[15] } });
-	s3d::place(padi, gfx::translate(float3 { C[8], C[9] + 0.002, C[10] }));
+	s3d::place(pad_id, gfx::translate(float3 { C[8], C[9] + 0.002, C[10] }));
 	s3d::view = s3d::Camera { eye: float3 { C[0], C[1], C[2] }, target: float3 { C[3], C[4], C[5] }, up: float3 { 0.0, 1.0, 0.0 }, fov_y: C[6], near: 0.05, far: 100.0 };
 	let z = gfx::screen_size();
-	if z.x as int != sw || z.y as int != sh {
+	if (z.x as int) != sw || (z.y as int) != sh {
 		sw = z.x as int;
 		sh = z.y as int;
 		s3d::init(sw, sh);
@@ -159,7 +168,12 @@ export fn he_frame(t real) {
 	}
 	if s3d::render_begin() {
 		if on && head >= 0 {
-			hair_draw(gfx::mul(motion::world[head], rest_inv));
+			let hm = gfx::mul(motion::world[head], rest_inv);
+			let hi = linalg::inverse(hm);
+			for i in bones {
+				hair_pose(i, gfx::mul(hi, gfx::mul(motion::world[gltf::assets[asset].nodes.first + hair_bone(i)], bone_rest[i])));
+			}
+			hair_draw(hm);
 		}
 		s3d::render_end(gfx::screen());
 	}

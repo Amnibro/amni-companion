@@ -29,7 +29,13 @@ var spc = 96;
 var points = 0;
 var segments = 0;
 var center = float3 { 0.0, 0.0, 0.0 };
+var bones = 0;
+var bone_node int[>..];
+var mats gfx::mat4[>..];
 var pts = default<gfx::Buffer>();
+var rest = default<gfx::Buffer>();
+var skin = default<gfx::Buffer>();
+var matsb = default<gfx::Buffer>();
 var segs = default<gfx::Buffer>();
 var front = default<gfx::Buffer>();
 var acc = default<gfx::Buffer>();
@@ -41,6 +47,7 @@ var comp = default<gfx::Pipeline>();
 var clear_p = default<gfx::ComputePipeline>();
 var raster_p = default<gfx::ComputePipeline>();
 var resolve_p = default<gfx::ComputePipeline>();
+var skin_p = default<gfx::ComputePipeline>();
 fn hair_size(nw int, nh int) {
 	w = nw;
 	h = nh;
@@ -56,13 +63,29 @@ fn hair_open(path const byte[:], nw int, nh int, strands int) bool {
 	segments = binary::gather(data, 12, 4) as int;
 	spc = strands;
 	let seg_at = 16 + points * 48;
-	pts = gfx::buffer(gfx::BUFFER_COMPUTE_READ, points * 48, data[16..seg_at]);
+	var k = 0;
+	if data[3] == 51 {
+		bones = binary::gather(data, seg_at + segments * 16, 4) as int;
+		let e = seg_at + segments * 16;
+		for i in bones {
+			bone_node.push(binary::gather(data, e + 4 + i * 4, 4) as int);
+		}
+		k = e + 4 + bones * 4;
+	}
+	pts = gfx::buffer(gfx::BUFFER_COMPUTE_READ | gfx::BUFFER_COMPUTE_WRITE, points * 48, data[16..16 + points * 48]);
 	segs = gfx::buffer(gfx::BUFFER_COMPUTE_READ, segments * 16, data[seg_at..seg_at + segments * 16]);
+	if bones > 0 {
+		rest = gfx::buffer(gfx::BUFFER_COMPUTE_READ, points * 48, data[16..16 + points * 48]);
+		skin = gfx::buffer(gfx::BUFFER_COMPUTE_READ, points * 16, data[k..k + points * 16]);
+		mats.resize(bones, gfx::mat4_identity);
+		matsb = gfx::buffer(gfx::BUFFER_COMPUTE_READ, bones * 64, []);
+		skin_p = gfx::compute_pipeline(embed_shader("shaders/strand_skin.comp"));
+	}
 	var sx f32 = 0.0;
 	var sy f32 = 0.0;
 	var sz f32 = 0.0;
-	for k in points {
-		let at = 16 + k * 48;
+	for i in points {
+		let at = 16 + i * 48;
 		sx += binary::f32_from_bits(binary::gather(data, at, 4) as! u32);
 		sy += binary::f32_from_bits(binary::gather(data, at + 4, 4) as! u32);
 		sz += binary::f32_from_bits(binary::gather(data, at + 8, 4) as! u32);
@@ -83,6 +106,12 @@ fn hair_open(path const byte[:], nw int, nh int, strands int) bool {
 	on = true;
 	return true;
 }
+fn hair_bone(i int) int {
+	bone_node[i]
+}
+fn hair_pose(i int, m gfx::mat4) {
+	if i >= 0 && i < bones { mats[i] = m; }
+}
 fn hair_draw(model gfx::mat4) {
 	if !on { return; }
 	let im = linalg::inverse(model);
@@ -102,7 +131,7 @@ fn hair_draw(model gfx::mat4) {
 	u.params = float4 { 0.004, 1.7, 0.004, 0.00007 };
 	u.look = float4 { 1.0, 6.0, 0.0, 0.7 };
 	u.light_vp = gfx::mul(gfx::perspective(0.24, 1.0, 2.0, 4.0), gfx::look_at(center + ld * 3.0, center, float3 { 0.0, 1.0, 0.0 }));
-	u.light = float4 { 512.0, 512.0, 0.35, (256.0 / tan(0.12)) as f32 };
+	u.light = float4 { 512.0 as f32, 512.0 as f32, 0.35 as f32, (256.0 / tan(0.12)) as f32 };
 	u.shadow_vp = gfx::mul(s3d::cascade_vp[0], model);
 	fn raster(rw0 gfx::Buffer, rw1 gfx::Buffer, ro0 gfx::Buffer, ro1 gfx::Buffer, mode int) {
 		gfx::begin_compute([rw0, rw1]);
@@ -117,6 +146,19 @@ fn hair_draw(model gfx::mat4) {
 		gfx::bind_storage_buffer(gfx::COMPUTE, 3, ro1);
 		gfx::dispatch((segments + 63) / 64, spc, 1);
 		gfx::end_compute();
+	}
+	if bones > 0 {
+		gfx::update_buffer(matsb, 0, bytes_of(mats)[..bones * 64]);
+		gfx::begin_compute([pts]);
+		gfx::bind(skin_p);
+		u.size.w = points as f32;
+		gfx::uniforms(gfx::COMPUTE, 0, u);
+		gfx::bind_storage_buffer(gfx::COMPUTE, 0, rest);
+		gfx::bind_storage_buffer(gfx::COMPUTE, 1, skin);
+		gfx::bind_storage_buffer(gfx::COMPUTE, 2, matsb);
+		gfx::dispatch((points + 63) / 64, 1, 1);
+		gfx::end_compute();
+		u.size.w = segments as f32;
 	}
 	gfx::begin_compute([front, acc]);
 	gfx::bind(clear_p);

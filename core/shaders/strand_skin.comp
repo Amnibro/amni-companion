@@ -1,0 +1,22 @@
+layout(local_size_x = 64) in;
+#include "strand_common.glsl"
+layout(std430, set = 0, binding = 0) readonly buffer Rest { float rest[]; };
+layout(std430, set = 0, binding = 1) readonly buffer Skin { uvec4 skin[]; };
+layout(std430, set = 0, binding = 2) readonly buffer Mats { vec4 mats[]; };
+layout(std430, set = 1, binding = 0) buffer Pts { float pts[]; };
+void main() {
+	uint i = gl_GlobalInvocationID.x;
+	if (i >= uint(size.w)) return;
+	uvec4 s = skin[i];
+	float w0 = uintBitsToFloat(s.z), w1 = uintBitsToFloat(s.w);
+	if (w0 + w1 <= 0.0001) return;
+	uint o = i * 12u;
+	uint a = s.x * 4u, b = s.y * 4u;
+	mat4 m = mat4(1.0) * (1.0 - w0 - w1) + mat4(mats[a], mats[a + 1u], mats[a + 2u], mats[a + 3u]) * w0 + mat4(mats[b], mats[b + 1u], mats[b + 2u], mats[b + 3u]) * w1;
+	vec3 p = (m * vec4(rest[o], rest[o + 1u], rest[o + 2u], 1.0)).xyz;
+	vec3 sd = (m * vec4(rest[o + 4u], rest[o + 5u], rest[o + 6u], 0.0)).xyz;
+	vec3 n = normalize((m * vec4(rest[o + 8u], rest[o + 9u], rest[o + 10u], 0.0)).xyz);
+	pts[o] = p.x; pts[o + 1u] = p.y; pts[o + 2u] = p.z;
+	pts[o + 4u] = sd.x; pts[o + 5u] = sd.y; pts[o + 6u] = sd.z;
+	pts[o + 8u] = n.x; pts[o + 9u] = n.y; pts[o + 10u] = n.z;
+}
