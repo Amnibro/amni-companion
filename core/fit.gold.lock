@@ -454,7 +454,8 @@ fn metrics(heat byte[>..]&) f32, f32, f32, f32 {
 	let gs = if cnt > 0 { (good as f32) / (cnt as f32) } else { 0.0 };
 	return iou, ssim, de, gs;
 }
-=== 1fc1630375894fd0
+=== 1314e035daf58e71
+var vpw f32[>..];
 fn project() {
 	s3d::pose(item);
 	let nv = gltf::verts.len / gltf::VERTEX_FLOATS;
@@ -462,26 +463,28 @@ fn project() {
 	vy.clear();
 	vz.clear();
 	vw.clear();
+	vpw.clear();
 	vrot.clear();
 	vx.resize(nv, 0.0);
 	vy.resize(nv, 0.0);
 	vz.resize(nv, 0.0);
 	vw.resize(nv, 0.0);
+	vpw.resize(nv * 3, 0.0);
 	vrot.resize(nv, linalg::Quat { 0.0, 0.0, 0.0, 1.0 });
 	let view = gfx::look_at(cam_eye, cam_look, float3 { 0.0, 1.0, 0.0 });
-	let near f32 = 0.05;
-	let far f32 = 100.0;
-	let fl = (1.0 / tan((fov as real) / 2.0)) as f32;
+	let tf = tan((fov as real) / 2.0) as f32;
 	let aspect = (tw as f32) / (th as f32);
-	let pa = (far + near) / (near - far);
-	let pb = 2.0 * far * near / (near - far);
+	let zn f32 = 0.05;
+	let zf f32 = 100.0;
+	let za = (zf + zn) / (zn - zf);
+	let zc = 2.0 * zf * zn / (zn - zf);
 	let an = gltf::assets[asset].nodes;
 	for n in an.first..an.first + an.count {
-		let node = gltf::nodes[n];
-		if node.mesh < 0 { continue; }
-		let skinned = node.skin >= 0;
-		if skinned { motion::joints(node.skin, pal); }
-		let mesh = gltf::meshes[node.mesh];
+		let mi = gltf::nodes[n].mesh;
+		if mi < 0 { continue; }
+		let skin = gltf::nodes[n].skin;
+		if skin >= 0 { motion::joints(skin, pal); }
+		let mesh = gltf::meshes[mi];
 		for pi in mesh.prims.count {
 			let prim = gltf::prims[mesh.prims.first + pi];
 			for v in prim.vcount {
@@ -489,29 +492,32 @@ fn project() {
 				let o = g * gltf::VERTEX_FLOATS;
 				let pos = float3 { gltf::verts[o], gltf::verts[o + 1], gltf::verts[o + 2] };
 				var wp = float3 { 0.0, 0.0, 0.0 };
-				if skinned {
-					var best f32 = -1.0;
-					var bj = 0;
+				if skin >= 0 {
+					var bestw f32 = -1.0;
+					var bestj = 0;
 					for c in 4 {
 						let wt = gltf::verts[o + 22 + c];
 						let j = gltf::verts[o + 18 + c] as int;
 						let q = linalg::point(pal[j], pos);
 						wp = float3 { wp.x + wt * q.x, wp.y + wt * q.y, wp.z + wt * q.z };
-						if wt > best {
-							best = wt;
-							bj = j;
+						if wt > bestw {
+							bestw = wt;
+							bestj = j;
 						}
 					}
-					vrot[g] = qconj(mquat(pal[bj]));
+					vrot[g] = qconj(mquat(pal[bestj]));
 				} else {
 					wp = linalg::point(motion::world[n], pos);
 					vrot[g] = qconj(mquat(motion::world[n]));
 				}
-				let e = linalg::point(view, wp);
-				let cx = fl / aspect * e.x;
-				let cy = fl * e.y;
-				let cz = pa * e.z + pb;
-				let cw = -e.z;
+				vpw[g * 3] = wp.x;
+				vpw[g * 3 + 1] = wp.y;
+				vpw[g * 3 + 2] = wp.z;
+				let q = linalg::point(view, wp);
+				let cx = q.x / (aspect * tf);
+				let cy = q.y / tf;
+				let cz = za * q.z + zc;
+				let cw = -q.z;
 				vw[g] = cw;
 				if cw > 0.0 {
 					vx[g] = (cx / cw * 0.5 + 0.5) * (tw as f32);
@@ -522,85 +528,101 @@ fn project() {
 		}
 	}
 }
-=== 0ecc61ad0b36f17e
-fn raster_tri(a int, b int, c int, img int, tex bool) {
-	let ax = vx[a];
-	let ay = vy[a];
-	let bx = vx[b];
-	let by = vy[b];
-	let cx = vx[c];
-	let cy = vy[c];
-	let area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
-	if area == 0.0 { return; }
-	let x0 = max(0, (floor((min(min(ax, bx), cx)) as real)) as int);
-	let x1 = min(tw - 1, (floor((max(max(ax, bx), cx)) as real)) as int);
-	let y0 = max(0, (floor((min(min(ay, by), cy)) as real)) as int);
-	let y1 = min(th - 1, (floor((max(max(ay, by), cy)) as real)) as int);
-	let ua = gltf::verts[a * gltf::VERTEX_FLOATS + 6];
-	let va = gltf::verts[a * gltf::VERTEX_FLOATS + 7];
-	let ub = gltf::verts[b * gltf::VERTEX_FLOATS + 6];
-	let vb = gltf::verts[b * gltf::VERTEX_FLOATS + 7];
-	let uc = gltf::verts[c * gltf::VERTEX_FLOATS + 6];
-	let vc = gltf::verts[c * gltf::VERTEX_FLOATS + 7];
-	for y in y0..y1 + 1 {
-		for x in x0..x1 + 1 {
-			let px = (x as f32) + 0.5;
-			let py = (y as f32) + 0.5;
-			let w0 = ((bx - px) * (cy - py) - (by - py) * (cx - px)) / area;
-			let w1 = ((cx - px) * (ay - py) - (cy - py) * (ax - px)) / area;
-			let w2 = 1.0 - w0 - w1;
-			if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 { continue; }
-			let z = w0 * vz[a] + w1 * vz[b] + w2 * vz[c];
-			let i = y * tw + x;
-			if z >= zb[i] { continue; }
-			if tex {
-				let u = w0 * ua + w1 * ub + w2 * uc;
-				let v = w0 * va + w1 * vb + w2 * vc;
-				if gltf::pixels[texel(img, u, v) + 3] >= 128 {
-					zb[i] = z;
-					hit_img[i] = img;
-					hit_u[i] = u;
-					hit_v[i] = v;
-				}
-			} else {
-				zb[i] = z;
-			}
-		}
-	}
-}
+=== 674bad9daa9220c0
+var hit_f f32[>..];
 fn raster() {
 	project();
 	let n = tw * th;
 	hit_img.clear();
 	hit_u.clear();
 	hit_v.clear();
+	hit_f.clear();
 	zb.clear();
 	hit_img.resize(n, -1);
 	hit_u.resize(n, 0.0);
 	hit_v.resize(n, 0.0);
+	hit_f.resize(n, 0.0);
 	zb.resize(n, 1e30);
 	let an = gltf::assets[asset].nodes;
-	for nd in an.first..an.first + an.count {
-		let node = gltf::nodes[nd];
-		if node.mesh < 0 { continue; }
-		let mesh = gltf::meshes[node.mesh];
+	for ni in an.first..an.first + an.count {
+		let mi = gltf::nodes[ni].mesh;
+		if mi < 0 { continue; }
+		let mesh = gltf::meshes[mi];
 		for pi in mesh.prims.count {
 			let prim = gltf::prims[mesh.prims.first + pi];
 			var img = -1;
-			var tex = false;
 			if prim.material >= 0 {
 				let m = gltf::materials[prim.material];
 				if m.base_tex.texture >= 0 {
 					img = gltf::textures[m.base_tex.texture].image;
-					tex = img >= 0;
 				}
 			}
 			for t in prim.icount / 3 {
-				let a = prim.vfirst + gltf::indices[prim.ifirst + 3 * t];
-				let b = prim.vfirst + gltf::indices[prim.ifirst + 3 * t + 1];
-				let c = prim.vfirst + gltf::indices[prim.ifirst + 3 * t + 2];
-				if vw[a] <= 0.0 || vw[b] <= 0.0 || vw[c] <= 0.0 { continue; }
-				raster_tri(a, b, c, img, tex);
+				let ga = prim.vfirst + (gltf::indices[prim.ifirst + 3 * t] as int);
+				let gb = prim.vfirst + (gltf::indices[prim.ifirst + 3 * t + 1] as int);
+				let gc = prim.vfirst + (gltf::indices[prim.ifirst + 3 * t + 2] as int);
+				if vw[ga] <= 0.0 || vw[gb] <= 0.0 || vw[gc] <= 0.0 { continue; }
+				let ax = vx[ga];
+				let ay = vy[ga];
+				let bx = vx[gb];
+				let by = vy[gb];
+				let cx = vx[gc];
+				let cy = vy[gc];
+				let area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+				if abs(area) < 1e-12 { continue; }
+				var facing f32 = 0.0;
+				if img >= 0 {
+					let p0 = float3 { vpw[ga * 3], vpw[ga * 3 + 1], vpw[ga * 3 + 2] };
+					let p1 = float3 { vpw[gb * 3], vpw[gb * 3 + 1], vpw[gb * 3 + 2] };
+					let p2 = float3 { vpw[gc * 3], vpw[gc * 3 + 1], vpw[gc * 3 + 2] };
+					let e1 = float3 { p1.x - p0.x, p1.y - p0.y, p1.z - p0.z };
+					let e2 = float3 { p2.x - p0.x, p2.y - p0.y, p2.z - p0.z };
+					let cr = float3 { e1.y * e2.z - e1.z * e2.y, e1.z * e2.x - e1.x * e2.z, e1.x * e2.y - e1.y * e2.x };
+					let cl = sqrt((cr.x * cr.x + cr.y * cr.y + cr.z * cr.z) as real);
+					if cl >= 1e-12 {
+						let nn = linalg::unit3(cr);
+						let ct = float3 { (p0.x + p1.x + p2.x) / 3.0, (p0.y + p1.y + p2.y) / 3.0, (p0.z + p1.z + p2.z) / 3.0 };
+						let vd = linalg::unit3(float3 { cam_eye.x - ct.x, cam_eye.y - ct.y, cam_eye.z - ct.z });
+						facing = abs(nn.x * vd.x + nn.y * vd.y + nn.z * vd.z);
+					}
+				}
+				let minx = min(min(ax, bx), cx) as real;
+				let maxx = max(max(ax, bx), cx) as real;
+				let miny = min(min(ay, by), cy) as real;
+				let maxy = max(max(ay, by), cy) as real;
+				let x0 = max(0, floor(minx - 0.5) as int);
+				let x1 = min(tw - 1, ceil(maxx - 0.5) as int);
+				let y0 = max(0, floor(miny - 0.5) as int);
+				let y1 = min(th - 1, ceil(maxy - 0.5) as int);
+				let oa = ga * gltf::VERTEX_FLOATS;
+				let ob = gb * gltf::VERTEX_FLOATS;
+				let oc = gc * gltf::VERTEX_FLOATS;
+				for y in y0..y1 + 1 {
+					for x in x0..x1 + 1 {
+						let qx = (x as f32) + 0.5;
+						let qy = (y as f32) + 0.5;
+						let w0 = ((cx - bx) * (qy - by) - (cy - by) * (qx - bx)) / area;
+						let w1 = ((ax - cx) * (qy - cy) - (ay - cy) * (qx - cx)) / area;
+						let w2 = 1.0 - w0 - w1;
+						if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 { continue; }
+						let z = w0 * vz[ga] + w1 * vz[gb] + w2 * vz[gc];
+						let i = y * tw + x;
+						if z >= zb[i] { continue; }
+						if img >= 0 {
+							let u = w0 * gltf::verts[oa + 6] + w1 * gltf::verts[ob + 6] + w2 * gltf::verts[oc + 6];
+							let v = w0 * gltf::verts[oa + 7] + w1 * gltf::verts[ob + 7] + w2 * gltf::verts[oc + 7];
+							if gltf::pixels[texel(img, u, v) + 3] >= 128 {
+								zb[i] = z;
+								hit_img[i] = img;
+								hit_u[i] = u;
+								hit_v[i] = v;
+								hit_f[i] = facing;
+							}
+						} else {
+							zb[i] = z;
+						}
+					}
+				}
 			}
 		}
 	}
@@ -907,15 +929,17 @@ fn material_fit() {
 		print(o);
 	}
 }
-=== 51e1898f1ab57370
-fn pg_lum(px byte[:], i int) f32 {
-	0.2126 * lin(at(px, i, 0)) + 0.7152 * lin(at(px, i, 1)) + 0.0722 * lin(at(px, i, 2))
+=== 5ba874ed9870bd47
+fn pg_y(j int) f32 {
+	0.2126 * lin(at(tpx, j, 0)) + 0.7152 * lin(at(tpx, j, 1)) + 0.0722 * lin(at(tpx, j, 2))
 }
 fn paint_gather() {
 	raster();
 	let n = tw * th;
 	for i in n {
 		if tmask[i] != 1.0 || rmask[i] != 1.0 || hit_img[i] < 0 { continue; }
+		let hf = hit_f[i];
+		if hf < 0.5 { continue; }
 		let img = hit_img[i];
 		let u = hit_u[i];
 		let v = hit_v[i];
@@ -923,55 +947,54 @@ fn paint_gather() {
 		let x = i % tw;
 		let y = i / tw;
 		if pcell == 1 {
-			if x == 0 || y == 0 || x == tw - 1 || y == th - 1 { continue; }
-			let gx = abs(pg_lum(tpx, i + 1) - pg_lum(tpx, i - 1));
-			let gy = abs(pg_lum(tpx, i + tw) - pg_lum(tpx, i - tw));
-			if gx + gy > 0.15 { continue; }
+			if x == 0 || x == tw - 1 || y == 0 || y == th - 1 { continue; }
+			let g = abs(pg_y(i - 1) - pg_y(i + 1)) + abs(pg_y(i - tw) - pg_y(i + tw));
+			if g > 0.15 { continue; }
 		}
-		let t0 = lin(at(tpx, i, 0));
-		let t1 = lin(at(tpx, i, 1));
-		let t2 = lin(at(tpx, i, 2));
-		let r0 = lin(at(rpx, i, 0));
-		let r1 = lin(at(rpx, i, 1));
-		let r2 = lin(at(rpx, i, 2));
-		let q0 = clamp((t0 + 0.004) / (r0 + 0.004), 0.25, 4.0);
-		let q1 = clamp((t1 + 0.004) / (r1 + 0.004), 0.25, 4.0);
-		let q2 = clamp((t2 + 0.004) / (r2 + 0.004), 0.25, 4.0);
-		let yt = 0.2126 * t0 + 0.7152 * t1 + 0.0722 * t2;
-		let yr = 0.2126 * r0 + 0.7152 * r1 + 0.0722 * r2;
-		let lo f32 = if pcell == 1 { 0.5 } else { 0.25 };
-		let hi f32 = if pcell == 1 { 2.0 } else { 4.0 };
-		let lr = clamp((yt + 0.004) / (yr + 0.004), lo, hi);
-		let f0 = lr * sqrt(clamp(q0 / lr, 0.5, 2.0) as real) as f32;
-		let f1 = lr * sqrt(clamp(q1 / lr, 0.5, 2.0) as real) as f32;
-		let f2 = lr * sqrt(clamp(q2 / lr, 0.5, 2.0) as real) as f32;
 		let im = gltf::images[img];
 		if g_off[img] < 0 {
 			let gw0 = (im.width + pcell - 1) / pcell;
 			let gh0 = (im.height + pcell - 1) / pcell;
 			g_off[img] = g_r.len;
 			g_w[img] = gw0;
-			for z in gw0 * gh0 {
-				g_r.push(0.0);
-				g_g.push(0.0);
-				g_b.push(0.0);
-				g_c.push(0);
-			}
+			let total = g_r.len + gw0 * gh0;
+			g_r.resize(total, 0.0);
+			g_g.resize(total, 0.0);
+			g_b.resize(total, 0.0);
+			g_c.resize(total, 0);
 		}
 		let gw = g_w[img];
+		let gh = (im.height + pcell - 1) / pcell;
+		let tr = lin(at(tpx, i, 0));
+		let tg = lin(at(tpx, i, 1));
+		let tb = lin(at(tpx, i, 2));
+		let rr = lin(at(rpx, i, 0));
+		let rg = lin(at(rpx, i, 1));
+		let rb = lin(at(rpx, i, 2));
+		let yt = 0.2126 * tr + 0.7152 * tg + 0.0722 * tb;
+		let yr = 0.2126 * rr + 0.7152 * rg + 0.0722 * rb;
+		var lr = clamp((yt + 0.004) / (yr + 0.004), 0.25, 4.0);
+		if pcell == 1 { lr = clamp(lr, 0.5, 2.0); }
+		let qr = clamp((tr + 0.004) / (rr + 0.004), 0.25, 4.0);
+		let qg = clamp((tg + 0.004) / (rg + 0.004), 0.25, 4.0);
+		let qb = clamp((tb + 0.004) / (rb + 0.004), 0.25, 4.0);
+		let fr = lr * (sqrt(clamp(qr / lr, 0.5, 2.0) as real) as f32);
+		let fg = lr * (sqrt(clamp(qg / lr, 0.5, 2.0) as real) as f32);
+		let fb = lr * (sqrt(clamp(qb / lr, 0.5, 2.0) as real) as f32);
+		let wi = max(1, round((hf * hf * 16.0) as real) as int);
+		let wf = wi as f32;
 		let fu = (u as real) - floor(u as real);
 		let fv = (v as real) - floor(v as real);
 		let cx = clamp(floor(fu * (im.width as real) / (pcell as real)) as int, 0, gw - 1);
-		let gh = (im.height + pcell - 1) / pcell;
 		let cy = clamp(floor(fv * (im.height as real) / (pcell as real)) as int, 0, gh - 1);
 		let cell = g_off[img] + cy * gw + cx;
-		g_r[cell] += f0;
-		g_g[cell] += f1;
-		g_b[cell] += f2;
-		g_c[cell] += 1;
+		g_r[cell] += fr * wf;
+		g_g[cell] += fg * wf;
+		g_b[cell] += fb * wf;
+		g_c[cell] += wi;
 	}
 }
-=== 3f60622307f3c3ba
+=== 7a8d87852b58aa10
 fn paint(fine bool) int {
 	let ni = gltf::images.len;
 	g_off.clear();
@@ -980,9 +1003,9 @@ fn paint(fine bool) int {
 	g_g.clear();
 	g_b.clear();
 	g_c.clear();
-	img_changed.clear();
 	g_off.resize(ni, -1);
 	g_w.resize(ni, 0);
+	img_changed.clear();
 	img_changed.resize(ni, 0);
 	for k in nview {
 		if fine && !v_fix[k] { continue; }
@@ -990,41 +1013,88 @@ fn paint(fine bool) int {
 		shot(cam_eye, cam_look);
 		paint_gather();
 	}
+	let dxs int[4] = [1, -1, 0, 0];
+	let dys int[4] = [0, 0, 1, -1];
 	var changed = 0;
 	for img in ni {
 		if g_off[img] < 0 { continue; }
 		let im = gltf::images[img];
+		let off = g_off[img];
 		let gw = g_w[img];
 		let gh = (im.height + pcell - 1) / pcell;
-		for cy in gh {
-			for cx in gw {
-				let cell = g_off[img] + cy * gw + cx;
-				let c = g_c[cell];
-				if c == 0 { continue; }
+		let n = gw * gh;
+		var lg f32[>..] = [];
+		lg.resize(3 * n, 0.0);
+		var stv f32[>..] = [];
+		stv.resize(n, 0.0);
+		for ci in n {
+			let c = g_c[off + ci];
+			if c > 0 {
 				let cf = c as f32;
-				let fr = pow((g_r[cell] / cf) as real, 0.8) as f32;
-				let fg = pow((g_g[cell] / cf) as real, 0.8) as f32;
-				let fb = pow((g_b[cell] / cf) as real, 0.8) as f32;
-				let ty1 = min(im.height, (cy + 1) * pcell);
-				let tx1 = min(im.width, (cx + 1) * pcell);
-				for ty in cy * pcell..ty1 {
-					for tx in cx * pcell..tx1 {
-						let o = im.pixels.first + (ty * im.width + tx) * 4;
-						let lr = clamp(lin(gltf::pixels[o] as f32) * fr, 0.0, 1.0);
-						let lg = clamp(lin(gltf::pixels[o + 1] as f32) * fg, 0.0, 1.0);
-						let lb = clamp(lin(gltf::pixels[o + 2] as f32) * fb, 0.0, 1.0);
-						gltf::pixels[o] = clamp(round(enc(lr) as real), 0.0, 255.0) as byte;
-						gltf::pixels[o + 1] = clamp(round(enc(lg) as real), 0.0, 255.0) as byte;
-						gltf::pixels[o + 2] = clamp(round(enc(lb) as real), 0.0, 255.0) as byte;
-					}
-				}
-				changed++;
-				img_changed[img] = 1;
+				lg[ci] = log((g_r[off + ci] / cf) as real) as f32;
+				lg[n + ci] = log((g_g[off + ci] / cf) as real) as f32;
+				lg[2 * n + ci] = log((g_b[off + ci] / cf) as real) as f32;
+				stv[ci] = 1.0;
 			}
 		}
+		var nl f32[>..] = copy(lg);
+		var ns f32[>..] = copy(stv);
+		for round in 7 {
+			for cy in gh {
+				for cx in gw {
+					let ci = cy * gw + cx;
+					if g_c[off + ci] > 0 { continue; }
+					var sw f32 = 0.0;
+					var sc = 0;
+					var s3 f32[3] = [0.0, 0.0, 0.0];
+					for d in 4 {
+						let x = cx + dxs[d];
+						let y = cy + dys[d];
+						if x < 0 || y < 0 || x >= gw || y >= gh { continue; }
+						let cj = y * gw + x;
+						let s = stv[cj];
+						if s > 0.0 {
+							sw += s;
+							sc++;
+							for c in 3 { s3[c] += lg[c * n + cj] * s; }
+						}
+					}
+					if sc > 0 {
+						for c in 3 { nl[c * n + ci] = s3[c] / sw; }
+						ns[ci] = 0.7 * sw / (sc as f32);
+					}
+				}
+			}
+			lg = copy(nl);
+			stv = copy(ns);
+		}
+		var any = false;
+		for cy in gh {
+			for cx in gw {
+				let ci = cy * gw + cx;
+				let s = stv[ci];
+				if s <= 0.01 { continue; }
+				changed++;
+				any = true;
+				let x1 = min(im.width, (cx + 1) * pcell);
+				let y1 = min(im.height, (cy + 1) * pcell);
+				for y in cy * pcell..y1 {
+					for x in cx * pcell..x1 {
+						let o = im.pixels.first + (y * im.width + x) * 4;
+						for c in 3 {
+							let mul = exp((0.8 * s * lg[c * n + ci]) as real) as f32;
+							let l = clamp(lin(gltf::pixels[o + c] as f32) * mul, 0.0, 1.0);
+							gltf::pixels[o + c] = clamp(round(enc(l) as real), 0.0, 255.0) as byte;
+						}
+					}
+				}
+			}
+		}
+		if any { img_changed[img] = 1; }
 	}
 	for img in ni {
-		if img_changed[img] != 0 && img < s3d::tex_srgb.len {
+		if img_changed[img] == 0 { continue; }
+		if img < s3d::tex_srgb.len {
 			if s3d::tex_srgb[img].id != 0 {
 				gfx::update_texture(s3d::tex_srgb[img], gltf::image_pixels(img));
 				gfx::generate_mips(s3d::tex_srgb[img]);
