@@ -10,6 +10,7 @@ import hair;
 import spring;
 import mix;
 import cloth;
+import look;
 var P f32[10240];
 var C f32[16];
 var N byte[16384];
@@ -59,24 +60,23 @@ fn main() {
 	}
 	cloth = cloth_setup("/m/avatar.cloth", asset);
 	no_skirt = cloth > 0;
-	let first = gltf::assets[asset].nodes.first;
-	let count = gltf::assets[asset].nodes.count;
+	look_setup(asset);
 	if a.len > 2 {
-		for i in count {
-			let n = first + i;
+		for i in gltf::assets[asset].nodes.count {
+			let n = gltf::assets[asset].nodes.first + i;
 			if gltf::nodes[n].mesh >= 0 && gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "hair" {
 				gltf::nodes[n].mesh = -1;
 			}
 		}
-		head = gltf::find_node(asset, "head");
-		if head >= 0 {
-			motion::rest(asset);
-			motion::update(asset, gfx::mat4_identity);
-			rest_inv = linalg::inverse(motion::world[head]);
-		}
 	}
-	for i in count {
-		let n = first + i;
+	head = gltf::find_node(asset, "head");
+	if head >= 0 {
+		motion::rest(asset);
+		motion::update(asset, gfx::mat4_identity);
+		rest_inv = linalg::inverse(motion::world[head]);
+	}
+	for i in gltf::assets[asset].nodes.count {
+		let n = gltf::assets[asset].nodes.first + i;
 		if gltf::nodes[n].mesh >= 0 && gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "teeth" {
 			teeth_mat = gltf::prims[gltf::meshes[gltf::nodes[n].mesh].prims.first].material;
 			if teeth_mat >= 0 {

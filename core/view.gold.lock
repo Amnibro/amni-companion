@@ -1,4 +1,4 @@
-=== 646969da9ba40a82
+=== 391ba7aa6bf37274
 import os;
 import web;
 import gfx;
@@ -11,6 +11,7 @@ import hair;
 import spring;
 import mix;
 import cloth;
+import look;
 === -7b2221d4bed818f8
 var P f32[10240];
 var C f32[16];
@@ -42,7 +43,7 @@ var last_t = -1.0;
 extern fn hv_f32(id i32, xs f32[:]);
 extern fn hv_i32(id i32, xs i32[:]);
 extern fn hv_bytes(id i32, xs byte[:]);
-=== -30f35814b8271d06
+=== -7bb9667a1fdf008b
 fn main() {
 	hv_f32(0, P[..]);
 	hv_f32(1, C[..]);
@@ -63,24 +64,23 @@ fn main() {
 	}
 	cloth = cloth_setup("/m/avatar.cloth", asset);
 	no_skirt = cloth > 0;
-	let first = gltf::assets[asset].nodes.first;
-	let count = gltf::assets[asset].nodes.count;
+	look_setup(asset);
 	if a.len > 2 {
-		for i in count {
-			let n = first + i;
+		for i in gltf::assets[asset].nodes.count {
+			let n = gltf::assets[asset].nodes.first + i;
 			if gltf::nodes[n].mesh >= 0 && gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "hair" {
 				gltf::nodes[n].mesh = -1;
 			}
 		}
-		head = gltf::find_node(asset, "head");
-		if head >= 0 {
-			motion::rest(asset);
-			motion::update(asset, gfx::mat4_identity);
-			rest_inv = linalg::inverse(motion::world[head]);
-		}
 	}
-	for i in count {
-		let n = first + i;
+	head = gltf::find_node(asset, "head");
+	if head >= 0 {
+		motion::rest(asset);
+		motion::update(asset, gfx::mat4_identity);
+		rest_inv = linalg::inverse(motion::world[head]);
+	}
+	for i in gltf::assets[asset].nodes.count {
+		let n = gltf::assets[asset].nodes.first + i;
 		if gltf::nodes[n].mesh >= 0 && gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "teeth" {
 			teeth_mat = gltf::prims[gltf::meshes[gltf::nodes[n].mesh].prims.first].material;
 			if teeth_mat >= 0 {
