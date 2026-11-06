@@ -219,6 +219,10 @@ export fn hv_live() {
 	place_m();
 	mix_live(L[..]);
 }
+=== -73b794bce1898c53
+export fn hv_cloth() {
+	cloth_stats(L[..]);
+}
 === -7fca3609b903f82b
 export fn hv_stop() {
 	web::frames(false);

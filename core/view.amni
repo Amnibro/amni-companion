@@ -210,6 +210,9 @@ export fn hv_live() {
 	place_m();
 	mix_live(L[..]);
 }
+export fn hv_cloth() {
+	cloth_stats(L[..]);
+}
 export fn hv_stop() {
 	web::frames(false);
 }

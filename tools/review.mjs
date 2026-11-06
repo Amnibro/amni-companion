@@ -9,6 +9,6 @@ const srv=http.createServer((q,s)=>{const u=decodeURIComponent(q.url.split('?')[
 await new Promise(o=>srv.once('listening',o))
 const b=await chromium.launch({executablePath:process.env.CHROME||'/usr/bin/google-chrome-stable',headless:true,args:['--enable-unsafe-webgpu','--enable-features=Vulkan','--use-angle=vulkan','--no-first-run']})
 try{const p=await b.newPage({viewport:{width:384,height:576}});p.on('pageerror',e=>console.log('pageerror',e.message));await p.goto(`http://127.0.0.1:${srv.address().port}/tools/review.html`);await p.waitForFunction(()=>globalThis.ready,null,{timeout:180000})
-  await p.evaluate(()=>load('/@glb'));const shots=[];for(const v of V){await p.evaluate(v=>pose(v),v);await p.waitForTimeout(1500);shots.push((await p.screenshot()).toString('base64'))}
-  const d=await p.evaluate(([s,l])=>sheet(s,l,4),[shots,V.map(v=>v[0])]);fs.writeFileSync(out,Buffer.from(d.split(',')[1],'base64'));console.log('review sheet',out)}
+  await p.evaluate(()=>load('/@glb'));const shots=[],stats=[];for(const v of V){await p.evaluate(v=>pose(v),v);await p.waitForTimeout(1500);shots.push((await p.screenshot()).toString('base64'));stats.push({view:v[0],garments:await p.evaluate(()=>stats())})}
+  const d=await p.evaluate(([s,l])=>sheet(s,l,4),[shots,V.map(v=>v[0])]);fs.writeFileSync(out,Buffer.from(d.split(',')[1],'base64'));fs.writeFileSync(out.replace(/\.png$/,'')+'.cloth.json',JSON.stringify(stats));console.log('review sheet',out);for(const x of stats)console.log(x.view,JSON.stringify(x.garments))}
 finally{await b.close();srv.close()}

@@ -7,7 +7,9 @@ import {heMirror} from '/web/js/heview.js'
 const core=await loadCore(new URL('/web/companion.wasm',location.href)),lib=await loadLibrary(core,new URL('/web/anim/AnimationLibrary_Godot_Standard.gltf',location.href).href),cam=new THREE.PerspectiveCamera(30,innerWidth/innerHeight,.05,100)
 let av,hm
 globalThis.load=async src=>{const b=await(await fetch(src)).arrayBuffer();av=await loadAvatar(core,b.slice(0),lib);const cr=await fetch('/@cloth');hm=await heMirror(av,new Uint8Array(b),null,cr.ok?new Uint8Array(await cr.arrayBuffer()):null);return av.f.count}
-globalThis.pose=([label,clip,t,yaw,cy,dist,ty])=>{av.queue=[];av.emotes=[];clip==='rest'?av.v.rest():(av.playClip(clip,0),av.v.advance(t));const a=yaw*Math.PI/180;cam.position.set(Math.sin(a)*dist,cy,Math.cos(a)*dist);cam.lookAt(0,ty,0);cam.updateMatrixWorld(true);av.root.updateMatrixWorld(true);hm.sync(cam,{x:0,y:-50,z:0})}
+globalThis.pose=([label,clip,t,yaw,cy,dist,ty])=>{av.queue=[];av.emotes=[];clip==='rest'?av.v.rest():(av.playClip(clip,0),av.v.advance(Math.max(0,t-1)),run(Math.min(1,t)));const a=yaw*Math.PI/180;cam.position.set(Math.sin(a)*dist,cy,Math.cos(a)*dist);cam.lookAt(0,ty,0);cam.updateMatrixWorld(true);av.root.updateMatrixWorld(true);hm.sync(cam,{x:0,y:-50,z:0})}
+const run=d=>{let l=performance.now(),left=d;const f=n=>{const dt=Math.min((n-l)/1000,left);l=n;left-=dt;av.v.advance(dt);left>0&&requestAnimationFrame(f)};requestAnimationFrame(f)}
+globalThis.stats=()=>av.v.cloth()
 globalThis.sheet=async(shots,labels,cols)=>{const im=await Promise.all(shots.map(s=>createImageBitmap(new Blob([Uint8Array.from(atob(s),c=>c.charCodeAt(0))],{type:'image/png'})))),w=im[0].width,h=im[0].height,rows=Math.ceil(im.length/cols),cv=Object.assign(document.createElement('canvas'),{width:cols*w,height:rows*h}),g=cv.getContext('2d');g.font='bold 18px sans-serif'
   im.forEach((m,i)=>{const x=i%cols*w,y=Math.floor(i/cols)*h;g.drawImage(m,x,y);g.fillStyle='#0008';g.fillRect(x,y,w,30);g.fillStyle='#fff';g.fillText(labels[i],x+9,y+21)});return cv.toDataURL('image/png')}
 globalThis.ready=true
