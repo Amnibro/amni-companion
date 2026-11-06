@@ -59,10 +59,9 @@ fn main() {
 	}
 	cloth = cloth_setup("/m/avatar.cloth", asset);
 	no_skirt = cloth > 0;
-	let first = gltf::assets[asset].nodes.first;
-	let count = gltf::assets[asset].nodes.count;
-	if a.len > 2 {
-		for i in count {
+	if a.len > 2 || hair_find_cards(asset) {
+		let first = gltf::assets[asset].nodes.first;
+		for i in gltf::assets[asset].nodes.count {
 			let n = first + i;
 			if gltf::nodes[n].mesh >= 0 && gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "hair" {
 				gltf::nodes[n].mesh = -1;
@@ -75,8 +74,9 @@ fn main() {
 			rest_inv = linalg::inverse(motion::world[head]);
 		}
 	}
-	for i in count {
-		let n = first + i;
+	let first_node = gltf::assets[asset].nodes.first;
+	for i in gltf::assets[asset].nodes.count {
+		let n = first_node + i;
 		if gltf::nodes[n].mesh >= 0 && gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "teeth" {
 			teeth_mat = gltf::prims[gltf::meshes[gltf::nodes[n].mesh].prims.first].material;
 			if teeth_mat >= 0 {
@@ -132,12 +132,15 @@ fn main() {
 	s3d::init(sw, sh);
 	if a.len > 2 {
 		hair_open(a[2], sw, sh, 96);
-		if bones > 0 {
-			motion::rest(asset);
-			motion::update(asset, gfx::mat4_identity);
-			for i in bones {
-				bone_rest.push(linalg::inverse(motion::world[gltf::assets[asset].nodes.first + hair_bone(i)]));
-			}
+	} else if card_node >= 0 {
+		hair_cards(asset, sw, sh, 64);
+	}
+	if on { hair_body(asset); }
+	if bones > 0 {
+		motion::rest(asset);
+		motion::update(asset, gfx::mat4_identity);
+		for i in bones {
+			bone_rest.push(linalg::inverse(motion::world[gltf::assets[asset].nodes.first + hair_bone(i)]));
 		}
 	}
 	web::frames(true);
@@ -213,6 +216,9 @@ export fn hv_live() {
 export fn hv_cloth() {
 	cloth_stats(L[..]);
 }
+export fn hv_hair_probe(k i32) f32 {
+	return hair_probe(k as int);
+}
 export fn hv_stop() {
 	web::frames(false);
 }
@@ -236,8 +242,8 @@ export fn he_frame(t real) {
 			gltf::materials[teeth_mat].roughness = C[13];
 		}
 	}
-	if springs > 0 || cloth > 0 {
-		let dt real = if last_t < 0.0 { 0.0 } else { min(0.05, (t - last_t) / 1000.0) };
+	let dt = if last_t < 0.0 { 0.0 } else { min(0.05, (t - last_t) / 1000.0) };
+	if springs > 0 || cloth > 0 || on {
 		s3d::pose(item);
 		if springs > 0 { spring_step(dt as f32); }
 		if cloth > 0 { cloth_step(dt as f32); }
@@ -257,7 +263,7 @@ export fn he_frame(t real) {
 			for i in bones {
 				hair_pose(i, gfx::mul(hi, gfx::mul(motion::world[gltf::assets[asset].nodes.first + hair_bone(i)], bone_rest[i])));
 			}
-			hair_draw(hm);
+			hair_draw(hm, dt as f32);
 		}
 		s3d::render_end(gfx::screen());
 	}
