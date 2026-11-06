@@ -9,35 +9,13 @@ layout(std430, set = 0, binding = 5) readonly buffer LAcc { uint lacc[]; };
 layout(std430, set = 1, binding = 0) buffer Front { uint front[]; };
 layout(std430, set = 1, binding = 1) buffer Acc { uint acc[]; };
 float hsh(uint a, uint b) { uint h = a * 747796405u + b * 2891336453u + 1u; h ^= h >> 16; h *= 2246822519u; h ^= h >> 13; h *= 3266489917u; h ^= h >> 16; return float(h & 0xffffffu) / 16777216.0; }
-float hG(float b, float x) { return exp(-0.5 * x * x / (b * b)) / (2.5066 * b); }
-float hF(float c) { return 0.0465 + 0.9535 * pow(1.0 - c, 5.0); }
-vec3 hairS(vec3 T, vec3 L, vec3 V, vec3 c, float rough, float spec, float id) {
-	float sL = dot(T, L), sV = dot(T, V);
-	float cD = max(cos(0.5 * abs(asin(clamp(sV, -1.0, 1.0)) - asin(clamp(sL, -1.0, 1.0)))), 0.05);
-	float a = 0.035 + (id - 0.5) * 0.06, b = rough * rough + 0.02;
-	vec3 Lp = L - sL * T, Vp = V - sV * T;
-	float cP = dot(Lp, Vp) * inversesqrt(dot(Lp, Lp) * dot(Vp, Vp) + 1e-4), cH = sqrt(clamp(0.5 + 0.5 * cP, 0.0, 1.0));
-	float sa = sin(-2.0 * a), ca = cos(-2.0 * a), r = 2.0 * sa * (ca * cH * sqrt(max(1.0 - sV * sV, 0.0)) + sa * sV);
-	float ia = 1.0 / (1.19 / cD + 0.36 * cD), h = cH * (1.0 + ia * (0.6 - 0.8 * cP));
-	float f = hF(cD * sqrt(clamp(1.0 - h * h, 0.0, 1.0))), f2 = hF(cD * 0.5);
-	vec3 R = vec3(hG(b * 1.414 * max(cH, 0.05), sL + sV - r) * 0.25 * cH * hF(sqrt(clamp(0.5 + 0.5 * dot(L, V), 0.0, 1.0))) * spec);
-	vec3 TT = hG(b * 0.5, sL + sV - a) * exp(-3.65 * cP - 3.98) * (1.0 - f) * (1.0 - f) * pow(c, vec3(0.5 * sqrt(max(1.0 - h * h * ia * ia, 0.0)) / cD));
-	vec3 TRT = hG(b * 2.0, sL + sV - 4.0 * a) * exp(17.0 * cP - 16.78) * (1.0 - f2) * (1.0 - f2) * f2 * pow(c, vec3(0.8 / cD));
-	return R + TT + TRT;
-}
+#include "strand_shade.glsl"
 float lightTx(ivec2 q, float w) {
-	if (q.x < 0 || q.y < 0 || q.x >= int(light.x) || q.y >= int(light.y)) return 1.0;
+	if (q.x < 0 || q.y < 0 || q.x >= int(light.x) || q.y >= int(light.y)) return 0.0;
 	uint li = uint(q.y) * uint(light.x) + uint(q.x);
 	float x = (w - uintBitsToFloat(lfront[li])) / params.x - 0.5, d = 0.0;
 	for (uint k = 0u; k < 4u; k++) d += float(lacc[(li * 4u + k) * 4u + 3u]) / 4096.0 * clamp(x - float(k), 0.0, 1.0);
-	return exp(-d * light.z);
-}
-float lightT(vec3 P) {
-	vec4 c = light_vp * vec4(P, 1.0);
-	if (c.w < 0.02) return 1.0;
-	vec2 g = vec2(c.x / c.w * 0.5 + 0.5, 0.5 - c.y / c.w * 0.5) * light.xy - 0.5, f = fract(g);
-	ivec2 q = ivec2(floor(g));
-	return mix(mix(lightTx(q, c.w), lightTx(q + ivec2(1, 0), c.w), f.x), mix(lightTx(q + ivec2(0, 1), c.w), lightTx(q + ivec2(1, 1), c.w), f.x), f.y);
+	return d;
 }
 float bodyT(vec3 P) {
 	vec4 c = shadow_vp * vec4(P + to_sun.xyz * 0.004, 1.0);
@@ -49,7 +27,40 @@ float bodyT(vec3 P) {
 	for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) lit += n.z - 0.0008 <= texelFetch(tex_sm, ivec3(clamp(ivec2(uv * sz) + ivec2(x, y), ivec2(0), ivec2(sz) - 1), 0), 0).r ? 1.0 : 0.0;
 	return lit / 9.0;
 }
+vec2 lightD(vec3 P) {
+	vec4 c = light_vp * vec4(P, 1.0);
+	if (c.w < 0.02) return vec2(0.0);
+	vec2 g = vec2(c.x / c.w * 0.5 + 0.5, 0.5 - c.y / c.w * 0.5) * light.xy - 0.5, f = fract(g);
+	ivec2 q = ivec2(floor(g));
+	float d = mix(mix(lightTx(q, c.w), lightTx(q + ivec2(1, 0), c.w), f.x), mix(lightTx(q + ivec2(0, 1), c.w), lightTx(q + ivec2(1, 1), c.w), f.x), f.y);
+	return vec2(d, d * c.w / max(params.w * light.w, 1e-9));
+}
+vec3 shadeAt(vec3 P, vec3 T, vec3 sig0, vec3 cms, float h, float bm) {
+	vec3 sig = sig0 * 1.7;
+	vec3 V = normalize(cam.xyz - P), L = to_sun.xyz, af, ab;
+	vec2 ld = lightD(P);
+	float sb = bodyT(P), nf = min(ld.y * look.y, 60.0);
+	vec3 fs = chiang(T, L, V, sig, h, bm, mel.z, 0.035, af, ab);
+	vec3 tf = pow(max(af + ab * 0.5, vec3(1e-3)), vec3(nf)) * sb;
+	float sl = dot(T, L) + dot(T, V), sf2 = bm * bm * (1.0 + nf);
+	vec3 ms = tf * cms * exp(-0.5 * sl * sl / sf2) * inversesqrt(6.2831853 * sf2) * 0.1591549 * 2.0;
+	vec3 col = sun_rgb.rgb * params.y * (exp(-ld.x * light.z) * sb * fs + ms * look.w);
+	for (int i = 0; i < 4; i++) {
+		if (float(i) >= mel.w) break;
+		vec3 dl = pl[i * 2].xyz - P;
+		float dd = length(dl), q = clamp(1.0 - dd * dd / (pl[i * 2].w * pl[i * 2].w), 0.0, 1.0);
+		vec3 e = pl[i * 2 + 1].rgb * q * q / (1.0 + dd * dd) * smoothstep(-0.1, 0.45, dot(normalize(P - vec3(0.0, shape.x - 0.09, shape.y)), dl / dd)), a2, b2;
+		col += 0.35 * e * (chiang(T, dl / dd, V, sig, h, bm, mel.z, 0.035, a2, b2) + cms * 0.0795775 * look.w);
+	}
+	return col + sky.rgb * cms;
+}
 vec3 ptan(uint p) { return normalize(cross(pts[p * 3u + 1u].xyz, pts[p * 3u + 2u].xyz) + vec3(0.0, -1e-7, 0.0)); }
+vec3 partShift(uint p, float u) {
+	vec4 a = pts[p * 3u], sd = pts[p * 3u + 1u];
+	vec3 x = a.xyz + sd.xyz * u;
+	float w = smoothstep(0.004, 0.0, abs(x.x)) * smoothstep(shape.y + 0.012, shape.y + 0.042, x.z) * smoothstep(shape.x - 0.064, shape.x - 0.024, x.y) * (1.0 - smoothstep(0.0, 0.6, sd.w));
+	return vec3(sign(x.x + 1e-6) * shape.z * w, 0.0, 0.0);
+}
 vec3 strandPos(uint p, float u, float dz, float wob, float ph) {
 	vec4 a = pts[p * 3u], s = pts[p * 3u + 1u], n = pts[p * 3u + 2u];
 	float t = s.w;
@@ -64,11 +75,13 @@ void main() {
 	float t0 = pts[p * 3u + 1u].w, t1 = pts[p * 3u + 4u].w;
 	float tend = 1.0 - 0.32 * h2 * h2;
 	if (t0 >= tend) return;
+	float lk = pts[p * 3u + 2u].w, fly = step(0.965, hsh(g, j * 4u + 31u));
+	if (lk > 0.5 && float(j) >= size.z * 0.45) return;
 	float nc = 3.0 + floor(hsh(g, 999u) * 5.0), cl = floor(h3 * nc), cc = (hsh(g, 1000u + uint(cl)) * 2.0 - 1.0) * 1.2, cz = (hsh(g, 2000u + uint(cl)) - 0.5) * params.z;
-	float u0 = (((float(j) + h0) / size.z) * 2.0 - 1.0) * 1.4, cs = 0.62 + 0.25 * hsh(g, j * 4u + 77u);
+	float u0 = (((float(j) + h0) / (lk > 0.5 ? size.z * 0.45 : size.z)) * 2.0 - 1.0) * 1.4, cs = (lk > 0.5 ? 0.18 : 0.62) + 0.25 * hsh(g, j * 4u + 77u) - fly * 0.4;
 	float ua = mix(u0, cc, min(cs + 0.3 * t0, 0.97)), ub = mix(u0, cc, min(cs + 0.3 * t1, 0.97));
-	float dz = mix((h1 - 0.5) * params.z, cz, 0.75), wob = 0.0007 * hsh(g, j + 500u), ph = 6.2831 * h3;
-	vec3 A = strandPos(p, ua, dz, wob, ph), B = strandPos(p + 1u, ub, dz, wob, ph);
+	float dz = mix((h1 - 0.5) * params.z, cz, lk > 0.5 ? 0.3 : 0.75) * (lk > 0.5 ? 2.2 : 1.0), wob = (0.0007 + fly * 0.0047 + lk * 0.0011) * hsh(g, j + 500u), ph = 6.2831 * h3;
+	vec3 A = strandPos(p, ua, dz, wob, ph) + partShift(p, ua), B = strandPos(p + 1u, ub, dz, wob, ph) + partShift(p + 1u, ub);
 	if (t1 > tend) B = mix(A, B, (tend - t0) / max(t1 - t0, 1e-5));
 	bool lit = look.z > 1.5;
 	mat4 VP = lit ? light_vp : view_proj;
@@ -81,11 +94,19 @@ void main() {
 	int n = int(clamp(ceil(max(abs(d.x), abs(d.y))), 1.0, 512.0));
 	bool xm = abs(d.x) >= abs(d.y);
 	float fpx = lit ? light.w : proj[1][1] * size.y * 0.5;
-	float wa = params.w * (1.0 - 0.5 * t0), wb = params.w * (1.0 - 0.5 * t1);
+	float wa = params.w * (1.0 - 0.5 * t0) * (lk > 0.5 ? 0.8 : 1.0), wb = params.w * (1.0 - 0.5 * t1) * (lk > 0.5 ? 0.8 : 1.0);
 	vec3 TA = ptan(p), TB = ptan(p + 1u), Ts = normalize(B - A + vec3(1e-7));
 	TA *= sign(dot(TA, Ts) + 1e-6); TB *= sign(dot(TB, Ts) + 1e-6);
 	float hs = hsh(g, j * 4u + 9u), hm = hsh(g, j * 4u + 11u);
-	vec3 base = hair.rgb * (1.0 + 0.05 * (hsh(g, 3u) * 2.0 - 1.0)) * (1.0 + 0.22 * (hs * 2.0 - 1.0)) * mix(vec3(1.0), vec3(1.07, 0.98, 0.86), hm * hm);
+	vec2 mm = mel.xy * (1.0 + 0.05 * (hsh(g, 3u) * 2.0 - 1.0)) * (1.0 + 0.22 * (hs * 2.0 - 1.0)) * vec2(1.0, 1.0 + 0.5 * hm * hm);
+	float hh = hsh(g, j * 4u + 13u) * 1.9 - 0.95, bm = hair.w * 0.75;
+	bool shade = look.z > 0.5 && look.z < 1.5;
+	vec3 colA = vec3(0.0), colB = vec3(0.0);
+	if (shade) {
+		vec3 cb = hair.rgb * (1.0 + 0.05 * (hsh(g, 3u) * 2.0 - 1.0)) * (1.0 + 0.22 * (hs * 2.0 - 1.0)) * mix(vec3(1.0), vec3(1.07, 0.98, 0.86), hm * hm);
+		colA = shadeAt(A, TA, hSigma(mm * mix(1.7, 1.0, smoothstep(0.0, 0.35, t0)) * mix(1.0, 0.85, smoothstep(0.6, 1.0, t0))), cb * mix(0.62, 1.0, smoothstep(0.0, 0.35, t0)) * mix(1.0, 1.08, smoothstep(0.6, 1.0, t0)), hh, bm);
+		colB = shadeAt(B, TB, hSigma(mm * mix(1.7, 1.0, smoothstep(0.0, 0.35, t1)) * mix(1.0, 0.85, smoothstep(0.6, 1.0, t1))), cb * mix(0.62, 1.0, smoothstep(0.0, 0.35, t1)) * mix(1.0, 1.08, smoothstep(0.6, 1.0, t1)), hh, bm);
+	}
 	float occ0 = pts[p * 3u].w, occ1 = pts[p * 3u + 3u].w;
 	bool acc_mode = look.z > 0.5 && look.z < 1.5 || look.z > 2.5;
 	for (int i = 0; i < n; i++) {
@@ -108,14 +129,8 @@ void main() {
 			int sl = clamp(int((vz - fd) / params.x), 0, 3);
 			uint o = (pi * 4u + uint(sl)) * 4u;
 			if (lit) { atomicAdd(acc[o + 3u], uint(cov * w * 4096.0)); continue; }
-			vec3 P = mix(A, B, f), V = normalize(cam.xyz - P), L = to_sun.xyz, T = normalize(mix(TA, TB, f));
-			float tt = mix(t0, t1, f);
-			vec3 c = base * mix(0.62, 1.0, smoothstep(0.0, 0.35, tt)) * mix(1.0, 1.08, smoothstep(0.6, 1.0, tt));
-			float ao = mix(1.0, mix(occ0, occ1, f), 0.35) * exp(-(vz - fd) * sky.w), sh = lightT(P) * bodyT(P);
-			vec3 Nf = normalize(V - T * dot(V, T) + vec3(0.0, 1e-5, 0.0));
-			float lu = dot(c, vec3(0.2126, 0.7152, 0.0722)) + 1e-4, nl = clamp((dot(Nf, L) + 1.0) * 0.25, 0.0, 1.0);
-			vec3 dif = sqrt(c) * 0.3183 * mix(nl, 1.0 - abs(dot(T, L)), 0.33) * look.w * pow(c / lu, vec3(1.0 - sh));
-			vec3 col = sun_rgb.rgb * params.y * (sh * hairS(T, L, V, c, hair.w * 0.75, cam.w * 2.0, h0) + dif * mix(0.2, 1.0, sh)) * ao + sky.rgb * c * ao;
+			float ao = mix(1.0, mix(occ0, occ1, f), 0.35) * exp(-(vz - fd) * sky.w);
+			vec3 col = mix(colA, colB, f) * ao;
 			float cw = cov * w;
 			atomicAdd(acc[o], uint(min(col.r, 64.0) * cw * 4096.0));
 			atomicAdd(acc[o + 1u], uint(min(col.g, 64.0) * cw * 4096.0));

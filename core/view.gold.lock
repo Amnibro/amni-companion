@@ -42,7 +42,7 @@ var last_t = -1.0;
 extern fn hv_f32(id i32, xs f32[:]);
 extern fn hv_i32(id i32, xs i32[:]);
 extern fn hv_bytes(id i32, xs byte[:]);
-=== 488faec8b39034a1
+=== 45c4e898ba007fd9
 fn main() {
 	hv_f32(0, P[..]);
 	hv_f32(1, C[..]);
@@ -63,14 +63,12 @@ fn main() {
 	}
 	cloth = cloth_setup("/m/avatar.cloth", asset);
 	no_skirt = cloth > 0;
-	let first = gltf::assets[asset].nodes.first;
-	let last = first + gltf::assets[asset].nodes.count;
-	if a.len > 2 {
-		for n in first..last {
-			if gltf::nodes[n].mesh >= 0 {
-				if gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "hair" {
-					gltf::nodes[n].mesh = -1;
-				}
+	if a.len > 2 || hair_find_cards(asset) {
+		let first = gltf::assets[asset].nodes.first;
+		for i in gltf::assets[asset].nodes.count {
+			let n = first + i;
+			if gltf::nodes[n].mesh >= 0 && gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "hair" {
+				gltf::nodes[n].mesh = -1;
 			}
 		}
 		head = gltf::find_node(asset, "head");
@@ -80,15 +78,15 @@ fn main() {
 			rest_inv = linalg::inverse(motion::world[head]);
 		}
 	}
-	for n in first..last {
-		if gltf::nodes[n].mesh >= 0 {
-			if gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "teeth" {
-				teeth_mat = gltf::prims[gltf::meshes[gltf::nodes[n].mesh].prims.first].material;
-				if teeth_mat >= 0 {
-					teeth_base = gltf::materials[teeth_mat].base;
-				}
-				break;
+	let first_node = gltf::assets[asset].nodes.first;
+	for i in gltf::assets[asset].nodes.count {
+		let n = first_node + i;
+		if gltf::nodes[n].mesh >= 0 && gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "teeth" {
+			teeth_mat = gltf::prims[gltf::meshes[gltf::nodes[n].mesh].prims.first].material;
+			if teeth_mat >= 0 {
+				teeth_base = gltf::materials[teeth_mat].base;
 			}
+			break;
 		}
 	}
 	if !gfx::open("amni companion", 640, 800) {
@@ -138,13 +136,15 @@ fn main() {
 	s3d::init(sw, sh);
 	if a.len > 2 {
 		hair_open(a[2], sw, sh, 96);
-		hair_body(asset);
-		if bones > 0 {
-			motion::rest(asset);
-			motion::update(asset, gfx::mat4_identity);
-			for i in bones {
-				bone_rest.push(linalg::inverse(motion::world[gltf::assets[asset].nodes.first + hair_bone(i)]));
-			}
+	} else if card_node >= 0 {
+		hair_cards(asset, sw, sh, 64);
+	}
+	if on { hair_body(asset); }
+	if bones > 0 {
+		motion::rest(asset);
+		motion::update(asset, gfx::mat4_identity);
+		for i in bones {
+			bone_rest.push(linalg::inverse(motion::world[gltf::assets[asset].nodes.first + hair_bone(i)]));
 		}
 	}
 	web::frames(true);
