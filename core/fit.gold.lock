@@ -18,7 +18,7 @@ import gfx.codec_png;
 import gfx.motion;
 import gfx.scene3d;
 import json;
-=== -3667afcc9bf80566
+=== 323ff6d9345a60be
 var tw = 0;
 var th = 0;
 var nview = 0;
@@ -26,6 +26,8 @@ var cur = 0;
 var v_px byte[>..];
 var v_mask f32[>..];
 var v_bg float3[>..];
+var pcell = 4;
+var v_fix bool[>..];
 var v_yaw f32[>..];
 var v_d f32[>..];
 var v_cy f32[>..];
@@ -185,9 +187,10 @@ fn use_view(k int) {
 	cam_look = float3 { r.x * v_cx[k], r.y * v_cx[k] + v_cy[k], r.z * v_cx[k] };
 	cam_eye = float3 { cam_look.x + f.x * v_d[k], cam_look.y + f.y * v_d[k], cam_look.z + f.z * v_d[k] };
 }
-=== 0c9b1e2e9a7f7ac9
+=== -799f13d93d027277
 fn cam_fit(k int, iters int) bool {
 	use_view(k);
+	if v_fix[k] { return true; }
 	let ty0, ty1, tcx = bbox(tmask);
 	if ty1 <= ty0 { return false; }
 	for i in iters {
@@ -621,49 +624,246 @@ fn enc(l f32) f32 {
 	let v = l as real;
 	(255.0 * (if v <= 0.0031308 { v * 12.92 } else { 1.055 * pow(v, 1.0 / 2.4) - 0.055 })) as f32
 }
-=== -28a0b11dbb2e302f
+=== -d28cf7c321990c1
+var pf_v int[>..];
+var pf_p int[>..];
+fn pf_used(img int) bool {
+	for m in gltf::materials.len {
+		let t = gltf::materials[m].base_tex.texture;
+		if t >= 0 && gltf::textures[t].image == img { return true; }
+	}
+	return false;
+}
+fn pf_std(img int) f32 {
+	let im = gltf::images[img];
+	let px = gltf::image_pixels(img);
+	let n = im.width * im.height;
+	var s = 0.0;
+	var s2 = 0.0;
+	var c = 0;
+	var i = 0;
+	while i < n {
+		let l = (0.299 * (px[i * 4] as real) + 0.587 * (px[i * 4 + 1] as real) + 0.114 * (px[i * 4 + 2] as real)) / 255.0;
+		s += l;
+		s2 += l * l;
+		c++;
+		i += 7;
+	}
+	if c == 0 { return 0.0; }
+	let mean = s / (c as real);
+	let v = max(s2 / (c as real) - mean * mean, 0.0);
+	sqrt(v) as f32
+}
+fn pf_apply(img int, du f32, dv f32, ds f32) {
+	for m in gltf::materials.len {
+		let t = gltf::materials[m].base_tex.texture;
+		if t >= 0 && gltf::textures[t].image == img {
+			gltf::materials[m].base_tex.o = float2 { du, dv };
+			gltf::materials[m].base_tex.m = float4 { 1.0 + ds, 0.0, 0.0, 1.0 + ds };
+		}
+	}
+}
+fn pf_cost(img int, du f32, dv f32, ds f32) f32 {
+	pf_apply(img, du, dv, ds);
+	var curv = -1;
+	var sum = 0.0;
+	for q in pf_p.len {
+		if pf_v[q] != curv {
+			curv = pf_v[q];
+			use_view(curv);
+			shot(cam_eye, cam_look);
+		}
+		let i = pf_p[q];
+		sum += de2000(lab(at(tpx, i, 0), at(tpx, i, 1), at(tpx, i, 2)), lab(at(rpx, i, 0), at(rpx, i, 1), at(rpx, i, 2))) as real;
+	}
+	(sum / (pf_p.len as real)) as f32
+}
+fn pf_bake(img int, du f32, dv f32, ds f32) {
+	let im = gltf::images[img];
+	let w = im.width;
+	let h = im.height;
+	let wr = w as real;
+	let hr = h as real;
+	let src = gltf::image_pixels(img);
+	var cp byte[>..] = [];
+	cp.resize(w * h * 4, 0);
+	for y in h {
+		for x in w {
+			let fu = (((x as real) + 0.5) / wr) * (1.0 + (ds as real)) + (du as real);
+			let fv = (((y as real) + 0.5) / hr) * (1.0 + (ds as real)) + (dv as real);
+			let u = fu - floor(fu);
+			let v = fv - floor(fv);
+			let fx = u * wr - 0.5;
+			let fy = v * hr - 0.5;
+			let x0r = floor(fx);
+			let y0r = floor(fy);
+			let ax = fx - x0r;
+			let ay = fy - y0r;
+			let x0 = (x0r as int) % w;
+			let x1 = (x0 + 1) % w;
+			let y0 = (y0r as int) % h;
+			let y1 = (y0 + 1) % h;
+			for c in 4 {
+				let p00 = src[(y0 * w + x0) * 4 + c] as real;
+				let p10 = src[(y0 * w + x1) * 4 + c] as real;
+				let p01 = src[(y1 * w + x0) * 4 + c] as real;
+				let p11 = src[(y1 * w + x1) * 4 + c] as real;
+				let val = (p00 * (1.0 - ax) + p10 * ax) * (1.0 - ay) + (p01 * (1.0 - ax) + p11 * ax) * ay;
+				cp[(y * w + x) * 4 + c] = clamp(round(val), 0.0, 255.0) as byte;
+			}
+		}
+	}
+	for i in w * h * 4 {
+		gltf::pixels[im.pixels.first + i] = cp[i];
+	}
+	img_changed[img] = 1;
+	if img < s3d::tex_srgb.len {
+		if s3d::tex_srgb[img].id != 0 {
+			gfx::update_texture(s3d::tex_srgb[img], gltf::image_pixels(img));
+			gfx::generate_mips(s3d::tex_srgb[img]);
+		}
+	}
+}
+fn pattern_fit() {
+	if img_changed.len < gltf::images.len { img_changed.resize(gltf::images.len, 0); }
+	let lims f32[3] = [0.15, 0.15, 0.1];
+	let steps f32[3] = [0.02, 0.007, 0.002];
+	let n = tw * th;
+	for img in gltf::images.len {
+		if !pf_used(img) { continue; }
+		if pf_std(img) <= 0.08 { continue; }
+		pf_v.clear();
+		pf_p.clear();
+		for k in nview {
+			use_view(k);
+			shot(cam_eye, cam_look);
+			raster();
+			for i in n {
+				if hit_img[i] == img && tmask[i] == 1.0 && rmask[i] == 1.0 {
+					pf_v.push(k);
+					pf_p.push(i);
+				}
+			}
+		}
+		if pf_p.len < 2000 { continue; }
+		var p f32[3] = [0.0, 0.0, 0.0];
+		var best = pf_cost(img, 0.0, 0.0, 0.0);
+		let before = best;
+		for st in steps {
+			for j in 3 {
+				var rep = 0;
+				var go = true;
+				while go && rep < 7 {
+					go = false;
+					rep++;
+					for sgn in 2 {
+						let sg f32 = if sgn == 0 { 1.0 } else { -1.0 };
+						var q = p;
+						q[j] += sg * st;
+						if abs(q[j]) > lims[j] { continue; }
+						let c = pf_cost(img, q[0], q[1], q[2]);
+						if c < best {
+							best = c;
+							p = q;
+							go = true;
+							break;
+						}
+					}
+				}
+			}
+		}
+		pf_apply(img, 0.0, 0.0, 0.0);
+		var o byte[>..] = [];
+		format(o, "pattern ", img, " du ");
+		f4(o, p[0]);
+		format(o, " dv ");
+		f4(o, p[1]);
+		format(o, " ds ");
+		f4(o, p[2]);
+		format(o, " de ");
+		f4(o, before);
+		format(o, " -> ");
+		f4(o, best);
+		print(o);
+		if p[0] != 0.0 || p[1] != 0.0 || p[2] != 0.0 {
+			pf_bake(img, p[0], p[1], p[2]);
+		}
+	}
+}
+=== -7788e652ea0c7752
+fn lum_t(i int) f32 {
+	0.2126 * lin(at(tpx, i, 0)) + 0.7152 * lin(at(tpx, i, 1)) + 0.0722 * lin(at(tpx, i, 2))
+}
 fn paint_gather() {
 	raster();
-	for i in tw * th {
+	let n = tw * th;
+	for i in n {
 		if tmask[i] != 1.0 || rmask[i] != 1.0 || hit_img[i] < 0 { continue; }
+		let x = i % tw;
+		let y = i / tw;
+		if pcell == 1 {
+			if x == 0 || y == 0 || x == tw - 1 || y == th - 1 { continue; }
+			let edge = abs(lum_t(i - 1) - lum_t(i + 1)) + abs(lum_t(i - tw) - lum_t(i + tw));
+			if edge > 0.15 { continue; }
+		}
+		let tr = lin(at(tpx, i, 0));
+		let tg = lin(at(tpx, i, 1));
+		let tb = lin(at(tpx, i, 2));
+		let rr = lin(at(rpx, i, 0));
+		let rg = lin(at(rpx, i, 1));
+		let rb = lin(at(rpx, i, 2));
+		var qr f32 = clamp((tr + 0.004) / (rr + 0.004), 0.25, 4.0);
+		var qg f32 = clamp((tg + 0.004) / (rg + 0.004), 0.25, 4.0);
+		var qb f32 = clamp((tb + 0.004) / (rb + 0.004), 0.25, 4.0);
+		if pcell == 1 {
+			let yt = 0.2126 * tr + 0.7152 * tg + 0.0722 * tb;
+			let yr = 0.2126 * rr + 0.7152 * rg + 0.0722 * rb;
+			let lr f32 = clamp((yt + 0.004) / (yr + 0.004), 0.5, 2.0);
+			qr = lr * sqrt(clamp(qr / lr, 0.5, 2.0) as real) as f32;
+			qg = lr * sqrt(clamp(qg / lr, 0.5, 2.0) as real) as f32;
+			qb = lr * sqrt(clamp(qb / lr, 0.5, 2.0) as real) as f32;
+		}
 		let img = hit_img[i];
 		let im = gltf::images[img];
-		let gw = (im.width + 3) / 4;
-		let gh = (im.height + 3) / 4;
+		let gw = (im.width + pcell - 1) / pcell;
+		let gh = (im.height + pcell - 1) / pcell;
 		if g_off[img] < 0 {
 			g_off[img] = g_r.len;
 			g_w[img] = gw;
-			let total = g_r.len + gw * gh;
-			g_r.resize(total, 0.0);
-			g_g.resize(total, 0.0);
-			g_b.resize(total, 0.0);
-			g_c.resize(total, 0);
+			let tot = g_r.len + gw * gh;
+			g_r.resize(tot, 0.0);
+			g_g.resize(tot, 0.0);
+			g_b.resize(tot, 0.0);
+			g_c.resize(tot, 0);
 		}
-		let fu = (hit_u[i] as real) - floor(hit_u[i] as real);
-		let fv = (hit_v[i] as real) - floor(hit_v[i] as real);
-		let cx = clamp(floor(fu * (im.width as real) / 4.0) as int, 0, gw - 1);
-		let cy = clamp(floor(fv * (im.height as real) / 4.0) as int, 0, gh - 1);
-		let idx = g_off[img] + cy * gw + cx;
-		g_r[idx] += clamp((lin(at(tpx, i, 0)) + 0.004) / (lin(at(rpx, i, 0)) + 0.004), 0.25, 4.0);
-		g_g[idx] += clamp((lin(at(tpx, i, 1)) + 0.004) / (lin(at(rpx, i, 1)) + 0.004), 0.25, 4.0);
-		g_b[idx] += clamp((lin(at(tpx, i, 2)) + 0.004) / (lin(at(rpx, i, 2)) + 0.004), 0.25, 4.0);
-		g_c[idx] += 1;
+		let u = hit_u[i] as real;
+		let v = hit_v[i] as real;
+		let fu = u - floor(u);
+		let fv = v - floor(v);
+		let cx = clamp(floor(fu * (im.width as real) / (pcell as real)) as int, 0, gw - 1);
+		let cy = clamp(floor(fv * (im.height as real) / (pcell as real)) as int, 0, gh - 1);
+		let cell = g_off[img] + cy * g_w[img] + cx;
+		g_r[cell] += qr;
+		g_g[cell] += qg;
+		g_b[cell] += qb;
+		g_c[cell] += 1;
 	}
 }
-=== 0d76985ddd487d23
-fn paint() int {
+=== 3f60622307f3c3ba
+fn paint(fine bool) int {
 	let ni = gltf::images.len;
 	g_off.clear();
-	g_off.resize(ni, -1);
 	g_w.clear();
-	g_w.resize(ni, 0);
 	g_r.clear();
 	g_g.clear();
 	g_b.clear();
 	g_c.clear();
 	img_changed.clear();
+	g_off.resize(ni, -1);
+	g_w.resize(ni, 0);
 	img_changed.resize(ni, 0);
 	for k in nview {
+		if fine && !v_fix[k] { continue; }
 		use_view(k);
 		shot(cam_eye, cam_look);
 		paint_gather();
@@ -673,38 +873,43 @@ fn paint() int {
 		if g_off[img] < 0 { continue; }
 		let im = gltf::images[img];
 		let gw = g_w[img];
-		let gh = (im.height + 3) / 4;
+		let gh = (im.height + pcell - 1) / pcell;
 		for cy in gh {
 			for cx in gw {
-				let idx = g_off[img] + cy * gw + cx;
-				let cnt = g_c[idx];
-				if cnt == 0 { continue; }
-				changed++;
-				let n = cnt as f32;
-				var fs f32[3] = [0.0, 0.0, 0.0];
-				fs[0] = pow((g_r[idx] / n) as real, 0.8) as f32;
-				fs[1] = pow((g_g[idx] / n) as real, 0.8) as f32;
-				fs[2] = pow((g_b[idx] / n) as real, 0.8) as f32;
-				for y in cy * 4..min(cy * 4 + 4, im.height) {
-					for x in cx * 4..min(cx * 4 + 4, im.width) {
-						let o = im.pixels.first + (y * im.width + x) * 4;
-						for ch in 3 {
-							let l = clamp(lin(gltf::pixels[o + ch] as f32) * fs[ch], 0.0, 1.0);
-							gltf::pixels[o + ch] = clamp(round(enc(l) as real), 0.0, 255.0) as byte;
-						}
+				let cell = g_off[img] + cy * gw + cx;
+				let c = g_c[cell];
+				if c == 0 { continue; }
+				let cf = c as f32;
+				let fr = pow((g_r[cell] / cf) as real, 0.8) as f32;
+				let fg = pow((g_g[cell] / cf) as real, 0.8) as f32;
+				let fb = pow((g_b[cell] / cf) as real, 0.8) as f32;
+				let ty1 = min(im.height, (cy + 1) * pcell);
+				let tx1 = min(im.width, (cx + 1) * pcell);
+				for ty in cy * pcell..ty1 {
+					for tx in cx * pcell..tx1 {
+						let o = im.pixels.first + (ty * im.width + tx) * 4;
+						let lr = clamp(lin(gltf::pixels[o] as f32) * fr, 0.0, 1.0);
+						let lg = clamp(lin(gltf::pixels[o + 1] as f32) * fg, 0.0, 1.0);
+						let lb = clamp(lin(gltf::pixels[o + 2] as f32) * fb, 0.0, 1.0);
+						gltf::pixels[o] = clamp(round(enc(lr) as real), 0.0, 255.0) as byte;
+						gltf::pixels[o + 1] = clamp(round(enc(lg) as real), 0.0, 255.0) as byte;
+						gltf::pixels[o + 2] = clamp(round(enc(lb) as real), 0.0, 255.0) as byte;
 					}
 				}
+				changed++;
 				img_changed[img] = 1;
 			}
 		}
 	}
 	for img in ni {
-		if img_changed[img] != 0 && s3d::tex_srgb[img].id != 0 {
-			gfx::update_texture(s3d::tex_srgb[img], gltf::image_pixels(img));
-			gfx::generate_mips(s3d::tex_srgb[img]);
+		if img_changed[img] != 0 && img < s3d::tex_srgb.len {
+			if s3d::tex_srgb[img].id != 0 {
+				gfx::update_texture(s3d::tex_srgb[img], gltf::image_pixels(img));
+				gfx::generate_mips(s3d::tex_srgb[img]);
+			}
 		}
 	}
-	changed
+	return changed;
 }
 === 6f836dd3cf63f6d3
 var pose_t float3[>..];
@@ -964,52 +1169,57 @@ fn shape_gather() {
 		c_m.push(linalg::qrotate(vrot[g], wm));
 	}
 }
-=== 36ce0e92694f8cd0
+=== 6c16f0b2ceb7bd21
 fn shape_fit(round int) int {
 	c_p.clear();
 	c_m.clear();
 	for k in nview {
+		if v_fix[k] { continue; }
 		use_view(k);
 		shape_gather();
 	}
-	let sigma = 0.035;
-	let lim = (3.0 * sigma) * (3.0 * sigma);
+	let sigma real = 0.035;
+	let r3 = (3.0 * sigma) * (3.0 * sigma);
+	let den = 2.0 * sigma * sigma;
+	let nc = c_p.len;
 	let am = gltf::assets[asset].meshes;
-	for m in am.first..am.first + am.count {
-		let mesh = gltf::meshes[m];
+	for mi in am.first..am.first + am.count {
+		let mesh = gltf::meshes[mi];
 		for pi in mesh.prims.count {
 			let prim = gltf::prims[mesh.prims.first + pi];
 			for v in prim.vcount {
 				let o = (prim.vfirst + v) * gltf::VERTEX_FLOATS;
-				let px = gltf::verts[o] as real;
-				let py = gltf::verts[o + 1] as real;
-				let pz = gltf::verts[o + 2] as real;
-				var sx = 0.0;
-				var sy = 0.0;
-				var sz = 0.0;
-				var sw = 0.0;
-				for c in c_p.len {
-					let dx = px - (c_p[c].x as real);
-					let dy = py - (c_p[c].y as real);
-					let dz = pz - (c_p[c].z as real);
-					let r2 = dx * dx + dy * dy + dz * dz;
-					if r2 > lim { continue; }
-					let w = exp(-r2 / (2.0 * sigma * sigma));
-					sx += w * (c_m[c].x as real);
-					sy += w * (c_m[c].y as real);
-					sz += w * (c_m[c].z as real);
+				let px = gltf::verts[o];
+				let py = gltf::verts[o + 1];
+				let pz = gltf::verts[o + 2];
+				var sw real = 0.0;
+				var mx real = 0.0;
+				var my real = 0.0;
+				var mz real = 0.0;
+				for c in nc {
+					let dx = (px - c_p[c].x) as real;
+					let dy = (py - c_p[c].y) as real;
+					let dz = (pz - c_p[c].z) as real;
+					let d2 = dx * dx + dy * dy + dz * dz;
+					if d2 > r3 { continue; }
+					let w = exp(-d2 / den);
 					sw += w;
+					mx += w * (c_m[c].x as real);
+					my += w * (c_m[c].y as real);
+					mz += w * (c_m[c].z as real);
 				}
-				let den = max(sw, 1.0);
-				gltf::verts[o] += (sx / den) as f32;
-				gltf::verts[o + 1] += (sy / den) as f32;
-				gltf::verts[o + 2] += (sz / den) as f32;
+				if sw > 0.0 {
+					let dv = max(sw, 1.0);
+					gltf::verts[o] = px + (mx / dv) as f32;
+					gltf::verts[o + 1] = py + (my / dv) as f32;
+					gltf::verts[o + 2] = pz + (mz / dv) as f32;
+				}
 			}
 		}
 	}
 	s3d::uploaded_verts = -2;
 	shape_changed = true;
-	c_p.len
+	return nc;
 }
 === 65537d731359eb7d
 fn set_lights() {
@@ -1505,98 +1715,115 @@ fn report(tag const byte[:], save bool, prefix const byte[:]) {
 	f4(m, sg / n);
 	print(m);
 }
-=== 1ed32cc470695a25
+=== 1904a53807711df0
 fn env_get(name const byte[:], out byte[>..]&) bool {
 	var data byte[>..] = [];
 	if !read_file("/proc/self/environ", data) { return false; }
-	var s = 0;
-	for i in data.len + 1 {
-		if i == data.len || data[i] == 0 {
-			let entry = data[s..i];
-			if entry.len > name.len && entry[name.len] == '=' && entry[..name.len] == name {
-				out.clear();
-				out.append(entry[name.len + 1..]);
-				return true;
-			}
-			s = i + 1;
+	let entries = split(data, 0);
+	for e in entries {
+		if e.len > name.len && e[..name.len] == name && e[name.len] == '=' {
+			out.append(e[name.len + 1..]);
+			return true;
 		}
 	}
 	return false;
 }
 fn env_on(name const byte[:]) bool {
 	var v byte[>..] = [];
-	if !env_get(name, v) { return true; }
-	!(v.len == 1 && v[0] == '0')
+	env_get(name, v)
 }
+fn env_off(name const byte[:]) bool {
+	var v byte[>..] = [];
+	if !env_get(name, v) { return false; }
+	v == "0"
+}
+=== -61b373a889ad6b40
 fn main() {
 	let a = args();
+	if a.len < 4 {
+		print("usage: fit model.glb targets prefix [pose]");
+		return;
+	}
 	let targets = split(a[2], ',');
 	for t in targets {
-		if nview >= 7 { break; }
 		let parts = split(t, ':');
 		var path const byte[:] = "";
 		var yaw f32 = 0.0;
-		for w, i in parts {
-			if i == 0 { path = w; } else if i == 1 { yaw = num(w); }
+		var dd f32 = 3.2;
+		var hh f32 = 0.85;
+		var oo f32 = 0.0;
+		var given = false;
+		for s, k in parts {
+			if k == 0 {
+				path = s;
+			} else {
+				let v = num(s);
+				if k == 1 {
+					yaw = v;
+				} else if k == 2 {
+					dd = v;
+					given = true;
+				} else if k == 3 {
+					hh = v;
+				} else if k == 4 {
+					oo = v;
+				}
+			}
 		}
+		if nview >= 7 { continue; }
 		var data byte[>..] = [];
 		if !read_file(path, data) {
-			print("target failed");
+			print("target failed ", path);
 			continue;
 		}
 		tpx.clear();
 		let w, h, ok = codec_png::decode(data, tpx);
 		if !ok {
-			print("target failed");
+			print("target failed ", path);
 			continue;
 		}
-		if tw == 0 {
+		if nview == 0 {
 			tw = w;
 			th = h;
 		} else if w != tw || h != th {
-			print("target size differs, skipped");
+			print("target size differs, skipped ", path);
 			continue;
 		}
-		tmask.clear();
 		tmask.resize(tw * th, 1.0);
 		gray_bg();
 		v_px.append(tpx);
 		v_mask.append(tmask);
 		v_bg.push(bg);
-		v_yaw.push(yaw * (PI as f32) / 180.0);
-		v_d.push(3.2);
-		v_cy.push(0.85);
-		v_cx.push(0.0);
+		v_yaw.push(((yaw as real) * PI / 180.0) as f32);
+		v_d.push(dd);
+		v_cy.push(hh);
+		v_cx.push(oo);
+		v_fix.push(given);
 		nview++;
 	}
 	if nview == 0 {
 		print("no targets");
 		return;
 	}
-	var fm byte[>..] = [];
-	if env_get("FIT_MASK", fm) {
+	if env_on("FIT_MASK") {
 		let n = tw * th;
 		for k in nview {
 			var img byte[>..] = [];
+			img.resize(n * 4, 0);
 			var cnt = 0;
 			for i in n {
-				if v_mask[k * n + i] >= 0.5 {
-					cnt++;
-					img.push(255);
-					img.push(255);
-					img.push(255);
-					img.push(255);
-				} else {
-					img.push(0);
-					img.push(0);
-					img.push(0);
-					img.push(255);
-				}
+				let on = v_mask[k * n + i] == 1.0;
+				let c byte = if on { 255 } else { 0 };
+				img[i * 4] = c;
+				img[i * 4 + 1] = c;
+				img[i * 4 + 2] = c;
+				img[i * 4 + 3] = 255;
+				if on { cnt++; }
 			}
 			var p byte[>..] = [];
 			format(p, a[3], "_v", k, "_mask.png");
-			let s = gfx::Shot { w: tw, h: th, pf: 376840196, px: img };
-			gfx::save_shot(s, p);
+			let sh = gfx::Shot { w: tw, h: th, pf: 376840196, px: img };
+			gfx::save_shot(sh, p);
 			var o byte[>..] = [];
 			format(o, "mask v", k, " ");
 			f4(o, (cnt as f32) / (n as f32));
@@ -1639,48 +1866,72 @@ fn main() {
 			return;
 		}
 	}
-	if env_on("FIT_POSE") {
+	if !env_off("FIT_POSE") {
 		pose_fit();
 		for k in nview { cam_fit(k, 3); }
 		var pp byte[>..] = [];
 		format(pp, a[3], "_pose.txt");
 		save_pose(pp);
 	}
-	if env_on("FIT_SHAPE") {
+	if !env_off("FIT_SHAPE") {
 		for r in 4 {
 			shape_fit(r);
 			for k in nview { cam_fit(k, 3); }
-			var tag byte[>..] = [];
-			format(tag, "shape", r);
-			report(tag, false, a[3]);
+			var tg byte[>..] = [];
+			format(tg, "shape", r);
+			report(tg, false, a[3]);
 		}
 	}
-	if env_on("FIT_LIGHT") { light_fit(); }
+	if !env_off("FIT_LIGHT") { light_fit(); }
 	report("fit", false, a[3]);
-	if env_on("FIT_PAINT") {
+	var allch int[>..] = [];
+	allch.resize(gltf::images.len, 0);
+	fn acc() {
+		for i in allch.len {
+			if i < img_changed.len && img_changed[i] != 0 { allch[i] = 1; }
+		}
+	}
+	if !env_off("FIT_PATTERN") {
+		img_changed.resize(gltf::images.len, 0);
+		pattern_fit();
+		acc();
+	}
+	if !env_off("FIT_PAINT") {
 		for r in 4 {
-			paint();
-			var tag byte[>..] = [];
-			format(tag, "paint", r);
-			report(tag, false, a[3]);
+			paint(false);
+			acc();
+			var tg byte[>..] = [];
+			format(tg, "paint", r);
+			report(tg, false, a[3]);
 		}
-		var saved = 0;
-		for img in gltf::images.len {
-			if img < img_changed.len && img_changed[img] != 0 {
-				let im = gltf::images[img];
-				var p byte[>..] = [];
-				format(p, a[3], "_tex", img, ".png");
-				let s = gfx::Shot { w: im.width, h: im.height, pf: 376840196, px: gltf::image_pixels(img) };
-				gfx::save_shot(s, p);
-				saved++;
+		var anyfix = false;
+		for k in nview { if v_fix[k] { anyfix = true; } }
+		if anyfix {
+			pcell = 1;
+			for r in 4 {
+				paint(true);
+				acc();
+				var tg byte[>..] = [];
+				format(tg, "fine", r);
+				report(tg, false, a[3]);
 			}
+			pcell = 4;
 		}
-		if saved > 0 || shape_changed {
-			var gp byte[>..] = [];
-			format(gp, a[3], ".glb");
-			export_glb(a[1], gp, a[3]);
+	}
+	img_changed.clear();
+	for i in allch.len { img_changed.push(allch[i]); }
+	var saved = 0;
+	for img in allch.len {
+		if allch[img] != 0 {
+			let im = gltf::images[img];
+			var p byte[>..] = [];
+			format(p, a[3], "_tex", img, ".png");
+			let sh = gfx::Shot { w: im.width, h: im.height, pf: 376840196, px: gltf::image_pixels(img) };
+			gfx::save_shot(sh, p);
+			saved++;
 		}
-	} else if shape_changed {
+	}
+	if saved > 0 || shape_changed {
 		var gp byte[>..] = [];
 		format(gp, a[3], ".glb");
 		export_glb(a[1], gp, a[3]);
