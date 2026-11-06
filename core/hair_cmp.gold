@@ -1,0 +1,6 @@
+use std
+into hair_cmp.amni
+
+Imports: os, gfx, gfx.gltf and hair (the local module hair.amni). A native tool for checks, with no GPU: writes the strand guide data the Helium hair module builds from a model's own hair cards.
+
+`main()`: with `a = args()`, `a[1]` is the .glb and `a[2]` the output path. Load it with `gltf::load` (print "load failed" and return when negative). When `hair::hair_find_cards(asset)` is false print "no cards" and return. Build the data with `hair::hair_card_data(asset, data)` into a growable byte list, write it with the unqualified `write_file(a[2], data)` and print "wrote " plus its length.

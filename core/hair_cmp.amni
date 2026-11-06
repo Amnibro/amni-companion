@@ -1,0 +1,20 @@
+import os;
+import gfx;
+import gfx.gltf;
+import hair;
+fn main() {
+	let a = args();
+	let asset = gltf::load(a[1]);
+	if asset < 0 {
+		print("load failed");
+		return;
+	}
+	if !hair_find_cards(asset) {
+		print("no cards");
+		return;
+	}
+	var data byte[>..] = [];
+	hair_card_data(asset, data);
+	write_file(a[2], data);
+	print("wrote ", data.len);
+}

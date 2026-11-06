@@ -313,62 +313,56 @@ fn hair_find_cards(asset int) bool {
 	card_mesh = mesh;
 	return true;
 }
-=== 5713a48f9c88e49f
-fn hair_cards(asset int, nw int, nh int, strands int) bool {
+=== -6a28e600b326051d
+fn hair_card_data(asset int, data byte[>..]&) bool {
+	data.clear();
 	if card_node < 0 { return false; }
-	let n = card_node;
 	let pr = gltf::prims[gltf::meshes[card_mesh].prims.first as int];
+	let n = card_node;
 	let vf = pr.vfirst as int;
 	let vc = pr.vcount as int;
-	let np = vc / 2;
+	let npairs = vc / 2;
 	let sk = gltf::nodes[n].skin as int;
 	var hj = -1;
 	if sk >= 0 {
-		let hn = gltf::find_node(asset, "head");
-		if hn >= 0 { hj = skin_joint(sk, hn as int); }
+		let hn = gltf::find_node(asset, "head") as int;
+		if hn >= 0 { hj = skin_joint(sk, hn); }
 	}
-	fn pv(vx int) float3 {
-		float3 { gltf::verts[vx * gltf::VERTEX_FLOATS + gltf::AT_POS], gltf::verts[vx * gltf::VERTEX_FLOATS + gltf::AT_POS + 1], gltf::verts[vx * gltf::VERTEX_FLOATS + gltf::AT_POS + 2] }
+	fn pos(v int) float3 {
+		float3 { gltf::verts[v * gltf::VERTEX_FLOATS + gltf::AT_POS], gltf::verts[v * gltf::VERTEX_FLOATS + gltf::AT_POS + 1], gltf::verts[v * gltf::VERTEX_FLOATS + gltf::AT_POS + 2] }
 	}
 	fn uvv(k int) f32 {
 		gltf::verts[(vf + 2 * k) * gltf::VERTEX_FLOATS + gltf::AT_UV0 + 1]
 	}
-	fn ctr(k int) float3 {
-		let a = pv(vf + 2 * k);
-		let b = pv(vf + 2 * k + 1);
-		float3 { (a.x + b.x) / 2.0, (a.y + b.y) / 2.0, (a.z + b.z) / 2.0 }
+	fn cen(k int) float3 {
+		(pos(vf + 2 * k) + pos(vf + 2 * k + 1)) * 0.5
 	}
-	fn wsum(vx int, j int) f32 {
-		var s f32 = 0.0;
-		for c in 4 {
-			if gltf::verts[vx * gltf::VERTEX_FLOATS + gltf::AT_JOINT + c] as int == j {
-				s += gltf::verts[vx * gltf::VERTEX_FLOATS + gltf::AT_WEIGHT + c];
-			}
-		}
-		s
+	fn red(v int) f32 {
+		gltf::verts[v * gltf::VERTEX_FLOATS + gltf::AT_COL]
 	}
 	var bj int[>..] = [];
 	var bn i32[>..] = [];
 	if sk >= 0 {
-		for vx in vf..vf + vc {
+		for v in vf..vf + vc {
 			for c in 4 {
-				let j = gltf::verts[vx * gltf::VERTEX_FLOATS + gltf::AT_JOINT + c] as int;
-				let wt = gltf::verts[vx * gltf::VERTEX_FLOATS + gltf::AT_WEIGHT + c];
+				let j = gltf::verts[v * gltf::VERTEX_FLOATS + gltf::AT_JOINT + c] as int;
+				let wt = gltf::verts[v * gltf::VERTEX_FLOATS + gltf::AT_WEIGHT + c];
 				if wt > 0.01 && j != hj && bj.len < 64 {
-					var have = false;
-					for q in bj.len {
-						if bj[q] == j { have = true; }
+					var seen = false;
+					for b in bj.len {
+						if bj[b] == j { seen = true; }
 					}
-					if !have {
+					if !seen {
 						bj.push(j);
-						bn.push((gltf::ints[gltf::skins[sk].joints.first as int + j] as int - gltf::assets[asset].nodes.first as int) as i32);
+						let nd = gltf::ints[gltf::skins[sk].joints.first as int + j] as int - gltf::assets[asset].nodes.first as int;
+						bn.push(nd as i32);
 					}
 				}
 			}
 		}
 	}
 	var starts int[>..] = [];
-	for k in np {
+	for k in npairs {
 		if k == 0 || uvv(k) < uvv(k - 1) { starts.push(k); }
 	}
 	var pf f32[>..] = [];
@@ -378,25 +372,23 @@ fn hair_cards(asset int, nw int, nh int, strands int) bool {
 	var cards = 0;
 	for ci in starts.len {
 		let a = starts[ci];
-		let e = if ci + 1 < starts.len { starts[ci + 1] } else { np };
+		let e = if ci + 1 < starts.len { starts[ci + 1] } else { npairs };
 		if e - a >= 2 {
 			let base = pf.len / 12;
 			for k in a..e {
 				let l = vf + 2 * k;
 				let r = l + 1;
-				let pl = pv(l);
-				let pr2 = pv(r);
-				let c = ctr(k);
-				let sd = float3 { (pr2.x - pl.x) / 2.0, (pr2.y - pl.y) / 2.0, (pr2.z - pl.z) / 2.0 };
+				let c = cen(k);
+				let sd = (pos(r) - pos(l)) * 0.5;
 				let k0 = max(k - 1, a);
 				let k1 = min(k + 1, e - 1);
-				let c1 = ctr(k1);
-				let c0 = ctr(k0);
-				let tg = float3 { c1.x - c0.x, c1.y - c0.y, c1.z - c0.z };
-				let cr = float3 { tg.y * sd.z - tg.z * sd.y, tg.z * sd.x - tg.x * sd.z, tg.x * sd.y - tg.y * sd.x };
-				let nm = linalg::unit3(cr);
+				let tg = cen(k1) - cen(k0);
+				let cx = tg.y * sd.z - tg.z * sd.y;
+				let cy = tg.z * sd.x - tg.x * sd.z;
+				let cz = tg.x * sd.y - tg.y * sd.x;
+				let nm = linalg::unit3(float3 { cx, cy, cz });
 				let t = (uvv(k) - uvv(a)) / max(uvv(e - 1) - uvv(a), 0.000001);
-				let occ = (gltf::verts[l * gltf::VERTEX_FLOATS + gltf::AT_COL] + gltf::verts[r * gltf::VERTEX_FLOATS + gltf::AT_COL]) / 2.0;
+				let occ = (red(l) + red(r)) * 0.5;
 				pf.push(c.x);
 				pf.push(c.y);
 				pf.push(c.z);
@@ -409,67 +401,71 @@ fn hair_cards(asset int, nw int, nh int, strands int) bool {
 				pf.push(nm.y);
 				pf.push(nm.z);
 				pf.push(0.0);
-				var i0 = 0;
+				var b0 = 0;
 				var w0 f32 = 0.0;
-				var i1 = 0;
+				var b1 = 0;
 				var w1 f32 = 0.0;
-				var have0 = false;
-				var have1 = false;
-				for q in bj.len {
-					let ws = (wsum(l, bj[q]) + wsum(r, bj[q])) / 2.0;
-					if !have0 || ws > w0 {
-						if have0 {
-							i1 = i0;
-							w1 = w0;
-							have1 = true;
+				for b in bj.len {
+					var s f32 = 0.0;
+					for q in 2 {
+						let v = if q == 0 { l } else { r };
+						for c4 in 4 {
+							let j = gltf::verts[v * gltf::VERTEX_FLOATS + gltf::AT_JOINT + c4] as int;
+							if j == bj[b] { s += gltf::verts[v * gltf::VERTEX_FLOATS + gltf::AT_WEIGHT + c4] * 0.5; }
 						}
-						i0 = q;
-						w0 = ws;
-						have0 = true;
-					} else if !have1 || ws > w1 {
-						i1 = q;
-						w1 = ws;
-						have1 = true;
+					}
+					if s > w0 {
+						b1 = b0;
+						w1 = w0;
+						b0 = b;
+						w0 = s;
+					} else if s > w1 {
+						b1 = b;
+						w1 = s;
 					}
 				}
-				ki.push(i0 as i32);
-				ki.push(i1 as i32);
+				ki.push(b0 as i32);
+				ki.push(b1 as i32);
 				kw.push(w0);
 				kw.push(w1);
-			}
-			for k in a..e - 1 {
-				sg.push((base + k - a) as i32);
-				sg.push(cards as i32);
-				sg.push(0);
-				sg.push(0);
+				if k < e - 1 {
+					sg.push((base + k - a) as i32);
+					sg.push(cards as i32);
+					sg.push(0);
+					sg.push(0);
+				}
 			}
 			cards += 1;
 		}
 	}
-	let points = pf.len / 12;
-	let segments = sg.len / 4;
-	var data byte[>..] = [];
-	data.append("HMG3");
+	let np = pf.len / 12;
+	let ns = sg.len / 4;
 	var hdr i32[>..] = [];
 	hdr.push(cards as i32);
-	hdr.push(points as i32);
-	hdr.push(segments as i32);
+	hdr.push(np as i32);
+	hdr.push(ns as i32);
+	data.append("HMG3");
 	data.append(bytes_of(hdr));
 	data.append(bytes_of(pf));
 	data.append(bytes_of(sg));
 	var bl i32[>..] = [];
 	bl.push(bn.len as i32);
-	for b in bn { bl.push(b); }
+	for i in bn.len { bl.push(bn[i]); }
 	data.append(bytes_of(bl));
-	var sk4 f32[>..] = [];
-	for p in points {
-		sk4.push(binary::f32_from_bits(ki[2 * p] as u32));
-		sk4.push(binary::f32_from_bits(ki[2 * p + 1] as u32));
-		sk4.push(kw[2 * p]);
-		sk4.push(kw[2 * p + 1]);
+	var sf f32[>..] = [];
+	for p in np {
+		sf.push(binary::f32_from_bits(ki[2 * p] as u32));
+		sf.push(binary::f32_from_bits(ki[2 * p + 1] as u32));
+		sf.push(kw[2 * p]);
+		sf.push(kw[2 * p + 1]);
 	}
-	data.append(bytes_of(sk4));
-	print("hair cards: ", cards, " guides, ", points, " points, ", bn.len, " bones");
+	data.append(bytes_of(sf));
+	print("hair cards: ", cards, " guides, ", np, " points, ", bn.len, " bones");
+	return true;
+}
+fn hair_cards(asset int, nw int, nh int, strands int) bool {
+	var data byte[>..] = [];
+	if !hair_card_data(asset, data) { return false; }
 	return hair_load(data, nw, nh, strands);
 }
 === -4cb5f213aa61d6b6
