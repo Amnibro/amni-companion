@@ -795,8 +795,8 @@ fn contacts() {
 }
 fn collide(i int, s f32) {
 	var x = p_x[i];
-	for q in 2 {
-		let z = p_cap[2 * i + q];
+	for k in 2 {
+		let z = p_cap[2 * i + k];
 		if z >= 0 {
 			let A = pos(motion::world[c_a[z]]);
 			let B = pos(motion::world[c_b[z]]);
@@ -811,12 +811,15 @@ fn collide(i int, s f32) {
 			}
 		}
 	}
-	for q in 2 {
-		let h = p_hv[2 * i + q];
-		if h >= 0 && linalg::length3(x - h_p[h]) < 0.07 * s {
+	for k in 2 {
+		let h = p_hv[2 * i + k];
+		if h >= 0 {
 			let e = linalg::dot3(x - h_p[h], h_n[h]);
-			if e < 0.004 * s {
-				x = x + h_n[h] * (0.004 * s - e);
+			let u = linalg::length3(x - h_p[h] - h_n[h] * e);
+			if u < 0.025 * s && e > -0.05 * s {
+				if e < 0.004 * s {
+					x = x + h_n[h] * (0.004 * s - e);
+				}
 			}
 		}
 	}
@@ -931,18 +934,19 @@ fn cloth_step(dt f32) {
 	}
 }
 fn cloth_stats(out f32[:]) {
+	if out.len < 1 { return; }
 	out[0] = ngar as f32;
 	var s f32 = 1.0;
 	if item >= 0 { s = linalg::length3(col3(s3d::items[item].place.c0)); }
-	if s < 0.000001 { s = 1.0; }
-	let pelvis = gltf::find_node(cl_asset, "pelvis");
-	let havep = pelvis >= 0;
-	let c = if havep { pos(motion::world[pelvis]) } else { float3 { 0.0, 0.0, 0.0 } };
+	let pl = gltf::find_node(cl_asset, "pelvis");
+	var cp = float3 { 0.0, 0.0, 0.0 };
+	if pl >= 0 { cp = pos(motion::world[pl]); }
 	for g in ngar {
+		if out.len < 5 + 4 * g { break; }
 		var cnt = 0;
 		var nlow = 0;
-		var m1 f32 = 0.0;
-		var m2 f32 = 0.0;
+		var sx f32 = 0.0;
+		var sa f32 = 0.0;
 		var ninside = 0;
 		var deepest f32 = 0.0;
 		for i in npts {
@@ -950,39 +954,38 @@ fn cloth_stats(out f32[:]) {
 				cnt += 1;
 				if p_y[i] < 0.15 {
 					nlow += 1;
-					let dx = p_x[i].x - c.x;
-					let dz = p_x[i].z - c.z;
-					m1 += sqrt(dx * dx + dz * dz);
-					let ax = p_anc[i].x - c.x;
-					let az = p_anc[i].z - c.z;
-					m2 += sqrt(ax * ax + az * az);
+					let dx = p_x[i] - cp;
+					let da = p_anc[i] - cp;
+					sx += linalg::length3(float3 { dx.x, 0.0, dx.z });
+					sa += linalg::length3(float3 { da.x, 0.0, da.z });
 				}
-				let x = p_x[i];
 				var inside = false;
 				var depth f32 = 0.0;
-				for q in 2 {
-					let z = p_cap[2 * i + q];
+				let x = p_x[i];
+				for k in 2 {
+					let z = p_cap[2 * i + k];
 					if z >= 0 {
 						let A = pos(motion::world[c_a[z]]);
 						let B = pos(motion::world[c_b[z]]);
 						let ab = B - A;
 						let t = clamp01(linalg::dot3(x - A, ab) / max(linalg::dot3(ab, ab), 0.000001));
-						let cp = A + ab * t;
+						let c = A + ab * t;
 						let r = (c_r0[z] + (c_r1[z] - c_r0[z]) * t) * s;
-						let l = linalg::length3(x - cp);
+						let l = linalg::length3(x - c);
 						if l < r {
 							inside = true;
 							depth = max(depth, (r - l) / s);
 						}
 					}
 				}
-				for q in 2 {
-					let h = p_hv[2 * i + q];
-					if h >= 0 && linalg::length3(x - h_p[h]) < 0.07 * s {
+				for k in 2 {
+					let h = p_hv[2 * i + k];
+					if h >= 0 {
 						let e = linalg::dot3(x - h_p[h], h_n[h]);
-						if e < 0.0 {
+						let u = linalg::length3(x - h_p[h] - h_n[h] * e);
+						if u < 0.025 * s && e > -0.05 * s && e < 0.0 {
 							inside = true;
-							depth = max(depth, (0.0 - e) / s);
+							depth = max(depth, -e / s);
 						}
 					}
 				}
@@ -993,14 +996,11 @@ fn cloth_stats(out f32[:]) {
 			}
 		}
 		var flare f32 = 1.0;
-		if havep && nlow > 0 && m2 > 0.0 {
-			flare = (m1 / (nlow as f32)) / (m2 / (nlow as f32));
-		}
-		let b = 1 + 4 * g;
-		out[b] = cnt as f32;
-		out[b + 1] = flare;
-		out[b + 2] = ninside as f32;
-		out[b + 3] = deepest;
+		if pl >= 0 && nlow > 0 && sa > 0.0 { flare = sx / sa; }
+		out[1 + 4 * g] = cnt as f32;
+		out[2 + 4 * g] = flare;
+		out[3 + 4 * g] = ninside as f32;
+		out[4 + 4 * g] = deepest;
 	}
 }
 fn cloth_wind(x f32, y f32, z f32) { wind = float3 { x, y, z }; }
