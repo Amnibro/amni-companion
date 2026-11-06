@@ -174,7 +174,7 @@ fn fwd_of(k int) float3 {
 	let y = v_yaw[k] as real;
 	float3 { sin(y) as f32, 0.0, cos(y) as f32 }
 }
-=== -fb86ca05729f419
+=== -31341fc117a7c852
 fn use_view(k int) {
 	cur = k;
 	let n = tw * th;
@@ -187,6 +187,7 @@ fn use_view(k int) {
 	let f = fwd_of(k);
 	cam_look = float3 { r.x * v_cx[k], r.y * v_cx[k] + v_cy[k], r.z * v_cx[k] };
 	cam_eye = float3 { cam_look.x + f.x * v_d[k], cam_look.y + f.y * v_d[k], cam_look.z + f.z * v_d[k] };
+	set_lights();
 }
 === -799f13d93d027277
 fn cam_fit(k int, iters int) bool {
@@ -966,188 +967,315 @@ fn material_fit() {
 		print(o);
 	}
 }
-=== -52f738da027ba656
-fn pg_y(px const byte[:], i int) f32 {
-	0.2126 * lin(at(px, i, 0)) + 0.7152 * lin(at(px, i, 1)) + 0.0722 * lin(at(px, i, 2))
+=== 112e51b929fc5172
+fn pg_ratio(i int) float3 {
+	let tr = lin(at(tpx, i, 0));
+	let tg = lin(at(tpx, i, 1));
+	let tb = lin(at(tpx, i, 2));
+	let rr = lin(at(rpx, i, 0));
+	let rg = lin(at(rpx, i, 1));
+	let rb = lin(at(rpx, i, 2));
+	let r0 = clamp((tr + 0.004) / (rr + 0.004), 0.25, 4.0);
+	let g0 = clamp((tg + 0.004) / (rg + 0.004), 0.25, 4.0);
+	let b0 = clamp((tb + 0.004) / (rb + 0.004), 0.25, 4.0);
+	let yt = 0.2126 * tr + 0.7152 * tg + 0.0722 * tb;
+	let yr = 0.2126 * rr + 0.7152 * rg + 0.0722 * rb;
+	let lr = clamp((yt + 0.004) / (yr + 0.004), 0.25, 4.0);
+	float3 {
+		lr * sq(clamp(r0 / lr, 0.5, 2.0)),
+		lr * sq(clamp(g0 / lr, 0.5, 2.0)),
+		lr * sq(clamp(b0 / lr, 0.5, 2.0))
+	}
+}
+fn pg_lum(i int) f32 {
+	0.2126 * lin(at(tpx, i, 0)) + 0.7152 * lin(at(tpx, i, 1)) + 0.0722 * lin(at(tpx, i, 2))
+}
+fn pg_edge(i int) bool {
+	let x = i % tw;
+	let y = i / tw;
+	if x == 0 || y == 0 || x == tw - 1 || y == th - 1 { return true; }
+	let e = abs(pg_lum(i - 1) - pg_lum(i + 1)) + abs(pg_lum(i - tw) - pg_lum(i + tw));
+	e > 0.15
+}
+fn pg_integral(src real[:], out real[>..]&) {
+	let w1 = tw + 1;
+	out.clear();
+	out.resize(w1 * (th + 1), 0.0);
+	for y in th {
+		for x in tw {
+			out[(y + 1) * w1 + x + 1] = src[y * tw + x] + out[y * w1 + x + 1] + out[(y + 1) * w1 + x] - out[y * w1 + x];
+		}
+	}
+}
+fn pg_box(ig real[:], x0 int, y0 int, x1 int, y1 int) real {
+	let w1 = tw + 1;
+	ig[y1 * w1 + x1] - ig[y0 * w1 + x1] - ig[y1 * w1 + x0] + ig[y0 * w1 + x0]
 }
 fn paint_gather() {
 	raster();
 	let n = tw * th;
+	let detail = cur != 0 && !v_fix[cur];
 	for i in n {
-		if tmask[i] != 1.0 || rmask[i] != 1.0 { continue; }
-		let img = hit_img[i];
-		if img < 0 { continue; }
+		let im = hit_img[i];
+		if im >= 0 && g_off[im] < 0 {
+			let img = gltf::images[im];
+			let gw = (img.width + pcell - 1) / pcell;
+			let gh = (img.height + pcell - 1) / pcell;
+			g_off[im] = g_r.len;
+			g_w[im] = gw;
+			g_r.resize(g_r.len + gw * gh, 0.0);
+			g_g.resize(g_g.len + gw * gh, 0.0);
+			g_b.resize(g_b.len + gw * gh, 0.0);
+			g_c.resize(g_c.len + gw * gh, 0);
+		}
+	}
+	var ok byte[>..] = [];
+	ok.resize(n, 0);
+	var rat float3[>..] = [];
+	rat.resize(n, float3 { 1.0, 1.0, 1.0 });
+	for i in n {
+		if tmask[i] != 1.0 || rmask[i] != 1.0 || hit_img[i] < 0 { continue; }
 		if hit_f[i] < 0.5 { continue; }
+		let tx = texel(hit_img[i], hit_u[i], hit_v[i]);
+		if gltf::pixels[tx + 3] < 230 { continue; }
 		let x = i % tw;
 		let y = i / tw;
-		if gltf::pixels[texel(img, hit_u[i], hit_v[i]) + 3] < 230 { continue; }
-		var edge_ok = true;
+		var same = true;
 		for dy in -2..3 {
 			for dx in -2..3 {
 				let xx = x + dx;
 				let yy = y + dy;
 				if xx >= 0 && xx < tw && yy >= 0 && yy < th {
-					if hit_img[yy * tw + xx] != img { edge_ok = false; }
+					if hit_img[yy * tw + xx] != hit_img[i] { same = false; }
 				}
 			}
 		}
-		if !edge_ok { continue; }
-		var lo f32 = 0.25;
-		var hi f32 = 4.0;
-		if pcell == 1 {
-			if x == 0 || y == 0 || x == tw - 1 || y == th - 1 { continue; }
-			let g = abs(pg_y(tpx, i + 1) - pg_y(tpx, i - 1)) + abs(pg_y(tpx, i + tw) - pg_y(tpx, i - tw));
-			if g > 0.15 {
-				lo = 0.5;
-				hi = 2.0;
+		if !same { continue; }
+		if pcell == 1 && pg_edge(i) { continue; }
+		ok[i] = 1;
+		rat[i] = pg_ratio(i);
+	}
+	var ir real[>..] = [];
+	var ig real[>..] = [];
+	var ib real[>..] = [];
+	var ic real[>..] = [];
+	if detail {
+		var sr real[>..] = [];
+		var sg real[>..] = [];
+		var sb real[>..] = [];
+		var sc real[>..] = [];
+		sr.resize(n, 0.0);
+		sg.resize(n, 0.0);
+		sb.resize(n, 0.0);
+		sc.resize(n, 0.0);
+		for i in n {
+			if ok[i] != 0 {
+				sr[i] = rat[i].x as real;
+				sg[i] = rat[i].y as real;
+				sb[i] = rat[i].z as real;
+				sc[i] = 1.0;
 			}
 		}
-		var rt f32[3] = [0.0, 0.0, 0.0];
-		var lt f32[3] = [0.0, 0.0, 0.0];
-		var lrn f32[3] = [0.0, 0.0, 0.0];
-		for c in 3 {
-			lt[c] = lin(at(tpx, i, c));
-			lrn[c] = lin(at(rpx, i, c));
-			rt[c] = clamp((lt[c] + 0.004) / (lrn[c] + 0.004), 0.25, 4.0);
+		pg_integral(sr, ir);
+		pg_integral(sg, ig);
+		pg_integral(sb, ib);
+		pg_integral(sc, ic);
+	}
+	for i in n {
+		if ok[i] == 0 { continue; }
+		var r = rat[i];
+		if detail {
+			let x = i % tw;
+			let y = i / tw;
+			let x0 = max(0, x - 15);
+			let y0 = max(0, y - 15);
+			let x1 = min(tw - 1, x + 15) + 1;
+			let y1 = min(th - 1, y + 15) + 1;
+			let c = pg_box(ic, x0, y0, x1, y1);
+			if c < 50.0 { continue; }
+			let mr = (pg_box(ir, x0, y0, x1, y1) / c) as f32;
+			let mg = (pg_box(ig, x0, y0, x1, y1) / c) as f32;
+			let mb = (pg_box(ib, x0, y0, x1, y1) / c) as f32;
+			r = float3 { clamp(r.x / mr, 0.5, 2.0), clamp(r.y / mg, 0.5, 2.0), clamp(r.z / mb, 0.5, 2.0) };
 		}
-		let yt = 0.2126 * lt[0] + 0.7152 * lt[1] + 0.0722 * lt[2];
-		let yr = 0.2126 * lrn[0] + 0.7152 * lrn[1] + 0.0722 * lrn[2];
-		let lr = clamp((yt + 0.004) / (yr + 0.004), lo, hi);
-		for c in 3 {
-			let q = clamp(rt[c] / lr, 0.5, 2.0);
-			rt[c] = lr * sqrt(q as real) as f32;
-		}
-		let im = gltf::images[img];
-		if g_off[img] < 0 {
-			let gw0 = (im.width + pcell - 1) / pcell;
-			let gh0 = (im.height + pcell - 1) / pcell;
-			g_w[img] = gw0;
-			g_off[img] = g_r.len;
-			g_r.resize(g_r.len + gw0 * gh0, 0.0);
-			g_g.resize(g_g.len + gw0 * gh0, 0.0);
-			g_b.resize(g_b.len + gw0 * gh0, 0.0);
-			g_c.resize(g_c.len + gw0 * gh0, 0);
-		}
-		let gw = g_w[img];
-		let gh = (im.height + pcell - 1) / pcell;
-		let fu = (hit_u[i] as real) - floor(hit_u[i] as real);
-		let fv = (hit_v[i] as real) - floor(hit_v[i] as real);
-		let cx = clamp(floor(fu * (im.width as real) / (pcell as real)) as int, 0, gw - 1);
-		let cy = clamp(floor(fv * (im.height as real) / (pcell as real)) as int, 0, gh - 1);
-		let ci = g_off[img] + cy * gw + cx;
-		let f = hit_f[i];
-		let wi = max(1, round((4.0 * f * f) as real) as int);
-		let wf = wi as f32;
-		g_r[ci] += rt[0] * wf;
-		g_g[ci] += rt[1] * wf;
-		g_b[ci] += rt[2] * wf;
-		g_c[ci] += wi;
+		let im = hit_img[i];
+		let img = gltf::images[im];
+		let gw = g_w[im];
+		let gh = (img.height + pcell - 1) / pcell;
+		let u = hit_u[i] as real;
+		let v = hit_v[i] as real;
+		let fu = u - floor(u);
+		let fv = v - floor(v);
+		let cx = clamp(floor(fu * (img.width as real) / (pcell as real)) as int, 0, gw - 1);
+		let cy = clamp(floor(fv * (img.height as real) / (pcell as real)) as int, 0, gh - 1);
+		let ci = g_off[im] + cy * gw + cx;
+		let wt = pow(hit_f[i] as real, 7.0) * (if v_fix[cur] { 4.0 } else { 1.0 });
+		let cw = max(1, round(wt * 16.0) as int);
+		let cwf = cw as f32;
+		g_r[ci] += r.x * cwf;
+		g_g[ci] += r.y * cwf;
+		g_b[ci] += r.z * cwf;
+		g_c[ci] += cw;
 	}
 }
-=== 7a8d87852b58aa10
+=== 37bec749fbd18e0c
+var g_abs byte[>..];
 fn paint(fine bool) int {
 	let ni = gltf::images.len;
 	g_off.clear();
+	g_off.resize(ni, -1);
 	g_w.clear();
+	g_w.resize(ni, 0);
 	g_r.clear();
 	g_g.clear();
 	g_b.clear();
 	g_c.clear();
-	g_off.resize(ni, -1);
-	g_w.resize(ni, 0);
+	g_abs.clear();
 	img_changed.clear();
 	img_changed.resize(ni, 0);
-	for k in nview {
-		if fine && !v_fix[k] { continue; }
-		use_view(k);
-		shot(cam_eye, cam_look);
-		paint_gather();
-	}
-	let dxs int[4] = [1, -1, 0, 0];
-	let dys int[4] = [0, 0, 1, -1];
-	var changed = 0;
-	for img in ni {
-		if g_off[img] < 0 { continue; }
-		let im = gltf::images[img];
-		let off = g_off[img];
-		let gw = g_w[img];
-		let gh = (im.height + pcell - 1) / pcell;
-		let n = gw * gh;
-		var lg f32[>..] = [];
-		lg.resize(3 * n, 0.0);
-		var stv f32[>..] = [];
-		stv.resize(n, 0.0);
-		for ci in n {
-			let c = g_c[off + ci];
-			if c > 0 {
-				let cf = c as f32;
-				lg[ci] = log((g_r[off + ci] / cf) as real) as f32;
-				lg[n + ci] = log((g_g[off + ci] / cf) as real) as f32;
-				lg[2 * n + ci] = log((g_b[off + ci] / cf) as real) as f32;
-				stv[ci] = 1.0;
+	for pass in 2 {
+		for k in nview {
+			if fine && !v_fix[k] { continue; }
+			let absv = k == 0 || v_fix[k];
+			if (pass == 0) != absv { continue; }
+			use_view(k);
+			shot(cam_eye, cam_look);
+			var o_r f32[>..] = [];
+			var o_g f32[>..] = [];
+			var o_b f32[>..] = [];
+			var o_c int[>..] = [];
+			o_r.append(g_r);
+			o_g.append(g_g);
+			o_b.append(g_b);
+			o_c.append(g_c);
+			let old = o_c.len;
+			paint_gather();
+			g_abs.resize(g_c.len, 0);
+			for i in g_c.len {
+				let before = if i < old { o_c[i] } else { 0 };
+				if absv {
+					if g_c[i] != before { g_abs[i] = 1; }
+				} else if g_abs[i] != 0 {
+					if i < old {
+						g_r[i] = o_r[i];
+						g_g[i] = o_g[i];
+						g_b[i] = o_b[i];
+						g_c[i] = o_c[i];
+					} else {
+						g_r[i] = 0.0;
+						g_g[i] = 0.0;
+						g_b[i] = 0.0;
+						g_c[i] = 0;
+					}
+				}
 			}
 		}
-		var nl f32[>..] = copy(lg);
-		var ns f32[>..] = copy(stv);
+	}
+	var changed = 0;
+	let dxs int[4] = [1, -1, 0, 0];
+	let dys int[4] = [0, 0, 1, -1];
+	for im in ni {
+		if g_off[im] < 0 { continue; }
+		let img = gltf::images[im];
+		let gw = g_w[im];
+		let gh = (img.height + pcell - 1) / pcell;
+		let off = g_off[im];
+		let cells = gw * gh;
+		var sl f32[>..] = [];
+		var sg f32[>..] = [];
+		var sb f32[>..] = [];
+		var ss f32[>..] = [];
+		sl.resize(cells, 0.0);
+		sg.resize(cells, 0.0);
+		sb.resize(cells, 0.0);
+		ss.resize(cells, 0.0);
+		for i in cells {
+			let c = g_c[off + i];
+			if c > 0 {
+				let cf = c as f32;
+				sl[i] = log((g_r[off + i] / cf) as real) as f32;
+				sg[i] = log((g_g[off + i] / cf) as real) as f32;
+				sb[i] = log((g_b[off + i] / cf) as real) as f32;
+				ss[i] = 1.0;
+			}
+		}
 		for round in 7 {
+			var nl f32[>..] = [];
+			var ng f32[>..] = [];
+			var nb f32[>..] = [];
+			var ns f32[>..] = [];
+			nl.append(sl);
+			ng.append(sg);
+			nb.append(sb);
+			ns.append(ss);
 			for cy in gh {
 				for cx in gw {
-					let ci = cy * gw + cx;
-					if g_c[off + ci] > 0 { continue; }
-					var sw f32 = 0.0;
-					var sc = 0;
-					var s3 f32[3] = [0.0, 0.0, 0.0];
+					let i = cy * gw + cx;
+					if g_c[off + i] != 0 { continue; }
+					var al f32 = 0.0;
+					var ag f32 = 0.0;
+					var ab f32 = 0.0;
+					var as_ f32 = 0.0;
+					var cnt = 0;
 					for d in 4 {
 						let x = cx + dxs[d];
 						let y = cy + dys[d];
 						if x < 0 || y < 0 || x >= gw || y >= gh { continue; }
-						let cj = y * gw + x;
-						let s = stv[cj];
-						if s > 0.0 {
-							sw += s;
-							sc++;
-							for c in 3 { s3[c] += lg[c * n + cj] * s; }
+						let j = y * gw + x;
+						if ss[j] > 0.0 {
+							al += ss[j] * sl[j];
+							ag += ss[j] * sg[j];
+							ab += ss[j] * sb[j];
+							as_ += ss[j];
+							cnt++;
 						}
 					}
-					if sc > 0 {
-						for c in 3 { nl[c * n + ci] = s3[c] / sw; }
-						ns[ci] = 0.7 * sw / (sc as f32);
+					if cnt > 0 {
+						nl[i] = al / as_;
+						ng[i] = ag / as_;
+						nb[i] = ab / as_;
+						ns[i] = 0.7 * as_ / (cnt as f32);
 					}
 				}
 			}
-			lg = copy(nl);
-			stv = copy(ns);
+			for i in cells {
+				sl[i] = nl[i];
+				sg[i] = ng[i];
+				sb[i] = nb[i];
+				ss[i] = ns[i];
+			}
 		}
-		var any = false;
 		for cy in gh {
 			for cx in gw {
-				let ci = cy * gw + cx;
-				let s = stv[ci];
+				let i = cy * gw + cx;
+				let s = ss[i];
 				if s <= 0.01 { continue; }
 				changed++;
-				any = true;
-				let x1 = min(im.width, (cx + 1) * pcell);
-				let y1 = min(im.height, (cy + 1) * pcell);
+				var fk f32[3] = [1.0, 1.0, 1.0];
+				fk[0] = exp((0.8 * s * sl[i]) as real) as f32;
+				fk[1] = exp((0.8 * s * sg[i]) as real) as f32;
+				fk[2] = exp((0.8 * s * sb[i]) as real) as f32;
+				let x1 = min(img.width, (cx + 1) * pcell);
+				let y1 = min(img.height, (cy + 1) * pcell);
 				for y in cy * pcell..y1 {
 					for x in cx * pcell..x1 {
-						let o = im.pixels.first + (y * im.width + x) * 4;
+						let o = img.pixels.first + (y * img.width + x) * 4;
 						for c in 3 {
-							let mul = exp((0.8 * s * lg[c * n + ci]) as real) as f32;
-							let l = clamp(lin(gltf::pixels[o + c] as f32) * mul, 0.0, 1.0);
+							let l = clamp(lin(gltf::pixels[o + c] as f32) * fk[c], 0.0, 1.0);
 							gltf::pixels[o + c] = clamp(round(enc(l) as real), 0.0, 255.0) as byte;
 						}
 					}
 				}
+				img_changed[im] = 1;
 			}
 		}
-		if any { img_changed[img] = 1; }
 	}
-	for img in ni {
-		if img_changed[img] == 0 { continue; }
-		if img < s3d::tex_srgb.len {
-			if s3d::tex_srgb[img].id != 0 {
-				gfx::update_texture(s3d::tex_srgb[img], gltf::image_pixels(img));
-				gfx::generate_mips(s3d::tex_srgb[img]);
+	for im in ni {
+		if img_changed[im] == 0 { continue; }
+		if im < s3d::tex_srgb.len {
+			if s3d::tex_srgb[im].id != 0 {
+				gfx::update_texture(s3d::tex_srgb[im], gltf::image_pixels(im));
+				gfx::generate_mips(s3d::tex_srgb[im]);
 			}
 		}
 	}
@@ -1463,18 +1591,27 @@ fn shape_fit(round int) int {
 	shape_changed = true;
 	return nc;
 }
-=== 65537d731359eb7d
+=== 5ed870b8fa4fc813
 fn set_lights() {
-	s3d::sun = s3d::Sun { to_sun: linalg::unit3(float3 { 0.35 + sun_az, 0.8 + sun_el, 1.0 }), rgb: float3 { 2.2 * key_k, 2.2 * key_k, 2.2 * key_k }, shadows: true, shadow_far: 10.0, map_size: 2048 };
+	let ca = atan2((cam_eye.x - cam_look.x) as real, (cam_eye.z - cam_look.z) as real) as f32;
+	let cs = cos(ca as real) as f32;
+	let sn = sin(ca as real) as f32;
+	fn rot(x f32, y f32, z f32) float3 {
+		float3 { x * cs + z * sn, y, -x * sn + z * cs }
+	}
+	let k = 2.2 * key_k;
+	s3d::sun = s3d::Sun { to_sun: linalg::unit3(rot(0.35 + sun_az, 0.8 + sun_el, 1.0)), rgb: float3 { k, k, k }, shadows: true, shadow_far: 10.0, map_size: 2048 };
 	s3d::lights.clear();
-	s3d::add_light(float3 { -14.0, 7.0, 14.0 }, float3 { 260.0 * fill_k, 260.0 * fill_k, 260.0 * fill_k }, 1000.0);
+	let fl = 260.0 * fill_k;
+	s3d::add_light(rot(-14.0, 7.0, 14.0), float3 { fl, fl, fl }, 1000.0);
 	s3d::sky.ambient = amb_k;
 }
-=== -6ad716f02b21e5ce
+=== -2fc6f363327e10fd
 fn tone() f32 {
-	if nview == 0 { return 0.0; }
 	var total f32 = 0.0;
+	var cnt = 0;
 	for k in nview {
+		if !(k == 0 || v_fix[k]) { continue; }
 		use_view(k);
 		shot(cam_eye, cam_look);
 		var sum f32 = 0.0;
@@ -1487,8 +1624,10 @@ fn tone() f32 {
 		}
 		let v f32 = if c > 0 { sum / (c as f32) } else { 1000.0 };
 		total += v;
+		cnt++;
 	}
-	total / (nview as f32)
+	if cnt == 0 { return 0.0; }
+	total / (cnt as f32)
 }
 === 7c71c91363aecfae
 fn lf_get(k int) f32 {
