@@ -64,7 +64,7 @@ const VIS={PP:{mouthPressLeft:.5,mouthPressRight:.5},FF:{mouthUpperUpLeft:.25,mo
 export function visemes(word){const w=word.toLowerCase().replace(/[^a-z]/g,'').replace(/(..)e$/,'$1');return(w.match(/th|sh|ch|ph|ee|ea|oo|ou|ow|ai|ay|[a-z]/g)||[]).map(g=>G2V[g]).filter(Boolean)}
 class Avatar{
   constructor(o){Object.assign(this,o);this.slot=o.f.slot;this.bones=o.f.bones;this.rest=o.f.rest;this.cur=null;this.queue=[];this.emotes=[];this.face={};this.faceT={};this.talk=0;this.blinkT=2;this.look=null;this.lookW=0;this.live=new Float64Array(264);this.want=new Float64Array(110);this.O=new Float32Array(110);this.ids={};this.names=[];this.track=null;this.trackW=0;this.time=0;this.headP=[0,1.5,0]}
-  attach(v){this.v=v;const nodeOf=new Map([...this.byNode].map(([i,o])=>[o,i]));v.rig(this.slot.map(bi=>bi<0?-1:nodeOf.get(this.bones[bi])??-1));for(const c of this.clips)this.addClip(c.name,c.fr,c.nf,c.loop);this.relax();this.base(0)}
+  attach(v){this.v=v;const ln=v.lib?.();if(ln)ln.forEach((n,i)=>{this.ids[n]=i;this.names[i]=n});else{const nodeOf=new Map([...this.byNode].map(([i,o])=>[o,i]));v.rig(this.slot.map(bi=>bi<0?-1:nodeOf.get(this.bones[bi])??-1));for(const c of this.clips)this.addClip(c.name,c.fr,c.nf,c.loop)}this.relax();this.base(0)}
   addClip(n,fr,nf,loop){const id=this.v.clip(fr,nf,loop);this.ids[n]=id;this.names[id]=n}
   head(){return v3(...this.headP)}
   has(n){return this.ids[n]!==undefined}

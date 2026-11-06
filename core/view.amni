@@ -10,6 +10,7 @@ import hair;
 import spring;
 import mix;
 import cloth;
+import clips;
 var P f32[10240];
 var C f32[16];
 var N byte[16384];
@@ -52,10 +53,18 @@ fn main() {
 	hv_i32(9, SL[..]);
 	gltf::lazy_pixels = true;
 	let a = args();
+	var scratch byte[>..] = [];
+	if read_file("/m/lib.gltf", scratch) {
+		clips::clips_lib("/m/lib.gltf");
+	}
 	asset = gltf::load(a[1]);
 	if asset < 0 {
 		print("view: ", gltf::error());
 		return;
+	}
+	var scratch2 byte[>..] = [];
+	if read_file("/m/lib.gltf", scratch2) {
+		nlib = clips::clips_load("/m/lib.gltf", asset);
 	}
 	cloth = cloth_setup("/m/avatar.cloth", asset);
 	no_skirt = cloth > 0;
@@ -74,9 +83,9 @@ fn main() {
 			rest_inv = linalg::inverse(motion::world[head]);
 		}
 	}
-	let first_node = gltf::assets[asset].nodes.first;
+	let tfirst = gltf::assets[asset].nodes.first;
 	for i in gltf::assets[asset].nodes.count {
-		let n = first_node + i;
+		let n = tfirst + i;
 		if gltf::nodes[n].mesh >= 0 && gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "teeth" {
 			teeth_mat = gltf::prims[gltf::meshes[gltf::nodes[n].mesh].prims.first].material;
 			if teeth_mat >= 0 {
@@ -135,7 +144,9 @@ fn main() {
 	} else if card_node >= 0 {
 		hair_cards(asset, sw, sh, 64);
 	}
-	if on { hair_body(asset); }
+	if on {
+		hair_body(asset);
+	}
 	if bones > 0 {
 		motion::rest(asset);
 		motion::update(asset, gfx::mat4_identity);
@@ -212,6 +223,34 @@ export fn hv_rest() {
 export fn hv_live() {
 	place_m();
 	mix_live(L[..]);
+}
+var nlib = 0;
+export fn hv_lib() i32 {
+	if nlib > 0 {
+		var sl i32[22];
+		for i in 22 {
+			let g = clips::kc_slot[i] as int;
+			if g < 0 {
+				sl[i] = -1;
+			} else {
+				sl[i] = (g - gltf::assets[asset].nodes.first) as i32;
+			}
+		}
+		mix_open(asset, item, sl[..]);
+		for c in nlib {
+			mix_clip(clips::kc_nf[c], clips::kc_loop[c], clips::clips_frames(c));
+		}
+	}
+	return nlib as i32;
+}
+export fn hv_clip_name(c i32) i32 {
+	var tmp byte[>..] = [];
+	clips::clips_name(c as int, tmp);
+	let n = min(tmp.len, 16384);
+	for i in n {
+		N[i] = tmp[i];
+	}
+	return tmp.len as i32;
 }
 export fn hv_cloth() {
 	cloth_stats(L[..]);
