@@ -1,4 +1,4 @@
-=== 055067df1c50bb93
+=== -1b81da8b2b39f2c8
 import os;
 import gfx;
 import math;
@@ -7,9 +7,10 @@ import gfx.gltf;
 import gfx.codec_png;
 import gfx.motion;
 import gfx.scene3d;
+import json;
 === -2db39b44eedce38c
 
-=== -4681d78c04574bc7
+=== -2a669715bebf4515
 var tw = 0;
 var th = 0;
 var tpx byte[>..];
@@ -24,6 +25,15 @@ var hit_u f32[>..];
 var hit_v f32[>..];
 var zb f32[>..];
 var pal gfx::mat4[>..];
+var fast = false;
+var pose_n int[>..];
+var pose_a f32[>..];
+var img_changed int[>..];
+var key_k f32 = 1.0;
+var fill_k f32 = 1.0;
+var amb_k f32 = 1.0;
+var sun_az f32 = 0.0;
+var sun_el f32 = 0.0;
 var item = -1;
 var asset = -1;
 var big = default<gfx::Texture>();
@@ -117,41 +127,41 @@ fn load_pose(path const byte[:]) {
 		}
 	}
 }
-=== -e2e14479f1d6814
+=== 0bfbf305fb4d9f2d
 fn shot(eye float3, look float3) {
 	s3d::view = s3d::Camera { eye: eye, target: look, up: float3 { 0.0, 1.0, 0.0 }, fov_y: fov, near: 0.05, far: 100.0 };
-	for k in 3 { s3d::render(big); }
+	let reps = if fast { 1 } else { 3 };
+	for r in reps { s3d::render(big); }
 	let px = gfx::read_pixels(big);
+	if rpx.len != tw * th * 4 { rpx.resize(tw * th * 4, 0); }
+	if rmask.len != tw * th { rmask.resize(tw * th, 0.0); }
 	let bw = 2 * tw;
-	rpx.resize(tw * th * 4, 0);
-	rmask.resize(tw * th, 0.0);
-	fn q(s f32) byte { clamp(round((s as real) / 4.0), 0.0, 255.0) as byte }
 	for y in th {
 		for x in tw {
 			var cnt = 0;
-			var sr f32 = 0.0;
-			var sg f32 = 0.0;
-			var sb f32 = 0.0;
+			var s0 f32 = 0.0;
+			var s1 f32 = 0.0;
+			var s2 f32 = 0.0;
 			for v in 2 {
 				for u in 2 {
-					let j = ((2 * y + v) * bw + 2 * x + u) * 4;
-					if px[j] == 0 && px[j + 1] == 0 && px[j + 2] == 0 {
-						sr += bg.x;
-						sg += bg.y;
-						sb += bg.z;
-					} else {
-						sr += px[j] as f32;
-						sg += px[j + 1] as f32;
-						sb += px[j + 2] as f32;
+					let o = ((2 * y + v) * bw + 2 * x + u) * 4;
+					if px[o] != 0 || px[o + 1] != 0 || px[o + 2] != 0 {
 						cnt++;
+						s0 += px[o] as f32;
+						s1 += px[o + 1] as f32;
+						s2 += px[o + 2] as f32;
+					} else {
+						s0 += bg.x;
+						s1 += bg.y;
+						s2 += bg.z;
 					}
 				}
 			}
 			let i = y * tw + x;
 			rmask[i] = (cnt as f32) / 4.0;
-			rpx[i * 4] = q(sr);
-			rpx[i * 4 + 1] = q(sg);
-			rpx[i * 4 + 2] = q(sb);
+			rpx[i * 4] = (clamp(round((s0 / 4.0) as real), 0.0, 255.0)) as byte;
+			rpx[i * 4 + 1] = (clamp(round((s1 / 4.0) as real), 0.0, 255.0)) as byte;
+			rpx[i * 4 + 2] = (clamp(round((s2 / 4.0) as real), 0.0, 255.0)) as byte;
 			rpx[i * 4 + 3] = 255;
 		}
 	}
@@ -550,41 +560,539 @@ fn paint() int {
 	}
 	return changed;
 }
-=== 77651b595b7dd9df
-fn report(prefix const byte[:], iou f32, ssim f32, de f32, good f32, cx f32, cy f32, d f32) {
-	var s byte[>..] = [];
-	s.append(prefix);
-	s.append(" iou ");
-	format_flt(s, iou as real, 4);
-	s.append(" ssim ");
-	format_flt(s, ssim as real, 4);
-	s.append(" de ");
-	format_flt(s, de as real, 4);
-	s.append(" good ");
-	format_flt(s, good as real, 4);
-	s.append(" cam ");
-	format_flt(s, cx as real, 4);
-	s.append(" ");
-	format_flt(s, cy as real, 4);
-	s.append(" ");
-	format_flt(s, d as real, 4);
-	print(s);
+=== 6f836dd3cf63f6d3
+var pose_t float3[>..];
+var pose_r linalg::Quat[>..];
+var pose_s float3[>..];
+fn f4(out byte[>..]&, v f32) {
+	format_flt(out, v as real, 4);
 }
-fn paint_enabled() bool {
-	var env byte[>..] = [];
-	if !read_file("/proc/self/environ", env) { return true; }
-	let entries = split(env, 0);
-	for e in entries {
-		if e == "FIT_PAINT=0" { return false; }
+fn fl(out byte[>..]&, v f32) {
+	out.push(' ');
+	format_flt(out, v as real, 6);
+}
+fn qconj(q linalg::Quat) linalg::Quat {
+	linalg::Quat { -q.x, -q.y, -q.z, q.w }
+}
+fn sq(v f32) f32 {
+	sqrt(v as real) as f32
+}
+fn col(m gfx::mat4, x f32, y f32, z f32) float3 {
+	let o = linalg::point(m, float3 { 0.0, 0.0, 0.0 });
+	let p = linalg::point(m, float3 { x, y, z });
+	linalg::unit3(float3 { p.x - o.x, p.y - o.y, p.z - o.z })
+}
+fn mquat(m gfx::mat4) linalg::Quat {
+	let c0 = col(m, 1.0, 0.0, 0.0);
+	let c1 = col(m, 0.0, 1.0, 0.0);
+	let c2 = col(m, 0.0, 0.0, 1.0);
+	let m00 = c0.x;
+	let m10 = c0.y;
+	let m20 = c0.z;
+	let m01 = c1.x;
+	let m11 = c1.y;
+	let m21 = c1.z;
+	let m02 = c2.x;
+	let m12 = c2.y;
+	let m22 = c2.z;
+	let tr = m00 + m11 + m22;
+	if tr > 0.0 {
+		let s = sq(tr + 1.0) * 2.0;
+		return linalg::Quat { (m21 - m12) / s, (m02 - m20) / s, (m10 - m01) / s, 0.25 * s };
 	}
+	if m00 > m11 && m00 > m22 {
+		let s = sq(1.0 + m00 - m11 - m22) * 2.0;
+		return linalg::Quat { 0.25 * s, (m01 + m10) / s, (m02 + m20) / s, (m21 - m12) / s };
+	}
+	if m11 > m22 {
+		let s = sq(1.0 + m11 - m00 - m22) * 2.0;
+		return linalg::Quat { (m01 + m10) / s, 0.25 * s, (m12 + m21) / s, (m02 - m20) / s };
+	}
+	let s = sq(1.0 + m22 - m00 - m11) * 2.0;
+	return linalg::Quat { (m02 + m20) / s, (m12 + m21) / s, 0.25 * s, (m10 - m01) / s };
+}
+fn angle_of(node int) f32 {
+	var a f32 = 0.0;
+	for k in pose_n.len { if pose_n[k] == node { a = pose_a[k]; } }
+	a
+}
+fn turn(node int, ang f32) {
+	let n = gltf::nodes[node];
+	let p = n.parent;
+	var axis = float3 { 0.0, 0.0, 1.0 };
+	if p >= 0 {
+		axis = linalg::unit3(linalg::qrotate(qconj(mquat(motion::world[p])), float3 { 0.0, 0.0, 1.0 }));
+	}
+	let r = linalg::qnorm(linalg::qmul(linalg::qaxis(axis, ang), n.r));
+	s3d::set_node(item, node, n.t, r, n.s);
+	var k = -1;
+	for i in pose_n.len { if pose_n[i] == node { k = i; } }
+	if k >= 0 {
+		pose_a[k] = ang;
+		pose_t[k] = n.t;
+		pose_r[k] = r;
+		pose_s[k] = n.s;
+	} else {
+		pose_n.push(node);
+		pose_a.push(ang);
+		pose_t.push(n.t);
+		pose_r.push(r);
+		pose_s.push(n.s);
+	}
+}
+=== 4a45d277ecd192b0
+fn score() f32 {
+	shot(cam_eye, cam_look);
+	var inter f32 = 0.0;
+	var uni f32 = 0.0;
+	for i in tw * th {
+		inter += min(tmask[i], rmask[i]);
+		uni += max(tmask[i], rmask[i]);
+	}
+	if uni > 0.0 { inter / uni } else { 0.0 }
+}
+=== -1d7a0e8f6428d11c
+fn joint_name(i int) const byte[:] {
+	match i {
+		0 => "upperarm_l",
+		1 => "upperarm_r",
+		2 => "lowerarm_l",
+		3 => "lowerarm_r",
+		4 => "thigh_l",
+		5 => "thigh_r",
+		6 => "calf_l",
+		_ => "calf_r",
+	}
+}
+fn pose_fit() {
+	fast = true;
+	s3d::pose(item);
+	let steps f32[5] = [0.28, 0.14, 0.07, 0.035, 0.014];
+	for pass in 2 {
+		for j in 8 {
+			let node = gltf::find_node(asset, joint_name(j));
+			if node < 0 { continue; }
+			var a0 = angle_of(node);
+			var best = score();
+			for st in steps {
+				turn(node, a0 + st);
+				let s1 = score();
+				turn(node, a0 - st);
+				let s2 = score();
+				if s1 > best && s1 >= s2 {
+					a0 += st;
+					best = s1;
+				} else if s2 > best {
+					a0 -= st;
+					best = s2;
+				}
+				turn(node, a0);
+			}
+		}
+	}
+	fast = false;
+	var o byte[>..] = [];
+	format(o, "pose");
+	for j in 8 {
+		let node = gltf::find_node(asset, joint_name(j));
+		if node < 0 { continue; }
+		format(o, " ", joint_name(j), " ");
+		f4(o, angle_of(node));
+	}
+	print(o);
+}
+=== 0043a601f7ed26c7
+fn save_pose(path const byte[:]) {
+	var o byte[>..] = [];
+	for k in pose_n.len {
+		var nm const byte[:] = "";
+		for j in 8 {
+			if gltf::find_node(asset, joint_name(j)) == pose_n[k] { nm = joint_name(j); }
+		}
+		o.append(nm);
+		fl(o, pose_t[k].x);
+		fl(o, pose_t[k].y);
+		fl(o, pose_t[k].z);
+		fl(o, pose_r[k].x);
+		fl(o, pose_r[k].y);
+		fl(o, pose_r[k].z);
+		fl(o, pose_r[k].w);
+		fl(o, pose_s[k].x);
+		fl(o, pose_s[k].y);
+		fl(o, pose_s[k].z);
+		o.push('\n');
+	}
+	write_file(path, o);
+}
+=== 65537d731359eb7d
+fn set_lights() {
+	s3d::sun = s3d::Sun { to_sun: linalg::unit3(float3 { 0.35 + sun_az, 0.8 + sun_el, 1.0 }), rgb: float3 { 2.2 * key_k, 2.2 * key_k, 2.2 * key_k }, shadows: true, shadow_far: 10.0, map_size: 2048 };
+	s3d::lights.clear();
+	s3d::add_light(float3 { -14.0, 7.0, 14.0 }, float3 { 260.0 * fill_k, 260.0 * fill_k, 260.0 * fill_k }, 1000.0);
+	s3d::sky.ambient = amb_k;
+}
+=== 736af94332a89125
+fn tone() f32 {
+	shot(cam_eye, cam_look);
+	var sum f32 = 0.0;
+	var cnt = 0;
+	for i in tw * th {
+		if tmask[i] == 1.0 && rmask[i] == 1.0 {
+			sum += de2000(lab(at(tpx, i, 0), at(tpx, i, 1), at(tpx, i, 2)), lab(at(rpx, i, 0), at(rpx, i, 1), at(rpx, i, 2)));
+			cnt++;
+		}
+	}
+	if cnt == 0 { 1000.0 } else { sum / (cnt as f32) }
+}
+=== 7c71c91363aecfae
+fn lf_get(k int) f32 {
+	match k {
+		0 => key_k,
+		1 => fill_k,
+		2 => amb_k,
+		3 => sun_az,
+		_ => sun_el,
+	}
+}
+fn lf_set(k int, v f32) {
+	match k {
+		0 => { key_k = v; },
+		1 => { fill_k = v; },
+		2 => { amb_k = v; },
+		3 => { sun_az = v; },
+		_ => { sun_el = v; },
+	}
+}
+fn light_fit() {
+	fast = true;
+	set_lights();
+	var best = tone();
+	for pass in 3 {
+		for k in 5 {
+			for s in 2 {
+				let old = lf_get(k);
+				var up f32 = old;
+				var dn f32 = old;
+				if k < 3 {
+					let m f32 = if s == 0 { 1.25 } else { 1.1 };
+					up = old * m;
+					dn = old / m;
+				} else {
+					let m f32 = if s == 0 { 0.2 } else { 0.07 };
+					up = old + m;
+					dn = old - m;
+				}
+				lf_set(k, up);
+				set_lights();
+				let t1 = tone();
+				if t1 < best {
+					best = t1;
+				} else {
+					lf_set(k, dn);
+					set_lights();
+					let t2 = tone();
+					if t2 < best {
+						best = t2;
+					} else {
+						lf_set(k, old);
+					}
+				}
+			}
+		}
+	}
+	fast = false;
+	set_lights();
+	var o byte[>..] = [];
+	format(o, "light key ");
+	f4(o, key_k);
+	format(o, " fill ");
+	f4(o, fill_k);
+	format(o, " amb ");
+	f4(o, amb_k);
+	format(o, " az ");
+	f4(o, sun_az);
+	format(o, " el ");
+	f4(o, sun_el);
+	print(o);
+}
+=== 36470626ee1dd91c
+fn emit(d json::Doc&, n int, out byte[>..]&) {
+	json::format_node(out, d, n);
+}
+=== 71e49ea105cd6f05
+fn rd32(data const byte[:], p int) int {
+	(data[p] as int) + (data[p + 1] as int) * 256 + (data[p + 2] as int) * 65536 + (data[p + 3] as int) * 16777216
+}
+fn put32(out byte[>..]&, v int) {
+	out.push((v % 256) as byte);
+	out.push(((v / 256) % 256) as byte);
+	out.push(((v / 65536) % 256) as byte);
+	out.push(((v / 16777216) % 256) as byte);
+}
+fn skip_value(t const byte[:], i int) int {
+	var p = i;
+	if t[p] == '"' {
+		p++;
+		while t[p] != '"' {
+			if t[p] == '\\' { p++; }
+			p++;
+		}
+		return p + 1;
+	}
+	if t[p] == '{' || t[p] == '[' {
+		var depth = 0;
+		while p < t.len {
+			let c = t[p];
+			if c == '"' {
+				p++;
+				while t[p] != '"' {
+					if t[p] == '\\' { p++; }
+					p++;
+				}
+				p++;
+				continue;
+			}
+			if c == '{' || c == '[' {
+				depth++;
+			} else if c == '}' || c == ']' {
+				depth--;
+				if depth == 0 { return p + 1; }
+			}
+			p++;
+		}
+		return p;
+	}
+	while p < t.len && t[p] != ',' && t[p] != '}' && t[p] != ']' { p++; }
+	return p;
+}
+fn find_member(t const byte[:], s int, e int, key const byte[:]) int, int {
+	var i = s + 1;
+	while i < e && t[i] != '}' {
+		let ke = skip_value(t, i);
+		let vs = ke + 1;
+		let ve = skip_value(t, vs);
+		if t[i + 1..ke - 1] == key { return vs, ve; }
+		i = ve;
+		if t[i] == ',' { i++; }
+	}
+	return -1, -1;
+}
+fn count_elems(t const byte[:], s int, e int) int {
+	var j = s + 1;
+	var k = 0;
+	while j < e - 1 {
+		let q = skip_value(t, j);
+		k++;
+		j = q;
+		if t[j] == ',' { j++; }
+	}
+	k
+}
+fn new_views(js byte[>..]&, vo int[:], vl int[:], first bool) {
+	var fe = first;
+	for i in vo.len {
+		if !fe { js.push(','); }
+		fe = false;
+		format(js, "{\"buffer\":0,\"byteOffset\":", vo[i], ",\"byteLength\":", vl[i], "}");
+	}
+}
+fn export_glb(src const byte[:], dst const byte[:], prefix const byte[:]) {
+	var data byte[>..] = [];
+	if !read_file(src, data) {
+		print("glb read failed");
+		return;
+	}
+	let jl = rd32(data, 12);
+	let bl = rd32(data, 20 + jl);
+	var d = default<json::Doc>();
+	let root, err = json::parse(data[20..20 + jl], d);
+	if root < 0 {
+		print("glb json failed: ", err);
+		return;
+	}
+	var comp byte[>..] = [];
+	emit(d, root, comp);
+	var nb byte[>..] = [];
+	nb.append(data[28 + jl..28 + jl + bl]);
+	while nb.len % 4 != 0 { nb.push(0); }
+	var vo int[>..] = [];
+	var vl int[>..] = [];
+	var vk int[>..] = [];
+	var oldviews = 0;
+	var i0 = 1;
+	while i0 < comp.len && comp[i0] != '}' {
+		let ke = skip_value(comp, i0);
+		let vs = ke + 1;
+		let ve = skip_value(comp, vs);
+		if comp[i0 + 1..ke - 1] == "bufferViews" { oldviews = count_elems(comp, vs, ve); }
+		i0 = ve;
+		if comp[i0] == ',' { i0++; }
+	}
+	let first = gltf::assets[asset].images.first;
+	let cnt = gltf::assets[asset].images.count;
+	for k in cnt {
+		let g = first + k;
+		if img_changed[g] == 0 { continue; }
+		var png byte[>..] = [];
+		if !read_file(str(prefix, "_tex", g, ".png"), png) { continue; }
+		vo.push(nb.len);
+		vl.push(png.len);
+		vk.push(k);
+		nb.append(png);
+		while nb.len % 4 != 0 { nb.push(0); }
+	}
+	var js byte[>..] = [];
+	js.push('{');
+	var i = 1;
+	var firstm = true;
+	var sawviews = false;
+	while i < comp.len && comp[i] != '}' {
+		let ke = skip_value(comp, i);
+		let vs = ke + 1;
+		let ve = skip_value(comp, vs);
+		if !firstm { js.push(','); }
+		firstm = false;
+		js.append(comp[i..ke]);
+		js.push(':');
+		let key = comp[i + 1..ke - 1];
+		if key == "bufferViews" {
+			sawviews = true;
+			js.push('[');
+			var fe = true;
+			var j = vs + 1;
+			while j < ve - 1 {
+				let e = skip_value(comp, j);
+				if !fe { js.push(','); }
+				fe = false;
+				js.append(comp[j..e]);
+				j = e;
+				if comp[j] == ',' { j++; }
+			}
+			new_views(js, vo, vl, fe);
+			js.push(']');
+		} else if key == "images" {
+			js.push('[');
+			var fe = true;
+			var idx = 0;
+			var j = vs + 1;
+			while j < ve - 1 {
+				let e = skip_value(comp, j);
+				if !fe { js.push(','); }
+				fe = false;
+				var vi = -1;
+				for q in vk.len { if vk[q] == idx { vi = oldviews + q; } }
+				if vi >= 0 {
+					format(js, "{\"bufferView\":", vi, ",\"mimeType\":\"image/png\",\"name\":");
+					let ns, ne = find_member(comp, j, e, "name");
+					if ns >= 0 {
+						js.append(comp[ns..ne]);
+					} else {
+						js.append("\"\"");
+					}
+					js.push('}');
+				} else {
+					js.append(comp[j..e]);
+				}
+				idx++;
+				j = e;
+				if comp[j] == ',' { j++; }
+			}
+			js.push(']');
+		} else if key == "buffers" {
+			format(js, "[{\"byteLength\":", nb.len, "}]");
+		} else {
+			js.append(comp[vs..ve]);
+		}
+		i = ve;
+		if comp[i] == ',' { i++; }
+	}
+	if !sawviews && vo.len > 0 {
+		if !firstm { js.push(','); }
+		js.append("\"bufferViews\":[");
+		new_views(js, vo, vl, true);
+		js.push(']');
+	}
+	js.push('}');
+	while js.len % 4 != 0 { js.push(' '); }
+	var res byte[>..] = [];
+	res.append("glTF");
+	put32(res, 2);
+	put32(res, 12 + 8 + js.len + 8 + nb.len);
+	put32(res, js.len);
+	res.append("JSON");
+	res.append(js);
+	put32(res, nb.len);
+	res.append("BIN");
+	res.push(0);
+	res.append(nb);
+	write_file(dst, res);
+	print("glb ", dst);
+}
+=== -4d85bb74d6cf51f6
+fn env_zero(name const byte[:]) bool {
+	var env byte[>..] = [];
+	if !read_file("/proc/self/environ", env) { return false; }
+	let want = str(name, "=0");
+	var s = 0;
+	for i in env.len + 1 {
+		if i == env.len || env[i] == 0 {
+			if env[s..i] == want { return true; }
+			s = i + 1;
+		}
+	}
+	false
+}
+fn fit_cam(rounds int, start bool) bool {
+	let ty0, ty1, tcx = bbox(tmask);
+	var d f32 = 3.2;
+	var cy f32 = 0.85;
+	var cx f32 = 0.0;
+	if !start {
+		cx = cam_eye.x;
+		cy = cam_eye.y;
+		d = cam_eye.z;
+	}
+	for r in rounds {
+		shot(float3 { cx, cy, d }, float3 { cx, cy, 0.0 });
+		let my0, my1, mcx = bbox(rmask);
+		if my1 <= my0 {
+			print("empty render");
+			return false;
+		}
+		let wpp = (2.0 * d * (tan((fov / 2.0) as real) as f32)) / (th as f32);
+		cy -= ((((my0 + my1) as f32) - ((ty0 + ty1) as f32)) / 2.0) * wpp;
+		cx += (mcx - tcx) * wpp;
+		d *= ((my1 - my0) as f32) / ((ty1 - ty0) as f32);
+	}
+	cam_eye = float3 { cx, cy, d };
+	cam_look = float3 { cx, cy, 0.0 };
 	return true;
 }
-fn save_img(path const byte[:], w int, h int, px const byte[:]) {
-	let sh = gfx::Shot { w: w, h: h, pf: 376840196, px: px };
-	gfx::save_shot(sh, path);
+fn report(prefix const byte[:], heat byte[>..]&) {
+	let iou, ssim, de, good = metrics(heat);
+	var o byte[>..] = [];
+	format(o, prefix, " iou ");
+	f4(o, iou);
+	format(o, " ssim ");
+	f4(o, ssim);
+	format(o, " de ");
+	f4(o, de);
+	format(o, " good ");
+	f4(o, good);
+	format(o, " cam ");
+	f4(o, cam_eye.x);
+	format(o, " ");
+	f4(o, cam_eye.y);
+	format(o, " ");
+	f4(o, cam_eye.z);
+	print(o);
 }
 fn main() {
 	let a = args();
+	if a.len < 4 {
+		print("usage: fit model.glb target.png prefix [pose]");
+		return;
+	}
 	var data byte[>..] = [];
 	if !read_file(a[2], data) {
 		print("target failed");
@@ -599,6 +1107,7 @@ fn main() {
 	th = h;
 	tmask.resize(tw * th, 0.0);
 	rmask.resize(tw * th, 0.0);
+	rpx.resize(tw * th * 4, 0);
 	gray_bg();
 	if !gfx::open_headless(tw, th) {
 		print("gpu: skipped (no device: ", gfx::error(), ")");
@@ -625,53 +1134,51 @@ fn main() {
 		print("empty target");
 		return;
 	}
-	var d f32 = 3.2;
-	var cy f32 = 0.85;
-	var cx f32 = 0.0;
-	for it in 7 {
-		shot(float3 { cx, cy, d }, float3 { cx, cy, 0.0 });
-		let my0, my1, mcx = bbox(rmask);
-		if my1 <= my0 {
-			print("empty render");
-			return;
-		}
-		let wpp = (2.0 * (d as real) * tan((fov as real) / 2.0) / (th as real)) as f32;
-		cy -= ((((my0 + my1) as f32) - ((ty0 + ty1) as f32)) / 2.0) * wpp;
-		cx += (mcx - tcx) * wpp;
-		d *= ((my1 - my0) as f32) / ((ty1 - ty0) as f32);
+	if !fit_cam(7, true) { return; }
+	if !env_zero("FIT_POSE") {
+		pose_fit();
+		if !fit_cam(3, false) { return; }
+		save_pose(str(a[3], "_pose.txt"));
 	}
-	cam_eye = float3 { cx, cy, d };
-	cam_look = float3 { cx, cy, 0.0 };
+	if !env_zero("FIT_LIGHT") { light_fit(); }
 	shot(cam_eye, cam_look);
 	var heat byte[>..] = [];
-	var iou, ssim, de, good = metrics(heat);
-	report("fit", iou, ssim, de, good, cx, cy, d);
-	if paint_enabled() {
+	report("fit", heat);
+	if !env_zero("FIT_PAINT") {
+		var acc int[>..] = [];
 		for r in 4 {
 			paint();
+			if acc.len != img_changed.len { acc.resize(img_changed.len, 0); }
+			for i in acc.len { if img_changed[i] != 0 { acc[i] = 1; } }
 			shot(cam_eye, cam_look);
-			iou, ssim, de, good = metrics(heat);
-			report(str("paint", r + 1), iou, ssim, de, good, cx, cy, d);
-			for img in img_changed.len {
-				if img_changed[img] != 0 {
-					let im = gltf::images[img];
-					save_img(str(a[3], "_tex", img, ".png"), im.width, im.height, gltf::image_pixels(img));
-				}
-			}
+			report(str("paint", r + 1), heat);
 		}
+		for i in acc.len {
+			if acc[i] != 0 { img_changed[i] = 1; } else { img_changed[i] = 0; }
+		}
+		var saved = 0;
+		for img in acc.len {
+			if acc[img] == 0 { continue; }
+			let im = gltf::images[img];
+			gfx::save_shot(gfx::Shot { w: im.width, h: im.height, pf: 376840196, px: gltf::image_pixels(img) }, str(a[3], "_tex", img, ".png"));
+			saved++;
+		}
+		if saved > 0 { export_glb(a[1], str(a[3], ".glb"), a[3]); }
 	}
+	gfx::save_shot(gfx::Shot { w: tw, h: th, pf: 376840196, px: rpx }, str(a[3], "_render.png"));
+	gfx::save_shot(gfx::Shot { w: tw, h: th, pf: 376840196, px: heat }, str(a[3], "_heat.png"));
 	var side byte[>..] = [];
 	side.resize(3 * tw * th * 4, 0);
 	for y in th {
 		for x in tw {
 			for c in 4 {
-				side[(y * 3 * tw + x) * 4 + c] = tpx[(y * tw + x) * 4 + c];
-				side[(y * 3 * tw + tw + x) * 4 + c] = rpx[(y * tw + x) * 4 + c];
-				side[(y * 3 * tw + 2 * tw + x) * 4 + c] = heat[(y * tw + x) * 4 + c];
+				let i = (y * tw + x) * 4 + c;
+				let o = y * tw * 3 * 4 + x * 4 + c;
+				side[o] = tpx[i];
+				side[o + tw * 4] = rpx[i];
+				side[o + 2 * tw * 4] = heat[i];
 			}
 		}
 	}
-	save_img(str(a[3], "_render.png"), tw, th, rpx);
-	save_img(str(a[3], "_heat.png"), tw, th, heat);
-	save_img(str(a[3], "_side.png"), 3 * tw, th, side);
+	gfx::save_shot(gfx::Shot { w: 3 * tw, h: th, pf: 376840196, px: side }, str(a[3], "_side.png"));
 }
