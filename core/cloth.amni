@@ -123,8 +123,8 @@ fn wear_rows() Wear[>..] {
 	r.push(Wear{"glasses", "glasses", "rigid"});
 	r.push(Wear{"outfit", "outfit", "tight"});
 	r.push(Wear{"hoodie", "hoodie", "close"});
-	r.push(Wear{"hood", "hoodie", "loose"});
-	r.push(Wear{"hood_hem", "hoodie", "loose"});
+	r.push(Wear{"hood", "hoodie", "close"});
+	r.push(Wear{"hood_hem", "hoodie", "close"});
 	r.push(Wear{"pocket", "hoodie", "close"});
 	r.push(Wear{"seam", "hoodie", "close"});
 	r.push(Wear{"collar", "hoodie", "close"});
