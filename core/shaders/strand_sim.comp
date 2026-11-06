@@ -1,0 +1,92 @@
+layout(local_size_x = 64) in;
+layout(std430, set = 0, binding = 0) readonly buffer Tgt { vec4 tgt[]; };
+layout(std430, set = 0, binding = 1) readonly buffer Gd { uvec4 gd[]; };
+#include "strand_body.glsl"
+layout(std430, set = 1, binding = 0) buffer St { vec4 st[]; };
+layout(std430, set = 1, binding = 1) buffer Pts { vec4 pts[]; };
+layout(std430, set = 1, binding = 2) buffer Stat { uvec4 stat[]; };
+vec3 rotTo(vec3 v, vec3 a, vec3 b) {
+	vec3 c = cross(a, b);
+	float k = dot(a, b);
+	if (k < -0.9999) return v;
+	return v * k + cross(c, v) + c * (dot(c, v) / (1.0 + k));
+}
+void main() {
+	uint gi = gl_GlobalInvocationID.x;
+	if (gi >= uint(sm[9].w)) return;
+	uvec4 G = gd[gi];
+	uint f = G.x, n = min(G.y, 32u), nr = min(2u, n);
+	mat4 hm = m4(0u), him = m4(4u), hp = m4(10u);
+	vec4 pr = sm[8], ph = sm[15];
+	float dt = pr.x, kgt = G.z > 0u ? ph.z : ph.x, kgr = G.z > 0u ? ph.w : ph.y;
+	vec3 T[32];
+	vec3 X[32];
+	vec3 P[32];
+	vec3 C[32];
+	vec3 R[32];
+	float M[32];
+	float L[32];
+	for (uint i = 0u; i < n; i++) {
+		R[i] = tgt[(f + i) * 3u].xyz;
+		T[i] = (hm * vec4(R[i], 1.0)).xyz;
+		X[i] = st[(f + i) * 2u].xyz;
+		P[i] = st[(f + i) * 2u + 1u].xyz;
+		C[i] = vec3(0.0);
+		M[i] = clamp(bodySd(T[i]).x, sm[14].y, sm[14].z);
+		L[i] = i > 0u ? length(T[i] - T[i - 1u]) : 0.0;
+	}
+	if (pr.y > 0.5) for (uint i = 0u; i < n; i++) { X[i] = T[i]; P[i] = T[i]; }
+	else {
+		vec3 ga = sm[9].xyz - (hm * vec4(sm[14].w * vec3(0.0, -9.81, 0.0), 0.0)).xyz * (1.0 / length(hm[0].xyz));
+		uint ns = 2u;
+		float hs = dt / float(ns), dmp = 1.0 - sm[16].w;
+		for (uint s = 0u; s < ns; s++) {
+			float a = float(s + 1u) / float(ns);
+			mat4 hr = hp * (1.0 - a) + hm * a;
+			for (uint i = 0u; i < n; i++) {
+				vec3 v = (X[i] - P[i]) * dmp;
+				P[i] = X[i];
+				X[i] = i < nr ? (hr * vec4(R[i], 1.0)).xyz : X[i] + v + ga * (hs * hs);
+			}
+			for (uint it = 0u; it < 4u; it++) {
+				for (uint i = nr; i < n; i++) {
+					float t = tgt[(f + i) * 3u + 1u].w;
+					X[i] += (T[i] - X[i]) * mix(kgr, kgt, smoothstep(0.0, 0.7, t));
+				}
+				for (uint i = 1u; i + 1u < n; i++) {
+					vec3 a0 = normalize(T[i] - T[i - 1u] + vec3(1e-9)), a1 = normalize(X[i] - X[i - 1u] + vec3(1e-9));
+					vec3 want = X[i] + rotTo(T[i + 1u] - T[i], a0, a1);
+					X[i + 1u] += (want - X[i + 1u]) * sm[16].x;
+				}
+				for (uint i = nr; i < n; i++) {
+					vec2 sd = bodySd(X[i]);
+					if (sd.x < M[i] && sd.y < 98.0) X[i] = pushOut(X[i], uint(sd.y), M[i]);
+				}
+				for (uint i = nr; i < n; i++) {
+					vec3 d = X[i] - X[i - 1u], nx = X[i - 1u] + normalize(d + vec3(1e-9)) * L[i];
+					C[i] = nx - X[i];
+					X[i] = nx;
+				}
+			}
+			for (uint i = nr; i + 1u < n; i++) P[i] += C[i + 1u] * sm[16].y;
+		}
+	}
+	uint inside = 0u, rin = 0u;
+	for (uint i = 0u; i < n; i++) {
+		st[(f + i) * 2u] = vec4(X[i], 0.0);
+		st[(f + i) * 2u + 1u] = vec4(P[i], 0.0);
+		if (bodySd(X[i]).x < 0.0) { if (i < nr) rin++; else inside++; }
+	}
+	for (uint i = 0u; i < n; i++) {
+		uint a = i > 0u ? i - 1u : 0u, b = min(i + 1u, n - 1u);
+		vec3 xa = (him * vec4(X[a], 1.0)).xyz, xb = (him * vec4(X[b], 1.0)).xyz, xi = (him * vec4(X[i], 1.0)).xyz;
+		vec3 t0 = normalize(R[b] - R[a] + vec3(1e-9)), t1 = normalize(xb - xa + vec3(1e-9));
+		uint o = (f + i) * 3u;
+		vec4 s = tgt[o + 1u], nm = tgt[o + 2u];
+		pts[o] = vec4(xi, tgt[o].w);
+		pts[o + 1u] = vec4(rotTo(s.xyz, t0, t1), s.w);
+		pts[o + 2u] = vec4(rotTo(nm.xyz, t0, t1), nm.w);
+	}
+	vec3 tip = X[n - 1u] - T[n - 1u];
+	stat[gi] = uvec4(inside, rin, uint(length(tip) * 1e6), uint(clamp(dot(tip, vec3(1.0, 0.0, 0.0)) * 1e6 + 1e9, 0.0, 4e9)));
+}

@@ -24,8 +24,28 @@ struct HairU {
 	light float4,
 	shadow_vp gfx::mat4,
 }
-=== -3f1766bbc685b8be
+=== 2e19d8989f553755
 var on = false;
+var guides = 0;
+var parts = 0;
+var cells = 0;
+var sdf_done = false;
+var sim_reset = true;
+var probe_ask = false;
+var probe_v f32[>..];
+var hm_prev = gfx::mat4_identity;
+var part_node int[>..];
+var part_ib gfx::mat4[>..];
+var simv float4[>..];
+var tgt = default<gfx::Buffer>();
+var st = default<gfx::Buffer>();
+var gd = default<gfx::Buffer>();
+var simb = default<gfx::Buffer>();
+var sdfb = default<gfx::Buffer>();
+var trib = default<gfx::Buffer>();
+var statb = default<gfx::Buffer>();
+var sim_p = default<gfx::ComputePipeline>();
+var sdf_p = default<gfx::ComputePipeline>();
 var w = 0;
 var h = 0;
 var spc = 96;
@@ -60,46 +80,50 @@ fn hair_size(nw int, nh int) {
 	acc = gfx::buffer(rw, nw * nh * 64, []);
 	hairt = gfx::texture(gfx::TextureDesc { format: gfx::RGBA16F, usage: gfx::SAMPLED | gfx::COMPUTE_WRITE, width: nw as i32, height: nh as i32 });
 }
-=== 55590704e86c0e56
+=== 32dd30c9e626c27d
 fn hair_open(path const byte[:], nw int, nh int, strands int) bool {
 	var data byte[>..] = [];
 	if !read_file(path, data) { return false; }
+	if data.len < 16 { return false; }
 	points = binary::gather(data, 8, 4) as int;
 	segments = binary::gather(data, 12, 4) as int;
 	spc = strands;
+	let rw = gfx::BUFFER_COMPUTE_READ | gfx::BUFFER_COMPUTE_WRITE;
 	let seg_at = 16 + points * 48;
-	var k = 0;
+	bones = 0;
+	bone_node.clear();
+	var skin_at = 0;
 	if data[3] == 51 {
-		bones = binary::gather(data, seg_at + segments * 16, 4) as int;
-		let e = seg_at + segments * 16;
+		let e = 16 + points * 48 + segments * 16;
+		bones = binary::gather(data, e, 4) as int;
 		for i in bones {
 			bone_node.push(binary::gather(data, e + 4 + i * 4, 4) as int);
 		}
-		k = e + 4 + bones * 4;
+		skin_at = e + 4 + bones * 4;
 	}
-	pts = gfx::buffer(gfx::BUFFER_COMPUTE_READ | gfx::BUFFER_COMPUTE_WRITE, points * 48, data[16..16 + points * 48]);
+	pts = gfx::buffer(rw, points * 48, data[16..16 + points * 48]);
+	tgt = gfx::buffer(rw, points * 48, data[16..16 + points * 48]);
+	st = gfx::buffer(rw, points * 32, []);
 	segs = gfx::buffer(gfx::BUFFER_COMPUTE_READ, segments * 16, data[seg_at..seg_at + segments * 16]);
 	if bones > 0 {
 		rest = gfx::buffer(gfx::BUFFER_COMPUTE_READ, points * 48, data[16..16 + points * 48]);
-		skin = gfx::buffer(gfx::BUFFER_COMPUTE_READ, points * 16, data[k..k + points * 16]);
+		skin = gfx::buffer(gfx::BUFFER_COMPUTE_READ, points * 16, data[skin_at..skin_at + points * 16]);
 		mats.resize(bones, gfx::mat4_identity);
 		matsb = gfx::buffer(gfx::BUFFER_COMPUTE_READ, bones * 64, []);
 		skin_p = gfx::compute_pipeline(embed_shader("shaders/strand_skin.comp"));
 	}
-	var sx f32 = 0.0;
-	var sy f32 = 0.0;
-	var sz f32 = 0.0;
+	var cx = 0.0;
+	var cy = 0.0;
+	var cz = 0.0;
 	for i in points {
 		let at = 16 + i * 48;
-		sx += binary::f32_from_bits(binary::gather(data, at, 4) as! u32);
-		sy += binary::f32_from_bits(binary::gather(data, at + 4, 4) as! u32);
-		sz += binary::f32_from_bits(binary::gather(data, at + 8, 4) as! u32);
+		cx += binary::f32_from_bits(binary::gather(data, at, 4) as! u32);
+		cy += binary::f32_from_bits(binary::gather(data, at + 4, 4) as! u32);
+		cz += binary::f32_from_bits(binary::gather(data, at + 8, 4) as! u32);
 	}
 	if points > 0 {
-		let n = points as f32;
-		center = float3 { sx / n, sy / n, sz / n };
+		center = float3 { (cx / points) as f32, (cy / points) as f32, (cz / points) as f32 };
 	}
-	let rw = gfx::BUFFER_COMPUTE_WRITE | gfx::BUFFER_COMPUTE_READ;
 	lfront = gfx::buffer(rw, 512 * 512 * 4, []);
 	lacc = gfx::buffer(rw, 512 * 512 * 64, []);
 	smp = gfx::sampler(gfx::NEAREST, gfx::CLAMP);
@@ -107,9 +131,233 @@ fn hair_open(path const byte[:], nw int, nh int, strands int) bool {
 	clear_p = gfx::compute_pipeline(embed_shader("shaders/strand_clear.comp"));
 	raster_p = gfx::compute_pipeline(embed_shader("shaders/strand_raster.comp"));
 	resolve_p = gfx::compute_pipeline(embed_shader("shaders/strand_resolve.comp"));
+	var gl i32[>..] = [];
+	var prev = -1;
+	for s in segments {
+		let at = seg_at + s * 16;
+		let pi = binary::gather(data, at, 4) as int;
+		let gn = binary::gather(data, at + 4, 4) as int;
+		if s == 0 || gn != prev {
+			gl.push(pi as i32);
+			gl.push(2);
+			gl.push(0);
+			gl.push(0);
+		} else {
+			gl[gl.len - 3] += 1;
+		}
+		prev = gn;
+	}
+	if bones > 0 {
+		for g in gl.len / 4 {
+			let first = gl[g * 4] as int;
+			let cnt = gl[g * 4 + 1] as int;
+			var skinned = false;
+			for j in cnt {
+				let kk = first + j;
+				if kk < points {
+					let at = skin_at + kk * 16;
+					let w0 = binary::f32_from_bits(binary::gather(data, at + 8, 4) as! u32);
+					let w1 = binary::f32_from_bits(binary::gather(data, at + 12, 4) as! u32);
+					if w0 + w1 > 0.001 { skinned = true; }
+				}
+			}
+			if skinned { gl[g * 4 + 2] = 1; }
+		}
+	}
+	guides = gl.len / 4;
+	gd = gfx::buffer(gfx::BUFFER_COMPUTE_READ, guides * 16, bytes_of(gl));
+	statb = gfx::buffer(rw, guides * 16, []);
+	simb = gfx::buffer(gfx::BUFFER_COMPUTE_READ, 116 * 16, []);
+	simv.resize(116, float4 { 0.0, 0.0, 0.0, 0.0 });
+	probe_v.resize(8, 0.0);
+	sim_p = gfx::compute_pipeline(embed_shader("shaders/strand_sim.comp"));
+	sdf_p = gfx::compute_pipeline(embed_shader("shaders/strand_sdf.comp"));
+	sdfb = gfx::buffer(rw, 16, []);
+	trib = gfx::buffer(rw, 16, []);
 	hair_size(nw, nh);
 	on = true;
-	return true;
+	true
+}
+=== 580ce29a2961ed9e
+fn skin_joint(sk int, node int) int {
+	let cnt = gltf::skins[sk].joints.count as int;
+	let first = gltf::skins[sk].joints.first as int;
+	for k in cnt {
+		if gltf::ints[first + k] == node { return k; }
+	}
+	-1
+}
+=== -6cde5a25426b41c6
+fn tri_owner(v0 int, v1 int, v2 int) int {
+	var js int[>..] = [];
+	var ws f32[>..] = [];
+	for i in 3 {
+		let v = if i == 0 { v0 } else if i == 1 { v1 } else { v2 };
+		for c in 4 {
+			let j = gltf::verts[v * gltf::VERTEX_FLOATS + 18 + c] as int;
+			let w = gltf::verts[v * gltf::VERTEX_FLOATS + 22 + c];
+			var at = -1;
+			for e in js.len {
+				if js[e] == j { at = e; }
+			}
+			if at >= 0 {
+				ws[at] += w;
+			} else {
+				js.push(j);
+				ws.push(w);
+			}
+		}
+	}
+	var best = -1;
+	var bw f32 = 0.0;
+	for e in js.len {
+		if best < 0 || ws[e] > bw {
+			best = e;
+			bw = ws[e];
+		}
+	}
+	if best < 0 { -1 } else { js[best] }
+}
+=== -574931f5695d1903
+fn tri_box_hit(tl const float4[:], k int, lo float3, hi float3) bool {
+	let a = tl[3 * k];
+	let b = tl[3 * k + 1];
+	let c = tl[3 * k + 2];
+	let margin = 0.035;
+	let minx = min(a.x, min(b.x, c.x)) - margin;
+	let miny = min(a.y, min(b.y, c.y)) - margin;
+	let minz = min(a.z, min(b.z, c.z)) - margin;
+	let maxx = max(a.x, max(b.x, c.x)) + margin;
+	let maxy = max(a.y, max(b.y, c.y)) + margin;
+	let maxz = max(a.z, max(b.z, c.z)) + margin;
+	minx <= hi.x && maxx >= lo.x && miny <= hi.y && maxy >= lo.y && minz <= hi.z && maxz >= lo.z
+}
+=== -302619acffcec9ec
+fn hair_body(asset int) {
+	if !on { return; }
+	let n0 = gltf::assets[asset].nodes.first as int;
+	let nc = gltf::assets[asset].nodes.count as int;
+	let sn = gltf::find_node(asset, "skin");
+	if sn < 0 || gltf::nodes[sn].mesh < 0 || gltf::nodes[sn].skin < 0 { return; }
+	let sk = gltf::nodes[sn].skin as int;
+	var pj int[>..] = [];
+	part_node.clear();
+	part_ib.clear();
+	fn add_part(name const byte[:]) {
+		let nd = gltf::find_node(asset, name);
+		if nd >= 0 {
+			let k = skin_joint(sk, nd as int);
+			if k >= 0 {
+				part_node.push(nd as int);
+				part_ib.push(gltf::matrices[(gltf::skins[sk].inverse_binds.first as int) + k]);
+				pj.push(k);
+			}
+		}
+	}
+	add_part("head");
+	add_part("neck_01");
+	add_part("spine_03");
+	add_part("spine_02");
+	add_part("clavicle_l");
+	add_part("clavicle_r");
+	add_part("upperarm_l");
+	add_part("upperarm_r");
+	parts = part_node.len;
+	var lo float3[>..] = [];
+	var hi float3[>..] = [];
+	for p in parts {
+		lo.push(float3 { 1e9, 1e9, 1e9 });
+		hi.push(float3 { -1e9, -1e9, -1e9 });
+	}
+	fn pos(v int) float3 {
+		let b = v * gltf::VERTEX_FLOATS;
+		float3 { gltf::verts[b], gltf::verts[b + 1], gltf::verts[b + 2] }
+	}
+	fn grow(ow int, p float3) {
+		let l = lo[ow];
+		let u = hi[ow];
+		lo[ow] = float3 { min(l.x, p.x), min(l.y, p.y), min(l.z, p.z) };
+		hi[ow] = float3 { max(u.x, p.x), max(u.y, p.y), max(u.z, p.z) };
+	}
+	var all float4[>..] = [];
+	for n in n0..n0 + nc {
+		if gltf::nodes[n].mesh >= 0 && gltf::nodes[n].skin == sk {
+			let m = gltf::nodes[n].mesh as int;
+			let mn = gltf::text_of(gltf::meshes[m].name);
+			if mn == "skin" || mn == "face" || mn == "scalp" || mn == "tank" {
+				let pfirst = gltf::meshes[m].prims.first as int;
+				let pcount = gltf::meshes[m].prims.count as int;
+				for q in pfirst..pfirst + pcount {
+					let pr = gltf::prims[q];
+					let vfirst = pr.vfirst as int;
+					let ifirst = pr.ifirst as int;
+					for t in (pr.icount as int) / 3 {
+						let v0 = vfirst + (gltf::indices[ifirst + 3 * t] as int);
+						let v1 = vfirst + (gltf::indices[ifirst + 3 * t + 1] as int);
+						let v2 = vfirst + (gltf::indices[ifirst + 3 * t + 2] as int);
+						let pa = pos(v0);
+						let pb = pos(v1);
+						let pc = pos(v2);
+						let j = tri_owner(v0, v1, v2);
+						var ow = -1;
+						for i in pj.len {
+							if ow < 0 && pj[i] == j { ow = i; }
+						}
+						all.push(float4 { pa.x, pa.y, pa.z, ow as f32 });
+						all.push(float4 { pb.x, pb.y, pb.z, 0.0 });
+						all.push(float4 { pc.x, pc.y, pc.z, 0.0 });
+						if ow >= 0 {
+							grow(ow, pa);
+							grow(ow, pb);
+							grow(ow, pc);
+						}
+					}
+				}
+			}
+		}
+	}
+	var tl float4[>..] = [];
+	cells = 0;
+	for p in parts {
+		let o = 20 + 12 * p;
+		var a = float3 { 0.0, 0.0, 0.0 };
+		var cell f32 = 0.007;
+		var gx = 2;
+		var gy = 2;
+		var gz = 2;
+		let t0 = tl.len / 3;
+		if lo[p].x < hi[p].x {
+			a = lo[p] - float3 { 0.035, 0.035, 0.035 };
+			let b = hi[p] + float3 { 0.035, 0.035, 0.035 };
+			let sz = b - a;
+			cell = max(0.007, max(sz.x, max(sz.y, sz.z)) / 63.0);
+			gx = (sz.x / cell) as int + 2;
+			gy = (sz.y / cell) as int + 2;
+			gz = (sz.z / cell) as int + 2;
+			for k in all.len / 3 {
+				if tri_box_hit(all[..], k, a, b) {
+					tl.push(all[3 * k]);
+					tl.push(all[3 * k + 1]);
+					tl.push(all[3 * k + 2]);
+				}
+			}
+		}
+		simv[o] = float4 { a.x, a.y, a.z, cell };
+		simv[o + 1] = float4 { gx as f32, gy as f32, gz as f32, cells as f32 };
+		simv[o + 2] = float4 { t0 as f32, (tl.len / 3 - t0) as f32, 0.0, 0.0 };
+		cells += gx * gy * gz;
+	}
+	simv[8].w = parts as f32;
+	simv[14] = float4 { cells as f32, 0.0005, 0.004, 1.0 };
+	trib = gfx::buffer(gfx::BUFFER_COMPUTE_READ, max(tl.len, 1) * 16, bytes_of(tl));
+	sdfb = gfx::buffer(gfx::BUFFER_COMPUTE_READ | gfx::BUFFER_COMPUTE_WRITE, max(cells, 1) * 8, []);
+	sdf_done = false;
+	print("hair body: ", parts, " parts, ", cells, " cells, ", tl.len / 3, " triangles");
+}
+=== 2781892d904da79c
+fn hair_probe(k int) f32 {
+	probe_ask = true;
+	if k >= 0 && k < 8 && k < probe_v.len { probe_v[k] } else { 0.0 }
 }
 === 1bb6e55a9b8b8c23
 fn hair_bone(i int) int {
@@ -118,8 +366,8 @@ fn hair_bone(i int) int {
 fn hair_pose(i int, m gfx::mat4) {
 	if i >= 0 && i < bones { mats[i] = m; }
 }
-=== 2ea884b4e7144fff
-fn hair_draw(model gfx::mat4) {
+=== -6470d19c7809c58e
+fn hair_draw(model gfx::mat4, dt f32) {
 	if !on { return; }
 	let im = linalg::inverse(model);
 	var u = default<HairU>();
@@ -138,7 +386,7 @@ fn hair_draw(model gfx::mat4) {
 	u.params = float4 { 0.004, 1.7, 0.004, 0.00007 };
 	u.look = float4 { 1.0, 6.0, 0.0, 0.7 };
 	u.light_vp = gfx::mul(gfx::perspective(0.24, 1.0, 2.0, 4.0), gfx::look_at(center + ld * 3.0, center, float3 { 0.0, 1.0, 0.0 }));
-	u.light = float4 { 512.0 as f32, 512.0 as f32, 0.35 as f32, (256.0 / tan(0.12)) as f32 };
+	u.light = float4 { 512.0, 512.0, 0.35, (256.0 / tan(0.12)) as f32 };
 	u.shadow_vp = gfx::mul(s3d::cascade_vp[0], model);
 	fn raster(rw0 gfx::Buffer, rw1 gfx::Buffer, ro0 gfx::Buffer, ro1 gfx::Buffer, mode int) {
 		gfx::begin_compute([rw0, rw1]);
@@ -156,7 +404,7 @@ fn hair_draw(model gfx::mat4) {
 	}
 	if bones > 0 {
 		gfx::update_buffer(matsb, 0, bytes_of(mats)[..bones * 64]);
-		gfx::begin_compute([pts]);
+		gfx::begin_compute([tgt]);
 		gfx::bind(skin_p);
 		u.size.w = points as f32;
 		gfx::uniforms(gfx::COMPUTE, 0, u);
@@ -166,6 +414,90 @@ fn hair_draw(model gfx::mat4) {
 		gfx::dispatch((points + 63) / 64, 1, 1);
 		gfx::end_compute();
 		u.size.w = segments as f32;
+	}
+	let dx = model.c3.x - hm_prev.c3.x;
+	let dy = model.c3.y - hm_prev.c3.y;
+	let dz = model.c3.z - hm_prev.c3.z;
+	let reset = sim_reset || dt <= 0.0 || sqrt(dx * dx + dy * dy + dz * dz) > 0.5;
+	if reset { hm_prev = model; }
+	simv[0] = model.c0;
+	simv[1] = model.c1;
+	simv[2] = model.c2;
+	simv[3] = model.c3;
+	simv[4] = im.c0;
+	simv[5] = im.c1;
+	simv[6] = im.c2;
+	simv[7] = im.c3;
+	simv[8] = float4 { dt, if reset { 1.0 } else { 0.0 }, 0.0, parts as f32 };
+	simv[9] = float4 { 0.0, -9.81, 0.0, guides as f32 };
+	simv[10] = hm_prev.c0;
+	simv[11] = hm_prev.c1;
+	simv[12] = hm_prev.c2;
+	simv[13] = hm_prev.c3;
+	simv[15] = float4 { 0.012, 0.35, 0.08, 0.5 };
+	simv[16] = float4 { 0.5, 0.9, 0.0, 0.02 };
+	for p in parts {
+		let o = 20 + 12 * p;
+		let mp = gfx::mul(motion::world[part_node[p]], part_ib[p]);
+		let inv = linalg::inverse(mp);
+		simv[o + 3] = inv.c0;
+		simv[o + 4] = inv.c1;
+		simv[o + 5] = inv.c2;
+		simv[o + 6] = inv.c3;
+		simv[o + 7] = mp.c0;
+		simv[o + 8] = mp.c1;
+		simv[o + 9] = mp.c2;
+		simv[o + 10] = mp.c3;
+	}
+	gfx::update_buffer(simb, 0, bytes_of(simv));
+	if !sdf_done && cells > 0 {
+		gfx::begin_compute([sdfb]);
+		gfx::bind(sdf_p);
+		gfx::uniforms(gfx::COMPUTE, 0, u);
+		gfx::bind_storage_buffer(gfx::COMPUTE, 0, trib);
+		gfx::bind_storage_buffer(gfx::COMPUTE, 1, simb);
+		gfx::dispatch((cells + 63) / 64, 1, 1);
+		gfx::end_compute();
+		sdf_done = true;
+	}
+	gfx::begin_compute([st, pts, statb]);
+	gfx::bind(sim_p);
+	gfx::uniforms(gfx::COMPUTE, 0, u);
+	gfx::bind_storage_buffer(gfx::COMPUTE, 0, tgt);
+	gfx::bind_storage_buffer(gfx::COMPUTE, 1, gd);
+	gfx::bind_storage_buffer(gfx::COMPUTE, 2, simb);
+	gfx::bind_storage_buffer(gfx::COMPUTE, 3, sdfb);
+	gfx::dispatch((guides + 63) / 64, 1, 1);
+	gfx::end_compute();
+	sim_reset = false;
+	hm_prev = model;
+	if probe_ask {
+		var raw byte[>..] = [];
+		raw.resize(guides * 16, 0);
+		gfx::read_buffer(statb, 0, raw[..]);
+		var s0 = 0.0;
+		var s1 = 0.0;
+		var s2 = 0.0;
+		var mx = 0.0;
+		var s3 = 0.0;
+		for g in guides {
+			let at = g * 16;
+			s0 += binary::gather(raw, at, 4) as real;
+			s1 += binary::gather(raw, at + 4, 4) as real;
+			let v2 = binary::gather(raw, at + 8, 4) as real;
+			s2 += v2;
+			if v2 > mx { mx = v2; }
+			s3 += (binary::gather(raw, at + 12, 4) as real) - 1000000000.0;
+		}
+		let gn = if guides > 0 { guides as real } else { 1.0 };
+		probe_v[0] = s0 as f32;
+		probe_v[1] = s1 as f32;
+		probe_v[2] = (s2 / gn / 1000.0) as f32;
+		probe_v[3] = (mx / 1000.0) as f32;
+		probe_v[4] = (s3 / gn / 1000.0) as f32;
+		probe_v[5] += 1.0;
+		probe_v[6] = guides as f32;
+		probe_ask = false;
 	}
 	gfx::begin_compute([front, acc]);
 	gfx::bind(clear_p);
