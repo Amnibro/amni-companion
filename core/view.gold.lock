@@ -1,4 +1,4 @@
-=== 41b74037681aad73
+=== 653120bade7d54c8
 import os;
 import web;
 import gfx;
@@ -12,6 +12,7 @@ import spring;
 import mix;
 import cloth;
 import clips;
+import look;
 === -7b2221d4bed818f8
 var P f32[10240];
 var C f32[16];
@@ -43,7 +44,7 @@ var last_t = -1.0;
 extern fn hv_f32(id i32, xs f32[:]);
 extern fn hv_i32(id i32, xs i32[:]);
 extern fn hv_bytes(id i32, xs byte[:]);
-=== 740ae7d59378309d
+=== -2435cf53bf277d17
 fn main() {
 	hv_f32(0, P[..]);
 	hv_f32(1, C[..]);
@@ -59,6 +60,7 @@ fn main() {
 	let a = args();
 	var scratch byte[>..] = [];
 	if read_file("/m/lib.gltf", scratch) {
+		scratch.clear();
 		clips::clips_lib("/m/lib.gltf");
 	}
 	asset = gltf::load(a[1]);
@@ -68,14 +70,16 @@ fn main() {
 	}
 	var scratch2 byte[>..] = [];
 	if read_file("/m/lib.gltf", scratch2) {
+		scratch2.clear();
 		nlib = clips::clips_load("/m/lib.gltf", asset);
 	}
 	cloth = cloth_setup("/m/avatar.cloth", asset);
 	no_skirt = cloth > 0;
+	look_setup(asset);
 	if a.len > 2 || hair_find_cards(asset) {
 		let first = gltf::assets[asset].nodes.first;
-		for i in gltf::assets[asset].nodes.count {
-			let n = first + i;
+		let cnt = gltf::assets[asset].nodes.count;
+		for n in first..first + cnt {
 			if gltf::nodes[n].mesh >= 0 && gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "hair" {
 				gltf::nodes[n].mesh = -1;
 			}
@@ -87,15 +91,17 @@ fn main() {
 			rest_inv = linalg::inverse(motion::world[head]);
 		}
 	}
-	let tfirst = gltf::assets[asset].nodes.first;
-	for i in gltf::assets[asset].nodes.count {
-		let n = tfirst + i;
-		if gltf::nodes[n].mesh >= 0 && gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "teeth" {
-			teeth_mat = gltf::prims[gltf::meshes[gltf::nodes[n].mesh].prims.first].material;
-			if teeth_mat >= 0 {
-				teeth_base = gltf::materials[teeth_mat].base;
+	{
+		let first = gltf::assets[asset].nodes.first;
+		let cnt = gltf::assets[asset].nodes.count;
+		for n in first..first + cnt {
+			if gltf::nodes[n].mesh >= 0 && gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "teeth" {
+				teeth_mat = gltf::prims[gltf::meshes[gltf::nodes[n].mesh].prims.first].material;
+				if teeth_mat >= 0 {
+					teeth_base = gltf::materials[teeth_mat].base;
+				}
+				break;
 			}
-			break;
 		}
 	}
 	if !gfx::open("amni companion", 640, 800) {
@@ -123,7 +129,9 @@ fn main() {
 		s3d::place(ring, gfx::mat4_identity);
 	}
 	s3d::view = s3d::Camera { eye: float3 { 0.0, 1.2, 3.5 }, target: float3 { 0.0, 0.9, 0.0 }, up: float3 { 0.0, 1.0, 0.0 }, fov_y: 0.5236, near: 0.05, far: 100.0 };
-	s3d::sun = s3d::Sun { to_sun: linalg::unit3(float3 { 2.3, 3.0, 1.3 }), rgb: float3 { 3.1, 3.1, 3.1 }, shadows: true, shadow_far: 10.0, map_size: 2048 };
+	s3d::sun = s3d::Sun { to_sun: linalg::unit3(float3 { 2.3, 3.0, 1.3 }), rgb: float3 { 3.1, 3.1, 3.1 }, shadows: true, shadow_far: 10.0, map_size: 2048, angle: 0.07, reach: 1.0, fit: true, contact: 0.04 };
+	s3d::ao_mode = 1;
+	s3d::ssr_on = true;
 	s3d::add_light(float3 { -11.9, 14.3, -16.7 }, float3 { 371.0, 241.0, 936.0 }, 1000.0);
 	s3d::add_light(float3 { -17.3, 8.65, 15.85 }, float3 { 124.0, 136.0, 169.0 }, 1000.0);
 	s3d::add_light(float3 { 0.0, 9.0, 23.0 }, float3 { 600.0, 600.0, 600.0 }, 1000.0);
@@ -238,12 +246,13 @@ var nlib = 0;
 export fn hv_lib() i32 {
 	if nlib > 0 {
 		var sl i32[22];
+		let first = gltf::assets[asset].nodes.first;
 		for i in 22 {
 			let g = clips::kc_slot[i] as int;
 			if g < 0 {
 				sl[i] = -1;
 			} else {
-				sl[i] = (g - gltf::assets[asset].nodes.first) as i32;
+				sl[i] = (g - first) as i32;
 			}
 		}
 		mix_open(asset, item, sl[..]);
@@ -260,7 +269,7 @@ export fn hv_clip_name(c i32) i32 {
 	for i in n {
 		N[i] = tmp[i];
 	}
-	return tmp.len as i32;
+	return n as i32;
 }
 === -73b794bce1898c53
 export fn hv_cloth() {
@@ -295,7 +304,7 @@ export fn he_frame(t real) {
 			gltf::materials[teeth_mat].roughness = C[13];
 		}
 	}
-	let dt = if last_t < 0.0 { 0.0 } else { min(0.05, (t - last_t) / 1000.0) };
+	let dt real = if last_t < 0.0 { 0.0 } else { min(0.05, (t - last_t) / 1000.0) };
 	if springs > 0 || cloth > 0 || on {
 		s3d::pose(item);
 		if springs > 0 { spring_step(dt as f32); }

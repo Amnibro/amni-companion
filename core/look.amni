@@ -1,0 +1,696 @@
+import os;
+import math;
+import gfx;
+import gfx.linalg;
+import gfx.gltf;
+var lk_tex int[>..];
+fn lk_hash(x int, y int, s int) f32 {
+	var h = (x * 73856093) ^ (y * 19349663) ^ (s * 83492791);
+	for r in 3 { h = ((h ^ (h >> 13)) * 1274126177) & 2147483647; }
+	((h & 16777215) as f32) / 16777216.0
+}
+fn lk_floor(x f32) f32 { floor(x as real) as f32 }
+fn lk_frac(x f32) f32 { x - lk_floor(x) }
+fn lk_noise(u f32, v f32, p int, s int) f32 {
+	let x = u * (p as f32);
+	let y = v * (p as f32);
+	let i = lk_floor(x) as int;
+	let j = lk_floor(y) as int;
+	let fx = x - (i as f32);
+	let fy = y - (j as f32);
+	let sx = fx * fx * (3.0 - 2.0 * fx);
+	let sy = fy * fy * (3.0 - 2.0 * fy);
+	let c00 = lk_hash(((i + 0) % p + p) % p, ((j + 0) % p + p) % p, s);
+	let c10 = lk_hash(((i + 1) % p + p) % p, ((j + 0) % p + p) % p, s);
+	let c01 = lk_hash(((i + 0) % p + p) % p, ((j + 1) % p + p) % p, s);
+	let c11 = lk_hash(((i + 1) % p + p) % p, ((j + 1) % p + p) % p, s);
+	let top = c00 + (c10 - c00) * sx;
+	let bot = c01 + (c11 - c01) * sx;
+	top + (bot - top) * sy
+}
+fn lk_tube(d f32, r f32) f32 {
+	let q = d / r;
+	let m = max(0.0, 1.0 - q * q);
+	sqrt(m as real) as f32
+}
+fn lk_jersey(fx f32, fy f32) f32 {
+	let a = lk_tube(abs(fx - (0.5 - 0.3 * fy)), 0.21);
+	let b = lk_tube(abs(fx - (0.5 + 0.3 * fy)), 0.21);
+	let sn = sin(PI * (fy as real)) as f32;
+	max(a, b) * (0.72 + 0.28 * sn)
+}
+fn lk_weave(u f32, v f32, n int, over int, s int) f32 {
+	let x = u * (n as f32);
+	let y = v * (n as f32);
+	let i = lk_floor(x) as int;
+	let j = lk_floor(y) as int;
+	let fx = x - (i as f32);
+	let fy = y - (j as f32);
+	let r = ((i - j) % 4 + 4) % 4;
+	let tw = 0.85 + 0.3 * lk_hash(i, 7, s);
+	let tf = 0.9 + 0.2 * lk_hash(j, 11, s);
+	var h f32 = 0.0;
+	if r < over {
+		let ta = (((over - 1 - r) as f32) + fy) / (over as f32);
+		let sn = sin((PI * (ta as real))) as f32;
+		h = 0.15 + 0.85 * tw * lk_tube(abs(fx - 0.5), 0.5) * (0.7 + 0.3 * sn);
+	} else {
+		let tb = (((r - over) as f32) + fx) / ((4 - over) as f32);
+		let sn = sin((PI * (tb as real))) as f32;
+		h = 0.15 + 0.85 * tf * lk_tube(abs(fy - 0.5), 0.5) * (0.7 + 0.3 * sn);
+	}
+	clamp(h, 0.0, 1.0)
+}
+fn lk_height(kind int, u f32, v f32) f32 {
+	let fz = lk_noise(u, v, 97, kind + 3);
+	if kind == 0 {
+		let ci = lk_floor(u * 23.0) as int;
+		let cj = lk_floor(v * 23.0) as int;
+		var p f32 = 0.0;
+		for b in -1..2 {
+			for a in -1..2 {
+				let ux = ci + a;
+				let uy = cj + b;
+				let cx = ((ux % 23) + 23) % 23;
+				let cy = ((uy % 23) + 23) % 23;
+				if lk_hash(cx, cy, 3) < 0.8 {
+					let px = ((ux as f32) + 0.15 + 0.7 * lk_hash(cx, cy, 1)) / 23.0;
+					let py = ((uy as f32) + 0.15 + 0.7 * lk_hash(cx, cy, 2)) / 23.0;
+					let rad = (0.18 + 0.2 * lk_hash(cx, cy, 4)) / 23.0;
+					let depth = 0.5 + 0.5 * lk_hash(cx, cy, 5);
+					let dx = u - px;
+					let dy = v - py;
+					let d = sqrt((dx * dx + dy * dy) as real) as f32;
+					let t = clamp(d / rad, 0.0, 1.0);
+					let sm = t * t * (3.0 - 2.0 * t);
+					let pit = depth * (1.0 - sm) * (1.0 - sm);
+					p = max(p, pit);
+				}
+			}
+		}
+		return clamp(0.8 - 0.7 * p + 0.12 * (lk_noise(u, v, 47, 9) - 0.5) + 0.05 * (fz - 0.5), 0.0, 1.0);
+	}
+	if kind == 1 {
+		return lk_jersey(lk_frac(u * 9.0), lk_frac(v * 11.0)) * 0.9 + 0.1 * fz;
+	}
+	if kind == 2 {
+		let c = lk_floor(u * 11.0) as int;
+		let fx = u * 11.0 - (c as f32);
+		let fy = lk_frac(v * 13.0);
+		var base f32 = 0.0;
+		if c % 2 == 0 {
+			base = 0.3 + 0.7 * lk_jersey(fx, fy);
+		} else {
+			base = 0.12 + 0.12 * lk_tube(abs(fx - 0.5), 0.5);
+		}
+		return base * 0.92 + 0.08 * fz;
+	}
+	if kind == 3 {
+		return lk_weave(u, v, 8, 2, 3) * 0.85 + 0.15 * fz;
+	}
+	if kind == 4 {
+		return lk_weave(u, v, 8, 3, 4) * 0.88 + 0.12 * fz;
+	}
+	if kind == 5 {
+		return clamp(0.5 + 0.28 * (lk_noise(u, v, 7, 5) - 0.5) + 0.2 * (lk_noise(u, v, 17, 6) - 0.5) + 0.32 * (fz - 0.5), 0.0, 1.0);
+	}
+	if kind == 7 {
+		return lk_jersey(lk_frac(u * 13.0), lk_frac(v * 17.0)) * 0.9 + 0.1 * fz;
+	}
+	let s1 = (u + v) * 8.0;
+	let s2 = (u - v) * 8.0;
+	let e1 = abs(s1 - lk_floor(s1 + 0.5));
+	let e2 = abs(s2 - lk_floor(s2 + 0.5));
+	max(lk_tube(e1, 0.13), lk_tube(e2, 0.13)) * 0.9 + 0.1 * fz
+}
+fn lk_byte(c f32) byte { (clamp(c, 0.0, 1.0) * 255.0 + 0.5) as int as byte }
+fn lk_make_tile(kind int, n int, bump f32) int {
+	let first = gltf::pixels.len;
+	let e = 1.0 / (n as f32);
+	for y in n {
+		for x in n {
+			let u = ((x as f32) + 0.5) / (n as f32);
+			let v = ((y as f32) + 0.5) / (n as f32);
+			let h = lk_height(kind, lk_frac(u), lk_frac(v));
+			let dx = lk_height(kind, lk_frac(u + e), lk_frac(v)) - lk_height(kind, lk_frac(u - e), lk_frac(v));
+			let dy = lk_height(kind, lk_frac(u), lk_frac(v + e)) - lk_height(kind, lk_frac(u), lk_frac(v - e));
+			let s = linalg::unit3(linalg::v3(-dx * bump, dy * bump, 1.0));
+			let r = s.x * 0.5 + 0.5;
+			let g = s.y * 0.5 + 0.5;
+			var b f32 = 0.0;
+			var a f32 = 0.0;
+			if kind == 0 {
+				b = 0.5 + 0.18 * (1.0 - h) + 0.07 * (lk_noise(u, v, 31, kind + 11) - 0.5);
+				a = 0.3 + 0.7 * h;
+			} else {
+				b = 0.5 + 0.12 * (0.5 - h) + 0.1 * (lk_noise(u, v, 41, kind + 11) - 0.5);
+				a = 0.5 + 0.5 * h;
+			}
+			gltf::pixels.push(lk_byte(r));
+			gltf::pixels.push(lk_byte(g));
+			gltf::pixels.push(lk_byte(b));
+			gltf::pixels.push(lk_byte(a));
+		}
+	}
+	gltf::images.push(gltf::Image { width: n, height: n, pixels: gltf::Span { first, n * n * 4 }, ok: true, .. });
+	gltf::textures.push(gltf::Texture { gltf::images.len - 1, false, false, true, 10497, 10497 });
+	gltf::textures.len - 1
+}
+fn lk_vp(g int) float3 {
+	let o = g * gltf::VERTEX_FLOATS;
+	float3 { gltf::verts[o], gltf::verts[o + 1], gltf::verts[o + 2] }
+}
+fn lk_scale(asset int, mat int, tile f32) float4 {
+	var su f32 = 0.0;
+	var sv f32 = 0.0;
+	var aw f32 = 0.0;
+	let ms = gltf::assets[asset].meshes;
+	for mi in ms.first..ms.first + ms.count {
+		let ps = gltf::meshes[mi].prims;
+		for pi in ps.first..ps.first + ps.count {
+			let prim = gltf::prims[pi];
+			if prim.material != mat { continue; }
+			var t = 0;
+			while t + 2 < prim.icount {
+				let g0 = prim.vfirst + (gltf::indices[prim.ifirst + t] as int);
+				let g1 = prim.vfirst + (gltf::indices[prim.ifirst + t + 1] as int);
+				let g2 = prim.vfirst + (gltf::indices[prim.ifirst + t + 2] as int);
+				t += 3;
+				let p0 = lk_vp(g0);
+				let p1 = lk_vp(g1);
+				let p2 = lk_vp(g2);
+				let o0 = g0 * gltf::VERTEX_FLOATS;
+				let o1 = g1 * gltf::VERTEX_FLOATS;
+				let o2 = g2 * gltf::VERTEX_FLOATS;
+				let du1 = gltf::verts[o1 + 6] - gltf::verts[o0 + 6];
+				let dv1 = gltf::verts[o1 + 7] - gltf::verts[o0 + 7];
+				let du2 = gltf::verts[o2 + 6] - gltf::verts[o0 + 6];
+				let dv2 = gltf::verts[o2 + 7] - gltf::verts[o0 + 7];
+				let det = du1 * dv2 - du2 * dv1;
+				if abs(det) < 1e-12 { continue; }
+				let e1 = p1 - p0;
+				let e2 = p2 - p0;
+				let tt = (e1 * dv2 - e2 * dv1) / det;
+				let bb = (e2 * du1 - e1 * du2) / det;
+				let a = 0.5 * linalg::length3(linalg::cross3(e1, e2));
+				su += a * linalg::length3(tt);
+				sv += a * linalg::length3(bb);
+				aw += a;
+			}
+		}
+	}
+	if aw == 0.0 { return float4 { 1.0, 0.0, 0.0, 1.0 }; }
+	float4 { su / aw / tile, 0.0, 0.0, sv / aw / tile }
+}
+var lk_gt int[>..];
+var lk_gs int[>..];
+var lk_gl int[>..];
+var lk_glo = float3 { 0.0, 0.0, 0.0 };
+var lk_gx = 0;
+var lk_gy = 0;
+var lk_gz = 0;
+fn lk_cell(v f32, o f32, n int) int { clamp(lk_floor((v - o) / 0.02) as int, 0, n - 1) }
+fn lk_tri_range(ti int) int, int, int, int, int, int {
+	let p0 = lk_vp(lk_gt[ti * 3]);
+	let p1 = lk_vp(lk_gt[ti * 3 + 1]);
+	let p2 = lk_vp(lk_gt[ti * 3 + 2]);
+	let mnx = min(p0.x, min(p1.x, p2.x));
+	let mny = min(p0.y, min(p1.y, p2.y));
+	let mnz = min(p0.z, min(p1.z, p2.z));
+	let mxx = max(p0.x, max(p1.x, p2.x));
+	let mxy = max(p0.y, max(p1.y, p2.y));
+	let mxz = max(p0.z, max(p1.z, p2.z));
+	return lk_cell(mnx, lk_glo.x, lk_gx), lk_cell(mny, lk_glo.y, lk_gy), lk_cell(mnz, lk_glo.z, lk_gz), lk_cell(mxx, lk_glo.x, lk_gx), lk_cell(mxy, lk_glo.y, lk_gy), lk_cell(mxz, lk_glo.z, lk_gz);
+}
+fn lk_grid(asset int, lo float3, hi float3) {
+	lk_glo = lo;
+	lk_gx = (lk_floor((hi.x - lo.x) / 0.02) as int) + 1;
+	lk_gy = (lk_floor((hi.y - lo.y) / 0.02) as int) + 1;
+	lk_gz = (lk_floor((hi.z - lo.z) / 0.02) as int) + 1;
+	lk_gt.clear();
+	lk_gs.clear();
+	lk_gl.clear();
+	let ms = gltf::assets[asset].meshes;
+	for mi in ms.first..ms.first + ms.count {
+		let mname = gltf::text_of(gltf::meshes[mi].name);
+		if mname == "hair" || mname == "braid_hair" || mname == "beard" || mname == "lashes" || mname == "eye_occ" || mname == "scalp" { continue; }
+		let ps = gltf::meshes[mi].prims;
+		for pi in ps.first..ps.first + ps.count {
+			let prim = gltf::prims[pi];
+			var t = 0;
+			while t + 2 < prim.icount {
+				let g0 = prim.vfirst + (gltf::indices[prim.ifirst + t] as int);
+				let g1 = prim.vfirst + (gltf::indices[prim.ifirst + t + 1] as int);
+				let g2 = prim.vfirst + (gltf::indices[prim.ifirst + t + 2] as int);
+				t += 3;
+				let p0 = lk_vp(g0);
+				let p1 = lk_vp(g1);
+				let p2 = lk_vp(g2);
+				if max(p0.x, max(p1.x, p2.x)) < lo.x || min(p0.x, min(p1.x, p2.x)) > hi.x { continue; }
+				if max(p0.y, max(p1.y, p2.y)) < lo.y || min(p0.y, min(p1.y, p2.y)) > hi.y { continue; }
+				if max(p0.z, max(p1.z, p2.z)) < lo.z || min(p0.z, min(p1.z, p2.z)) > hi.z { continue; }
+				lk_gt.push(g0);
+				lk_gt.push(g1);
+				lk_gt.push(g2);
+			}
+		}
+	}
+	let ntri = lk_gt.len / 3;
+	let cells = lk_gx * lk_gy * lk_gz;
+	lk_gs.resize(cells + 1, 0);
+	for ti in ntri {
+		let x0, y0, z0, x1, y1, z1 = lk_tri_range(ti);
+		for z in z0..z1 + 1 {
+			for y in y0..y1 + 1 {
+				for x in x0..x1 + 1 {
+					lk_gs[((z * lk_gy + y) * lk_gx + x) + 1] += 1;
+				}
+			}
+		}
+	}
+	for c in cells { lk_gs[c + 1] += lk_gs[c]; }
+	lk_gl.resize(lk_gs[cells], 0);
+	var cur int[>..] = [];
+	cur.resize(cells, 0);
+	for ti in ntri {
+		let x0, y0, z0, x1, y1, z1 = lk_tri_range(ti);
+		for z in z0..z1 + 1 {
+			for y in y0..y1 + 1 {
+				for x in x0..x1 + 1 {
+					let c = (z * lk_gy + y) * lk_gx + x;
+					lk_gl[lk_gs[c] + cur[c]] = ti;
+					cur[c] += 1;
+				}
+			}
+		}
+	}
+}
+fn lk_tmax(o f32, d f32, g f32, c int) f32 {
+	if d > 0.0 { return max((g + ((c + 1) as f32) * 0.02 - o) / d, 0.0); }
+	if d < 0.0 { return max((g + (c as f32) * 0.02 - o) / d, 0.0); }
+	1e30
+}
+fn lk_tdelta(d f32) f32 {
+	if d == 0.0 { return 1e30; }
+	0.02 / abs(d)
+}
+fn lk_cast(o float3, d float3, len f32) f32 {
+	guard lk_gs.len > 0 else { return len; }
+	var best = len;
+	var ix = lk_cell(o.x, lk_glo.x, lk_gx);
+	var iy = lk_cell(o.y, lk_glo.y, lk_gy);
+	var iz = lk_cell(o.z, lk_glo.z, lk_gz);
+	let sx = if d.x > 0.0 { 1 } else if d.x < 0.0 { -1 } else { 0 };
+	let sy = if d.y > 0.0 { 1 } else if d.y < 0.0 { -1 } else { 0 };
+	let sz = if d.z > 0.0 { 1 } else if d.z < 0.0 { -1 } else { 0 };
+	var tx = lk_tmax(o.x, d.x, lk_glo.x, ix);
+	var ty = lk_tmax(o.y, d.y, lk_glo.y, iy);
+	var tz = lk_tmax(o.z, d.z, lk_glo.z, iz);
+	let dx = lk_tdelta(d.x);
+	let dy = lk_tdelta(d.y);
+	let dz = lk_tdelta(d.z);
+	loop {
+		let c = (iz * lk_gy + iy) * lk_gx + ix;
+		for q in lk_gs[c]..lk_gs[c + 1] {
+			let ti = lk_gl[q];
+			let p0 = lk_vp(lk_gt[ti * 3]);
+			let p1 = lk_vp(lk_gt[ti * 3 + 1]);
+			let p2 = lk_vp(lk_gt[ti * 3 + 2]);
+			let e1 = p1 - p0;
+			let e2 = p2 - p0;
+			let pv = linalg::cross3(d, e2);
+			let det = linalg::dot3(e1, pv);
+			if abs(det) < 1e-12 { continue; }
+			let inv = 1.0 / det;
+			let tv = o - p0;
+			let u = linalg::dot3(tv, pv) * inv;
+			if u < 0.0 || u > 1.0 { continue; }
+			let qv = linalg::cross3(tv, e1);
+			let v = linalg::dot3(d, qv) * inv;
+			if v < 0.0 || u + v > 1.0 { continue; }
+			let t = linalg::dot3(e2, qv) * inv;
+			if t > 0.0002 && t < best { best = t; }
+		}
+		if tx <= ty && tx <= tz {
+			if tx > best { break; }
+			ix += sx;
+			tx += dx;
+			if ix < 0 || ix >= lk_gx { break; }
+		} else if ty <= tz {
+			if ty > best { break; }
+			iy += sy;
+			ty += dy;
+			if iy < 0 || iy >= lk_gy { break; }
+		} else {
+			if tz > best { break; }
+			iz += sz;
+			tz += dz;
+			if iz < 0 || iz >= lk_gz { break; }
+		}
+	}
+	best
+}
+fn lk_vn(g int) float3 {
+	let o = g * gltf::VERTEX_FLOATS;
+	float3 { gltf::verts[o + 3], gltf::verts[o + 4], gltf::verts[o + 5] }
+}
+fn lk_curv_edge(ga int, gb int) f32 {
+	let dp = lk_vp(ga) - lk_vp(gb);
+	let dn = lk_vn(ga) - lk_vn(gb);
+	abs(linalg::dot3(dn, dp)) / max(linalg::dot3(dp, dp), 1e-12)
+}
+fn lk_nbr(val f32[:], tris int[:], out f32[:]) {
+	var ns f32[>..] = [];
+	var nc f32[>..] = [];
+	ns.resize(val.len, 0.0);
+	nc.resize(val.len, 0.0);
+	for ti in tris.len / 3 {
+		for e in 3 {
+			let a = tris[ti * 3 + e];
+			let b = tris[ti * 3 + (e + 1) % 3];
+			ns[a] += val[b];
+			nc[a] += 1.0;
+			ns[b] += val[a];
+			nc[b] += 1.0;
+		}
+	}
+	for i in val.len {
+		if nc[i] > 0.0 {
+			out[i] = (val[i] + ns[i] / nc[i]) * 0.5;
+		} else {
+			out[i] = val[i];
+		}
+	}
+}
+fn lk_group(val f32[:], order int[:], kx int[:], ky int[:], kz int[:]) {
+	let n = order.len;
+	var i = 0;
+	while i < n {
+		var j = i + 1;
+		while j < n && kx[order[j]] == kx[order[i]] && ky[order[j]] == ky[order[i]] && kz[order[j]] == kz[order[i]] { j += 1; }
+		var s f32 = 0.0;
+		for q in i..j { s += val[order[q]]; }
+		let m = s / ((j - i) as f32);
+		for q in i..j { val[order[q]] = m; }
+		i = j;
+	}
+}
+fn lk_post(val f32[:], tris int[:], order int[:], kx int[:], ky int[:], kz int[:]) {
+	lk_group(val, order, kx, ky, kz);
+	var tmp f32[>..] = [];
+	tmp.resize(val.len, 0.0);
+	lk_nbr(val, tris, tmp);
+	for i in val.len { val[i] = tmp[i]; }
+}
+fn lk_skin_geo(asset int) {
+	let nv = gltf::verts.len / gltf::VERTEX_FLOATS;
+	var loc int[>..] = [];
+	loc.resize(nv, -1);
+	var vs int[>..] = [];
+	var tris int[>..] = [];
+	let ms = gltf::assets[asset].meshes;
+	for mi in ms.first..ms.first + ms.count {
+		let mname = gltf::text_of(gltf::meshes[mi].name);
+		if !(mname == "skin" || mname == "face") { continue; }
+		let ps = gltf::meshes[mi].prims;
+		for pi in ps.first..ps.first + ps.count {
+			let prim = gltf::prims[pi];
+			var t = 0;
+			while t + 2 < prim.icount {
+				for c in 3 {
+					let g = prim.vfirst + (gltf::indices[prim.ifirst + t + c] as int);
+					if loc[g] < 0 {
+						loc[g] = vs.len;
+						vs.push(g);
+					}
+					tris.push(loc[g]);
+				}
+				t += 3;
+			}
+		}
+	}
+	let n = vs.len;
+	guard n > 0 else { return; }
+	var csum f32[>..] = [];
+	var ccnt f32[>..] = [];
+	csum.resize(n, 0.0);
+	ccnt.resize(n, 0.0);
+	for ti in tris.len / 3 {
+		for e in 3 {
+			let a = tris[ti * 3 + e];
+			let b = tris[ti * 3 + (e + 1) % 3];
+			let cv = lk_curv_edge(vs[a], vs[b]);
+			csum[a] += cv;
+			ccnt[a] += 1.0;
+			csum[b] += cv;
+			ccnt[b] += 1.0;
+		}
+	}
+	var curv f32[>..] = [];
+	for i in n { curv.push(min(csum[i] / max(ccnt[i], 1.0), 250.0)); }
+	var kx int[>..] = [];
+	var ky int[>..] = [];
+	var kz int[>..] = [];
+	var order int[>..] = [];
+	var lo = lk_vp(vs[0]);
+	var hi = lo;
+	for i in n {
+		let p = lk_vp(vs[i]);
+		kx.push(lk_floor(p.x * 10000.0 + 0.5) as int);
+		ky.push(lk_floor(p.y * 10000.0 + 0.5) as int);
+		kz.push(lk_floor(p.z * 10000.0 + 0.5) as int);
+		order.push(i);
+		lo = float3 { min(lo.x, p.x), min(lo.y, p.y), min(lo.z, p.z) };
+		hi = float3 { max(hi.x, p.x), max(hi.y, p.y), max(hi.z, p.z) };
+	}
+	sort(order) { a, b => kx[a] < kx[b] || (kx[a] == kx[b] && (ky[a] < ky[b] || (ky[a] == ky[b] && kz[a] < kz[b]))) };
+	lk_post(curv, tris, order, kx, ky, kz);
+	let grow = float3 { 0.06, 0.06, 0.06 };
+	lk_grid(asset, lo - grow, hi + grow);
+	var thick f32[>..] = [];
+	for i in n {
+		let g = vs[i];
+		let p = lk_vp(g);
+		let nn = linalg::unit3(lk_vn(g));
+		let d = nn * -1.0;
+		let t = lk_cast(p - nn * 0.0004, d, 0.03);
+		var th = t;
+		if t < 0.015 {
+			let b = p - nn * (t + 0.0008);
+			var rf = float3 { 0.0, 1.0, 0.0 };
+			if abs(d.y) > 0.99 { rf = float3 { 1.0, 0.0, 0.0 }; }
+			let u = linalg::unit3(linalg::cross3(d, rf));
+			let w = linalg::unit3(linalg::cross3(d, u));
+			var open f32 = 0.0;
+			var total f32 = 1.0;
+			if lk_cast(b, d, 0.04) >= 0.04 { open += 1.0; }
+			for ai in 2 {
+				let a f32 = if ai == 0 { 0.45 } else { 0.9 };
+				let ca = cos(a as real) as f32;
+				let sa = sin(a as real) as f32;
+				for k in 7 {
+					let phi f32 = 2.0 * (PI as f32) * (k as f32) / 7.0;
+					let cp = cos(phi as real) as f32;
+					let sp = sin(phi as real) as f32;
+					let dir = linalg::unit3(d * ca + (u * cp + w * sp) * sa);
+					total += ca;
+					if lk_cast(b, dir, 0.04) >= 0.04 { open += ca; }
+				}
+			}
+			let openness = open / total;
+			th = 0.03 + (t - 0.03) * openness;
+		}
+		thick.push(th);
+	}
+	lk_post(thick, tris, order, kx, ky, kz);
+	for i in n {
+		let o = vs[i] * gltf::VERTEX_FLOATS;
+		gltf::verts[o + 8] = curv[i];
+		gltf::verts[o + 9] = thick[i];
+	}
+}
+fn lk_iris(tex int) float4, f32 {
+	let dflt = float4 { 0.7, 0.3, 0.3, 0.7 };
+	guard tex >= 0 else { return dflt, 0.14; }
+	let img = gltf::textures[tex].image;
+	guard img >= 0 else { return dflt, 0.14; }
+	gltf::need_pixels(img);
+	let px = gltf::image_pixels(img);
+	let w = gltf::images[img].width;
+	let h = gltf::images[img].height;
+	guard px.len >= w * h * 4 else { return dflt, 0.14; }
+	let wf = w as f32;
+	let hf = h as f32;
+	var n1 = 0;
+	var n2 = 0;
+	var s1x f32 = 0.0;
+	var s1y f32 = 0.0;
+	var s2x f32 = 0.0;
+	var s2y f32 = 0.0;
+	for y in h {
+		for x in w {
+			let i = (y * w + x) * 4;
+			if (px[i + 3] as f32) > 128.0 {
+				let lum = (0.3 * (px[i] as f32) + 0.59 * (px[i + 1] as f32) + 0.11 * (px[i + 2] as f32)) / 255.0;
+				if lum < 0.42 {
+					let ux = ((x as f32) + 0.5) / wf;
+					let uy = ((y as f32) + 0.5) / hf;
+					if (x as f32) / wf > (y as f32) / hf {
+						n1 += 1;
+						s1x += ux;
+						s1y += uy;
+					} else {
+						n2 += 1;
+						s2x += ux;
+						s2y += uy;
+					}
+				}
+			}
+		}
+	}
+	if n1 == 0 && n2 == 0 { return dflt, 0.14; }
+	var c1x f32 = 0.0;
+	var c1y f32 = 0.0;
+	var c2x f32 = 0.0;
+	var c2y f32 = 0.0;
+	if n1 > 0 {
+		c1x = s1x / (n1 as f32);
+		c1y = s1y / (n1 as f32);
+	}
+	if n2 > 0 {
+		c2x = s2x / (n2 as f32);
+		c2y = s2y / (n2 as f32);
+	}
+	if n1 == 0 {
+		c1x = c2x;
+		c1y = c2y;
+	}
+	if n2 == 0 {
+		c2x = c1x;
+		c2y = c1y;
+	}
+	var rsum f32 = 0.0;
+	var rn f32 = 0.0;
+	if n1 > 0 {
+		rsum += (sqrt(((n1 as f32) / (PI as f32)) as real) as f32) / wf;
+		rn += 1.0;
+	}
+	if n2 > 0 {
+		rsum += (sqrt(((n2 as f32) / (PI as f32)) as real) as f32) / wf;
+		rn += 1.0;
+	}
+	return float4 { c1x, c1y, c2x, c2y }, rsum / rn * 1.04;
+}
+fn lk_pick(name const byte[:]) int {
+	if name == "skin" || name == "face" { 0 }
+	else if name == "tank" { 1 }
+	else if name == "shorts" { 7 }
+	else if name == "tank_hem" || name == "socks" || name == "stripes" || name == "hood_hem" || name == "collar" || name == "cuff" { 2 }
+	else if name == "skirt" { 3 }
+	else if name == "outfit" || name == "jeans" || name == "pants" || name == "strings" || name == "seam" { 4 }
+	else if name == "hoodie" || name == "hood" || name == "pocket" { 5 }
+	else if name == "shorts_lace" || name == "lace" { 6 }
+	else { -1 }
+}
+fn lk_cloth_tile(k int) f32 {
+	match k {
+		1 => 0.0125,
+		2 => 0.022,
+		3 => 0.009,
+		4 => 0.0075,
+		5 => 0.03,
+		6 => 0.017,
+		_ => 0.009,
+	}
+}
+fn lk_cloth_strength(k int) f32 {
+	match k {
+		1 => 0.9,
+		2 => 1.0,
+		3 => 0.8,
+		4 => 0.9,
+		5 => 0.5,
+		6 => 0.8,
+		_ => 0.8,
+	}
+}
+fn lk_cloth_a(k int) float4 {
+	match k {
+		1 => float4 { 0.25, 0.5, 0.55, 0.0 },
+		2 => float4 { 0.25, 0.5, 0.55, 0.0 },
+		3 => float4 { 0.2, 0.35, 0.5, 0.0 },
+		4 => float4 { 0.15, 0.25, 0.7, 0.0 },
+		5 => float4 { 0.35, 0.55, 0.35, 0.0 },
+		6 => float4 { 0.2, 0.3, 0.8, 0.0 },
+		_ => float4 { 0.2, 0.4, 0.7, 0.0 },
+	}
+}
+fn lk_detail(tex int, xf float4) gltf::TexRef {
+	var d = gltf::TexRef { tex, 0 };
+	d.m = xf;
+	d
+}
+fn look_setup(asset int) {
+	if lk_tex.len == 0 {
+		lk_tex.push(lk_make_tile(0, 512, 2.2));
+		lk_tex.push(lk_make_tile(1, 128, 2.4));
+		lk_tex.push(lk_make_tile(2, 128, 2.4));
+		lk_tex.push(lk_make_tile(3, 128, 2.0));
+		lk_tex.push(lk_make_tile(4, 128, 2.0));
+		lk_tex.push(lk_make_tile(5, 128, 1.1));
+		lk_tex.push(lk_make_tile(6, 128, 2.0));
+		lk_tex.push(lk_make_tile(7, 128, 2.4));
+	}
+	lk_skin_geo(asset);
+	let ms = gltf::assets[asset].materials;
+	for m in ms.first..ms.first + ms.count {
+		let name = gltf::text_of(gltf::materials[m].name);
+		let k = lk_pick(name);
+		var x = gltf::materials[m];
+		if k == 0 {
+			x.shading = 1;
+			if x.shade_c.x == 0.0 {
+				x.shade_a = gltf::shade_preset(1, 0);
+				x.shade_b = gltf::shade_preset(1, 1);
+				x.shade_c = gltf::shade_preset(1, 2);
+			}
+			x.detail = lk_detail(lk_tex[0], lk_scale(asset, m, 0.009));
+			if name == "skin" { x.roughness = 0.6; }
+			if name == "face" { x.roughness = 0.9; }
+		}
+		if name == "teeth" {
+			x.shading = 1;
+			x.shade_a = float4 { 0.0007, 0.0005, 0.0004, 0.0 };
+			x.shade_b = float4 { 0.0, 0.0, 0.3, 0.5 };
+			x.shade_c = float4 { 0.04, 0.0, 0.0, 0.3 };
+		}
+		if name == "tongue" || name == "mouth" {
+			x.shading = 1;
+			x.shade_a = float4 { 0.0015, 0.0007, 0.0003, 0.0 };
+			x.shade_b = float4 { 0.0, 0.0, 0.3, 0.5 };
+			x.shade_c = float4 { 0.028, 0.0, 0.0, 0.3 };
+		}
+		if name == "eyes" {
+			let c, r = lk_iris(x.base_tex.texture);
+			let e = gltf::shade_preset(2, 2);
+			x.shading = 2;
+			x.shade_a = c;
+			x.shade_b = gltf::shade_preset(2, 1);
+			x.shade_c = float4 { r, e.y, e.z, e.w };
+			x.roughness = 0.5;
+		}
+		if k >= 1 {
+			x.shading = 3;
+			x.normal_tex = gltf::TexRef { -1, 0 };
+			x.detail = lk_detail(lk_tex[k], lk_scale(asset, m, lk_cloth_tile(k)));
+			x.shade_b = float4 { lk_cloth_strength(k), 0.85, 0.0, 0.0 };
+			x.shade_a = lk_cloth_a(k);
+			if x.sheen.x < 0.001 && x.sheen.y < 0.001 && x.sheen.z < 0.001 {
+				x.sheen = float3 { 0.08 * x.base.x + 0.03, 0.08 * x.base.y + 0.03, 0.08 * x.base.z + 0.03 };
+				x.sheen_rough = 0.7;
+			}
+			if k == 5 { x.sheen_rough = 0.75; }
+		}
+		gltf::materials[m] = x;
+	}
+}
