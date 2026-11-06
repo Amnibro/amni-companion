@@ -1,0 +1,49 @@
+layout(local_size_x = 64) in;
+layout(std430, set = 0, binding = 0) readonly buffer Tri { vec4 tri[]; };
+layout(std430, set = 0, binding = 1) readonly buffer Sim { vec4 sm[]; };
+layout(std430, set = 1, binding = 0) buffer Sdf { vec2 sdf[]; };
+vec3 closest(vec3 p, vec3 a, vec3 b, vec3 c) {
+	vec3 ab = b - a, ac = c - a, ap = p - a;
+	float d1 = dot(ab, ap), d2 = dot(ac, ap);
+	if (d1 <= 0.0 && d2 <= 0.0) return a;
+	vec3 bp = p - b;
+	float d3 = dot(ab, bp), d4 = dot(ac, bp);
+	if (d3 >= 0.0 && d4 <= d3) return b;
+	float vc = d1 * d4 - d3 * d2;
+	if (vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0) return a + ab * (d1 / (d1 - d3));
+	vec3 cp = p - c;
+	float d5 = dot(ab, cp), d6 = dot(ac, cp);
+	if (d6 >= 0.0 && d5 <= d6) return c;
+	float vb = d5 * d2 - d1 * d6;
+	if (vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0) return a + ac * (d2 / (d2 - d6));
+	float va = d3 * d6 - d5 * d4;
+	if (va <= 0.0 && d4 - d3 >= 0.0 && d5 - d6 >= 0.0) return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
+	float dn = 1.0 / (va + vb + vc);
+	return a + ab * (vb * dn) + ac * (vc * dn);
+}
+void main() {
+	uint i = gl_GlobalInvocationID.x;
+	if (i >= uint(sm[14].x)) return;
+	uint np = uint(sm[8].w), p = 0u;
+	for (uint k = 1u; k < np; k++) if (uint(sm[21u + k * 12u].w) <= i) p = k;
+	uint o = 20u + p * 12u;
+	vec4 a = sm[o], b = sm[o + 1u], t = sm[o + 2u];
+	ivec3 d = ivec3(b.xyz);
+	int l = int(i - uint(b.w));
+	vec3 x = a.xyz + vec3(float(l % d.x), float((l / d.x) % d.y), float(l / (d.x * d.y))) * a.w;
+	float best = 1e9, sg = 1.0, al = 0.0, own = -1.0;
+	uint t1 = uint(t.x) + uint(t.y);
+	for (uint k = uint(t.x); k < t1; k++) {
+		vec4 A = tri[k * 3u], B = tri[k * 3u + 1u], C = tri[k * 3u + 2u];
+		vec3 q = closest(x, A.xyz, B.xyz, C.xyz), e = x - q;
+		float d2 = dot(e, e);
+		if (d2 > best + 1e-9) continue;
+		vec3 fn = cross(B.xyz - A.xyz, C.xyz - A.xyz);
+		float fl = length(fn);
+		if (fl < 1e-12) continue;
+		float al2 = abs(dot(e, fn)) / (fl * sqrt(d2) + 1e-12);
+		if (d2 > best - 1e-9 && al2 <= al) continue;
+		best = d2; al = al2; sg = dot(e, fn) < 0.0 ? -1.0 : 1.0; own = A.w;
+	}
+	sdf[i] = vec2(sg * sqrt(best), own);
+}
