@@ -1,4 +1,4 @@
-namespace motion;
+namespace kin;
 import cv.qm;
 import cv.rig;
 import math;

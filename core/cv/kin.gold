@@ -1,5 +1,5 @@
-into cv/motion.amni
-namespace motion
+into cv/kin.amni
+namespace kin
 lang amni
 use companion
 
