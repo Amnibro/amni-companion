@@ -55,6 +55,7 @@ var fill_k f32 = 1.0;
 var amb_k f32 = 1.0;
 var sun_az f32 = 0.0;
 var sun_el f32 = 0.0;
+var clear_c = float3 { 0.0, 0.0, 0.0 };
 var item = -1;
 var asset = -1;
 var big = gfx::Texture { id: 0, .. };
@@ -205,12 +206,18 @@ fn load_pose(path const byte[:]) {
 }
 fn shot(eye float3, look float3) {
 	s3d::view = s3d::Camera { eye: eye, target: look, up: float3 { 0.0, 1.0, 0.0 }, fov_y: fov, near: 0.05, far: 100.0 };
-	let reps = if fast { 1 } else { 3 };
-	for r in reps { s3d::render(big); }
+	if fast {
+		s3d::render(big);
+	} else {
+		s3d::render(big);
+		s3d::render(big);
+		s3d::render(big);
+	}
 	let px = gfx::read_pixels(big);
-	if rpx.len != tw * th * 4 { rpx.resize(tw * th * 4, 0); }
-	if rmask.len != tw * th { rmask.resize(tw * th, 0.0); }
-	let bw = 2 * tw;
+	let n = tw * th;
+	rmask.resize(n, 0.0);
+	rpx.resize(n * 4, 0);
+	let bw = tw * 2;
 	for y in th {
 		for x in tw {
 			var cnt = 0;
@@ -219,24 +226,28 @@ fn shot(eye float3, look float3) {
 			var s2 f32 = 0.0;
 			for v in 2 {
 				for u in 2 {
-					let o = ((2 * y + v) * bw + 2 * x + u) * 4;
-					if px[o] != 0 || px[o + 1] != 0 || px[o + 2] != 0 {
-						cnt++;
-						s0 += px[o] as f32;
-						s1 += px[o + 1] as f32;
-						s2 += px[o + 2] as f32;
-					} else {
+					let bi = ((2 * y + v) * bw + 2 * x + u) * 4;
+					let r = px[bi] as f32;
+					let g = px[bi + 1] as f32;
+					let b = px[bi + 2] as f32;
+					let empty = abs(r - clear_c.x) <= 1.0 && abs(g - clear_c.y) <= 1.0 && abs(b - clear_c.z) <= 1.0;
+					if empty {
 						s0 += bg.x;
 						s1 += bg.y;
 						s2 += bg.z;
+					} else {
+						cnt++;
+						s0 += r;
+						s1 += g;
+						s2 += b;
 					}
 				}
 			}
 			let i = y * tw + x;
 			rmask[i] = (cnt as f32) / 4.0;
-			rpx[i * 4] = (clamp(round((s0 / 4.0) as real), 0.0, 255.0)) as byte;
-			rpx[i * 4 + 1] = (clamp(round((s1 / 4.0) as real), 0.0, 255.0)) as byte;
-			rpx[i * 4 + 2] = (clamp(round((s2 / 4.0) as real), 0.0, 255.0)) as byte;
+			rpx[i * 4] = clamp(round((s0 / 4.0) as real), 0.0, 255.0) as byte;
+			rpx[i * 4 + 1] = clamp(round((s1 / 4.0) as real), 0.0, 255.0) as byte;
+			rpx[i * 4 + 2] = clamp(round((s2 / 4.0) as real), 0.0, 255.0) as byte;
 			rpx[i * 4 + 3] = 255;
 		}
 	}
@@ -1455,71 +1466,61 @@ fn report(tag const byte[:], save bool, prefix const byte[:]) {
 fn env_get(name const byte[:], out byte[>..]&) bool {
 	var data byte[>..] = [];
 	if !read_file("/proc/self/environ", data) { return false; }
-	var start = 0;
-	var i = 0;
-	while i <= data.len {
+	var s = 0;
+	for i in data.len + 1 {
 		if i == data.len || data[i] == 0 {
-			if i > start {
-				let entry = data[start..i];
-				if entry.len > name.len && entry[..name.len] == name && entry[name.len] == '=' {
-					out.clear();
-					out.append(entry[name.len + 1..]);
-					return true;
-				}
+			let entry = data[s..i];
+			if entry.len > name.len && entry[name.len] == '=' && entry[..name.len] == name {
+				out.clear();
+				out.append(entry[name.len + 1..]);
+				return true;
 			}
-			start = i + 1;
+			s = i + 1;
 		}
-		i++;
 	}
 	return false;
 }
-fn env_has(name const byte[:]) bool {
-	var e byte[>..] = [];
-	env_get(name, e)
-}
-fn env_is0(name const byte[:]) bool {
-	var e byte[>..] = [];
-	if !env_get(name, e) { return false; }
-	e == "0"
+fn env_on(name const byte[:]) bool {
+	var v byte[>..] = [];
+	if !env_get(name, v) { return true; }
+	!(v.len == 1 && v[0] == '0')
 }
 fn main() {
 	let a = args();
-	if a.len < 4 {
-		print("usage: fit model.glb targets prefix [pose]");
-		return;
-	}
-	for t in split(a[2], ',') {
+	let targets = split(a[2], ',');
+	for t in targets {
 		if nview >= 7 { break; }
+		let parts = split(t, ':');
 		var path const byte[:] = "";
 		var yaw f32 = 0.0;
-		for w, k in split(t, ':') {
-			if k == 0 { path = w; } else if k == 1 { yaw = num(w); }
+		for w, i in parts {
+			if i == 0 { path = w; } else if i == 1 { yaw = num(w); }
 		}
 		var data byte[>..] = [];
 		if !read_file(path, data) {
-			print("target failed ", path);
+			print("target failed");
 			continue;
 		}
 		tpx.clear();
-		let wd, ht, ok = codec_png::decode(data, tpx);
+		let w, h, ok = codec_png::decode(data, tpx);
 		if !ok {
-			print("target failed ", path);
+			print("target failed");
 			continue;
 		}
-		if nview == 0 {
-			tw = wd;
-			th = ht;
-		} else if wd != tw || ht != th {
-			print("target size differs, skipped ", path);
+		if tw == 0 {
+			tw = w;
+			th = h;
+		} else if w != tw || h != th {
+			print("target size differs, skipped");
 			continue;
 		}
 		tmask.clear();
-		tmask.resize(tw * th, 0.0);
+		tmask.resize(tw * th, 1.0);
 		gray_bg();
 		v_px.append(tpx);
 		v_mask.append(tmask);
 		v_bg.push(bg);
-		v_yaw.push((((yaw as real) * PI) / 180.0) as f32);
+		v_yaw.push(yaw * (PI as f32) / 180.0);
 		v_d.push(3.2);
 		v_cy.push(0.85);
 		v_cx.push(0.0);
@@ -1529,24 +1530,29 @@ fn main() {
 		print("no targets");
 		return;
 	}
-	if env_has("FIT_MASK") {
+	var fm byte[>..] = [];
+	if env_get("FIT_MASK", fm) {
 		let n = tw * th;
 		for k in nview {
-			var px byte[>..] = [];
-			px.resize(n * 4, 0);
+			var img byte[>..] = [];
 			var cnt = 0;
 			for i in n {
-				let on = v_mask[k * n + i] >= 0.5;
-				let c byte = if on { 255 } else { 0 };
-				px[i * 4] = c;
-				px[i * 4 + 1] = c;
-				px[i * 4 + 2] = c;
-				px[i * 4 + 3] = 255;
-				if on { cnt++; }
+				if v_mask[k * n + i] >= 0.5 {
+					cnt++;
+					img.push(255);
+					img.push(255);
+					img.push(255);
+					img.push(255);
+				} else {
+					img.push(0);
+					img.push(0);
+					img.push(0);
+					img.push(255);
+				}
 			}
 			var p byte[>..] = [];
 			format(p, a[3], "_v", k, "_mask.png");
-			let s = gfx::Shot { w: tw, h: th, pf: 376840196, px: px };
+			let s = gfx::Shot { w: tw, h: th, pf: 376840196, px: img };
 			gfx::save_shot(s, p);
 			var o byte[>..] = [];
 			format(o, "mask v", k, " ");
@@ -1555,7 +1561,6 @@ fn main() {
 		}
 		return;
 	}
-	rmask.clear();
 	rmask.resize(tw * th, 0.0);
 	if !gfx::open_headless(tw, th) {
 		print("gpu: skipped (no device: ", gfx::error(), ")");
@@ -1576,55 +1581,66 @@ fn main() {
 	s3d::look.curve = 1;
 	s3d::init(2 * tw, 2 * th);
 	big = gfx::render_target(2 * tw, 2 * th, gfx::RGBA8);
+	s3d::place(item, gfx::translate(float3 { 0.0, -1000.0, 0.0 }));
+	s3d::view = s3d::Camera { eye: float3 { 0.0, 0.85, 3.2 }, target: float3 { 0.0, 0.85, 0.0 }, up: float3 { 0.0, 1.0, 0.0 }, fov_y: fov, near: 0.05, far: 100.0 };
+	s3d::render(big);
+	s3d::render(big);
+	s3d::render(big);
+	let cpx = gfx::read_pixels(big);
+	clear_c = float3 { cpx[0] as f32, cpx[1] as f32, cpx[2] as f32 };
+	print("clear ", clear_c.x, " ", clear_c.y, " ", clear_c.z);
+	s3d::place(item, gfx::mat4_identity);
 	for k in nview {
 		if !cam_fit(k, 7) {
 			print("empty view ", k);
 			return;
 		}
 	}
-	if !env_is0("FIT_POSE") {
+	if env_on("FIT_POSE") {
 		pose_fit();
 		for k in nview { cam_fit(k, 3); }
 		var pp byte[>..] = [];
 		format(pp, a[3], "_pose.txt");
 		save_pose(pp);
 	}
-	if !env_is0("FIT_SHAPE") {
+	if env_on("FIT_SHAPE") {
 		for r in 4 {
 			shape_fit(r);
 			for k in nview { cam_fit(k, 3); }
-			var tg byte[>..] = [];
-			format(tg, "shape", r);
-			report(tg, false, a[3]);
+			var tag byte[>..] = [];
+			format(tag, "shape", r);
+			report(tag, false, a[3]);
 		}
 	}
-	if !env_is0("FIT_LIGHT") { light_fit(); }
+	if env_on("FIT_LIGHT") { light_fit(); }
 	report("fit", false, a[3]);
-	var saved = 0;
-	if !env_is0("FIT_PAINT") {
+	if env_on("FIT_PAINT") {
 		for r in 4 {
 			paint();
-			var tg byte[>..] = [];
-			format(tg, "paint", r);
-			report(tg, false, a[3]);
+			var tag byte[>..] = [];
+			format(tag, "paint", r);
+			report(tag, false, a[3]);
 		}
+		var saved = 0;
 		for img in gltf::images.len {
 			if img < img_changed.len && img_changed[img] != 0 {
 				let im = gltf::images[img];
-				var cp byte[>..] = [];
-				cp.append(gltf::image_pixels(img));
 				var p byte[>..] = [];
 				format(p, a[3], "_tex", img, ".png");
-				let s = gfx::Shot { w: im.width, h: im.height, pf: 376840196, px: cp };
+				let s = gfx::Shot { w: im.width, h: im.height, pf: 376840196, px: gltf::image_pixels(img) };
 				gfx::save_shot(s, p);
 				saved++;
 			}
 		}
-	}
-	if saved > 0 || shape_changed {
-		var og byte[>..] = [];
-		format(og, a[3], ".glb");
-		export_glb(a[1], og, a[3]);
+		if saved > 0 || shape_changed {
+			var gp byte[>..] = [];
+			format(gp, a[3], ".glb");
+			export_glb(a[1], gp, a[3]);
+		}
+	} else if shape_changed {
+		var gp byte[>..] = [];
+		format(gp, a[3], ".glb");
+		export_glb(a[1], gp, a[3]);
 	}
 	report("final", true, a[3]);
 }
