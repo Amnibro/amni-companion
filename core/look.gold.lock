@@ -212,219 +212,315 @@ fn lk_scale(asset int, mat int, tile f32) float4 {
 	if aw == 0.0 { return float4 { 1.0, 0.0, 0.0, 1.0 }; }
 	float4 { su / aw / tile, 0.0, 0.0, sv / aw / tile }
 }
-=== 72ae6ec6829f68cc
+=== -270eaefe535bc3c7
+var lk_gt int[>..];
+var lk_gs int[>..];
+var lk_gl int[>..];
+var lk_glo = float3 { 0.0, 0.0, 0.0 };
+var lk_gx = 0;
+var lk_gy = 0;
+var lk_gz = 0;
+=== -58092b49fee2b0c0
+fn lk_cell(v f32, o f32, n int) int { clamp(lk_floor((v - o) / 0.02) as int, 0, n - 1) }
+fn lk_tri_range(ti int) int, int, int, int, int, int {
+	let p0 = lk_vp(lk_gt[ti * 3]);
+	let p1 = lk_vp(lk_gt[ti * 3 + 1]);
+	let p2 = lk_vp(lk_gt[ti * 3 + 2]);
+	let mnx = min(p0.x, min(p1.x, p2.x));
+	let mny = min(p0.y, min(p1.y, p2.y));
+	let mnz = min(p0.z, min(p1.z, p2.z));
+	let mxx = max(p0.x, max(p1.x, p2.x));
+	let mxy = max(p0.y, max(p1.y, p2.y));
+	let mxz = max(p0.z, max(p1.z, p2.z));
+	return lk_cell(mnx, lk_glo.x, lk_gx), lk_cell(mny, lk_glo.y, lk_gy), lk_cell(mnz, lk_glo.z, lk_gz), lk_cell(mxx, lk_glo.x, lk_gx), lk_cell(mxy, lk_glo.y, lk_gy), lk_cell(mxz, lk_glo.z, lk_gz);
+}
+fn lk_grid(asset int, lo float3, hi float3) {
+	lk_glo = lo;
+	lk_gx = (lk_floor((hi.x - lo.x) / 0.02) as int) + 1;
+	lk_gy = (lk_floor((hi.y - lo.y) / 0.02) as int) + 1;
+	lk_gz = (lk_floor((hi.z - lo.z) / 0.02) as int) + 1;
+	lk_gt.clear();
+	lk_gs.clear();
+	lk_gl.clear();
+	let ms = gltf::assets[asset].meshes;
+	for mi in ms.first..ms.first + ms.count {
+		let mname = gltf::text_of(gltf::meshes[mi].name);
+		if mname == "hair" || mname == "braid_hair" || mname == "beard" || mname == "lashes" || mname == "eye_occ" || mname == "scalp" { continue; }
+		let ps = gltf::meshes[mi].prims;
+		for pi in ps.first..ps.first + ps.count {
+			let prim = gltf::prims[pi];
+			var t = 0;
+			while t + 2 < prim.icount {
+				let g0 = prim.vfirst + (gltf::indices[prim.ifirst + t] as int);
+				let g1 = prim.vfirst + (gltf::indices[prim.ifirst + t + 1] as int);
+				let g2 = prim.vfirst + (gltf::indices[prim.ifirst + t + 2] as int);
+				t += 3;
+				let p0 = lk_vp(g0);
+				let p1 = lk_vp(g1);
+				let p2 = lk_vp(g2);
+				if max(p0.x, max(p1.x, p2.x)) < lo.x || min(p0.x, min(p1.x, p2.x)) > hi.x { continue; }
+				if max(p0.y, max(p1.y, p2.y)) < lo.y || min(p0.y, min(p1.y, p2.y)) > hi.y { continue; }
+				if max(p0.z, max(p1.z, p2.z)) < lo.z || min(p0.z, min(p1.z, p2.z)) > hi.z { continue; }
+				lk_gt.push(g0);
+				lk_gt.push(g1);
+				lk_gt.push(g2);
+			}
+		}
+	}
+	let ntri = lk_gt.len / 3;
+	let cells = lk_gx * lk_gy * lk_gz;
+	lk_gs.resize(cells + 1, 0);
+	for ti in ntri {
+		let x0, y0, z0, x1, y1, z1 = lk_tri_range(ti);
+		for z in z0..z1 + 1 {
+			for y in y0..y1 + 1 {
+				for x in x0..x1 + 1 {
+					lk_gs[((z * lk_gy + y) * lk_gx + x) + 1] += 1;
+				}
+			}
+		}
+	}
+	for c in cells { lk_gs[c + 1] += lk_gs[c]; }
+	lk_gl.resize(lk_gs[cells], 0);
+	var cur int[>..] = [];
+	cur.resize(cells, 0);
+	for ti in ntri {
+		let x0, y0, z0, x1, y1, z1 = lk_tri_range(ti);
+		for z in z0..z1 + 1 {
+			for y in y0..y1 + 1 {
+				for x in x0..x1 + 1 {
+					let c = (z * lk_gy + y) * lk_gx + x;
+					lk_gl[lk_gs[c] + cur[c]] = ti;
+					cur[c] += 1;
+				}
+			}
+		}
+	}
+}
+=== 07492f5295f1dcb8
+fn lk_tmax(o f32, d f32, g f32, c int) f32 {
+	if d > 0.0 { return max((g + ((c + 1) as f32) * 0.02 - o) / d, 0.0); }
+	if d < 0.0 { return max((g + (c as f32) * 0.02 - o) / d, 0.0); }
+	1e30
+}
+fn lk_tdelta(d f32) f32 {
+	if d == 0.0 { return 1e30; }
+	0.02 / abs(d)
+}
+fn lk_cast(o float3, d float3, len f32) f32 {
+	guard lk_gs.len > 0 else { return len; }
+	var best = len;
+	var ix = lk_cell(o.x, lk_glo.x, lk_gx);
+	var iy = lk_cell(o.y, lk_glo.y, lk_gy);
+	var iz = lk_cell(o.z, lk_glo.z, lk_gz);
+	let sx = if d.x > 0.0 { 1 } else if d.x < 0.0 { -1 } else { 0 };
+	let sy = if d.y > 0.0 { 1 } else if d.y < 0.0 { -1 } else { 0 };
+	let sz = if d.z > 0.0 { 1 } else if d.z < 0.0 { -1 } else { 0 };
+	var tx = lk_tmax(o.x, d.x, lk_glo.x, ix);
+	var ty = lk_tmax(o.y, d.y, lk_glo.y, iy);
+	var tz = lk_tmax(o.z, d.z, lk_glo.z, iz);
+	let dx = lk_tdelta(d.x);
+	let dy = lk_tdelta(d.y);
+	let dz = lk_tdelta(d.z);
+	loop {
+		let c = (iz * lk_gy + iy) * lk_gx + ix;
+		for q in lk_gs[c]..lk_gs[c + 1] {
+			let ti = lk_gl[q];
+			let p0 = lk_vp(lk_gt[ti * 3]);
+			let p1 = lk_vp(lk_gt[ti * 3 + 1]);
+			let p2 = lk_vp(lk_gt[ti * 3 + 2]);
+			let e1 = p1 - p0;
+			let e2 = p2 - p0;
+			let pv = linalg::cross3(d, e2);
+			let det = linalg::dot3(e1, pv);
+			if abs(det) < 1e-12 { continue; }
+			let inv = 1.0 / det;
+			let tv = o - p0;
+			let u = linalg::dot3(tv, pv) * inv;
+			if u < 0.0 || u > 1.0 { continue; }
+			let qv = linalg::cross3(tv, e1);
+			let v = linalg::dot3(d, qv) * inv;
+			if v < 0.0 || u + v > 1.0 { continue; }
+			let t = linalg::dot3(e2, qv) * inv;
+			if t > 0.0002 && t < best { best = t; }
+		}
+		if tx <= ty && tx <= tz {
+			if tx > best { break; }
+			ix += sx;
+			tx += dx;
+			if ix < 0 || ix >= lk_gx { break; }
+		} else if ty <= tz {
+			if ty > best { break; }
+			iy += sy;
+			ty += dy;
+			if iy < 0 || iy >= lk_gy { break; }
+		} else {
+			if tz > best { break; }
+			iz += sz;
+			tz += dz;
+			if iz < 0 || iz >= lk_gz { break; }
+		}
+	}
+	best
+}
+=== -415c247bd8a2eed2
 fn lk_vn(g int) float3 {
 	let o = g * gltf::VERTEX_FLOATS;
 	float3 { gltf::verts[o + 3], gltf::verts[o + 4], gltf::verts[o + 5] }
 }
-fn lk_qk(g int, a int) int {
-	lk_floor(gltf::verts[g * gltf::VERTEX_FLOATS + a] * 10000.0 + 0.5) as int
+fn lk_curv_edge(ga int, gb int) f32 {
+	let dp = lk_vp(ga) - lk_vp(gb);
+	let dn = lk_vn(ga) - lk_vn(gb);
+	abs(linalg::dot3(dn, dp)) / max(linalg::dot3(dp, dp), 1e-12)
 }
-fn lk_qless(a int, b int) bool {
-	for ax in 3 {
-		let x = lk_qk(a, ax);
-		let y = lk_qk(b, ax);
-		if x < y { return true; }
-		if x > y { return false; }
-	}
-	false
-}
-fn lk_qeq(a int, b int) bool {
-	lk_qk(a, 0) == lk_qk(b, 0) && lk_qk(a, 1) == lk_qk(b, 1) && lk_qk(a, 2) == lk_qk(b, 2)
-}
-fn lk_group(order int[:], vals f32[:]) {
-	var i = 0;
-	while i < order.len {
-		var j = i + 1;
-		while j < order.len && lk_qeq(order[i], order[j]) { j += 1; }
-		var sum f32 = 0.0;
-		for k in i..j { sum += vals[order[k]]; }
-		let mean = sum / ((j - i) as f32);
-		for k in i..j { vals[order[k]] = mean; }
-		i = j;
-	}
-}
-fn lk_smooth(tris int[:], vals f32[:]) {
+fn lk_nbr(val f32[:], tris int[:], out f32[:]) {
 	var ns f32[>..] = [];
 	var nc f32[>..] = [];
-	ns.resize(vals.len, 0.0);
-	nc.resize(vals.len, 0.0);
-	for t in tris.len / 3 {
+	ns.resize(val.len, 0.0);
+	nc.resize(val.len, 0.0);
+	for ti in tris.len / 3 {
 		for e in 3 {
-			let a = tris[t * 3 + e];
-			let b = tris[t * 3 + (e + 1) % 3];
-			ns[a] += vals[b];
+			let a = tris[ti * 3 + e];
+			let b = tris[ti * 3 + (e + 1) % 3];
+			ns[a] += val[b];
 			nc[a] += 1.0;
-			ns[b] += vals[a];
+			ns[b] += val[a];
 			nc[b] += 1.0;
 		}
 	}
-	for i in vals.len {
-		if nc[i] > 0.0 { vals[i] = 0.5 * (vals[i] + ns[i] / nc[i]); }
+	for i in val.len {
+		if nc[i] > 0.0 {
+			out[i] = (val[i] + ns[i] / nc[i]) * 0.5;
+		} else {
+			out[i] = val[i];
+		}
 	}
 }
-fn lk_edge_curv(a int, b int, cs f32[:], cc f32[:]) {
-	let d = lk_vp(a) - lk_vp(b);
-	let nd = lk_vn(a) - lk_vn(b);
-	cs[a] += abs(linalg::dot3(nd, d)) / max(linalg::dot3(d, d), 1e-12);
-	cc[a] += 1.0;
+fn lk_group(val f32[:], order int[:], kx int[:], ky int[:], kz int[:]) {
+	let n = order.len;
+	var i = 0;
+	while i < n {
+		var j = i + 1;
+		while j < n && kx[order[j]] == kx[order[i]] && ky[order[j]] == ky[order[i]] && kz[order[j]] == kz[order[i]] { j += 1; }
+		var s f32 = 0.0;
+		for q in i..j { s += val[order[q]]; }
+		let m = s / ((j - i) as f32);
+		for q in i..j { val[order[q]] = m; }
+		i = j;
+	}
 }
-fn lk_cell(v f32, lo f32, n int) int {
-	clamp(lk_floor((v - lo) / 0.02) as int, 0, n - 1)
+fn lk_post(val f32[:], tris int[:], order int[:], kx int[:], ky int[:], kz int[:]) {
+	lk_group(val, order, kx, ky, kz);
+	var tmp f32[>..] = [];
+	tmp.resize(val.len, 0.0);
+	lk_nbr(val, tris, tmp);
+	for i in val.len { val[i] = tmp[i]; }
 }
 fn lk_skin_geo(asset int) {
+	let nv = gltf::verts.len / gltf::VERTEX_FLOATS;
+	var loc int[>..] = [];
+	loc.resize(nv, -1);
+	var vs int[>..] = [];
 	var tris int[>..] = [];
 	let ms = gltf::assets[asset].meshes;
 	for mi in ms.first..ms.first + ms.count {
-		let name = gltf::text_of(gltf::meshes[mi].name);
-		if name == "skin" || name == "face" {
-			let ps = gltf::meshes[mi].prims;
-			for pi in ps.first..ps.first + ps.count {
-				let prim = gltf::prims[pi];
-				var t = 0;
-				while t + 2 < prim.icount {
-					for e in 3 { tris.push(prim.vfirst + (gltf::indices[prim.ifirst + t + e] as int)); }
-					t += 3;
+		let mname = gltf::text_of(gltf::meshes[mi].name);
+		if !(mname == "skin" || mname == "face") { continue; }
+		let ps = gltf::meshes[mi].prims;
+		for pi in ps.first..ps.first + ps.count {
+			let prim = gltf::prims[pi];
+			var t = 0;
+			while t + 2 < prim.icount {
+				for c in 3 {
+					let g = prim.vfirst + (gltf::indices[prim.ifirst + t + c] as int);
+					if loc[g] < 0 {
+						loc[g] = vs.len;
+						vs.push(g);
+					}
+					tris.push(loc[g]);
 				}
+				t += 3;
 			}
 		}
 	}
-	if tris.len == 0 { return; }
-	let nv = gltf::verts.len / gltf::VERTEX_FLOATS;
-	var used bool[>..] = [];
-	used.resize(nv, false);
-	var order int[>..] = [];
-	for i in tris.len {
-		let g = tris[i];
-		if !used[g] {
-			used[g] = true;
-			order.push(g);
-		}
-	}
-	let ntri = tris.len / 3;
-	var cs f32[>..] = [];
-	var cc f32[>..] = [];
-	cs.resize(nv, 0.0);
-	cc.resize(nv, 0.0);
-	for t in ntri {
+	let n = vs.len;
+	guard n > 0 else { return; }
+	var csum f32[>..] = [];
+	var ccnt f32[>..] = [];
+	csum.resize(n, 0.0);
+	ccnt.resize(n, 0.0);
+	for ti in tris.len / 3 {
 		for e in 3 {
-			let a = tris[t * 3 + e];
-			let b = tris[t * 3 + (e + 1) % 3];
-			lk_edge_curv(a, b, cs, cc);
-			lk_edge_curv(b, a, cs, cc);
+			let a = tris[ti * 3 + e];
+			let b = tris[ti * 3 + (e + 1) % 3];
+			let cv = lk_curv_edge(vs[a], vs[b]);
+			csum[a] += cv;
+			ccnt[a] += 1.0;
+			csum[b] += cv;
+			ccnt[b] += 1.0;
 		}
 	}
 	var curv f32[>..] = [];
-	curv.resize(nv, 0.0);
-	for k in order.len {
-		let g = order[k];
-		curv[g] = min(cs[g] / max(cc[g], 1.0), 250.0);
-	}
-	sort(order) { a, b => lk_qless(a, b) };
-	lk_group(order, curv);
-	lk_smooth(tris, curv);
-	var lo = lk_vp(order[0]);
+	for i in n { curv.push(min(csum[i] / max(ccnt[i], 1.0), 250.0)); }
+	var kx int[>..] = [];
+	var ky int[>..] = [];
+	var kz int[>..] = [];
+	var order int[>..] = [];
+	var lo = lk_vp(vs[0]);
 	var hi = lo;
-	for k in order.len {
-		let p = lk_vp(order[k]);
+	for i in n {
+		let p = lk_vp(vs[i]);
+		kx.push(lk_floor(p.x * 10000.0 + 0.5) as int);
+		ky.push(lk_floor(p.y * 10000.0 + 0.5) as int);
+		kz.push(lk_floor(p.z * 10000.0 + 0.5) as int);
+		order.push(i);
 		lo = float3 { min(lo.x, p.x), min(lo.y, p.y), min(lo.z, p.z) };
 		hi = float3 { max(hi.x, p.x), max(hi.y, p.y), max(hi.z, p.z) };
 	}
-	let gx = (lk_floor((hi.x - lo.x) / 0.02) as int) + 1;
-	let gy = (lk_floor((hi.y - lo.y) / 0.02) as int) + 1;
-	let gz = (lk_floor((hi.z - lo.z) / 0.02) as int) + 1;
-	let ncell = gx * gy * gz;
-	var start int[>..] = [];
-	start.resize(ncell + 1, 0);
-	for pass in 2 {
-		if pass == 1 {
-			for c in ncell { start[c + 1] += start[c]; }
-		}
-		if pass == 1 { break; }
-	}
-	var fillp int[>..] = [];
-	var list int[>..] = [];
-	for pass in 2 {
-		if pass == 1 {
-			for c in ncell { start[c + 1] += start[c]; }
-			fillp = copy(start);
-			list.resize(start[ncell], 0);
-		}
-		for t in ntri {
-			let p0 = lk_vp(tris[t * 3]);
-			let p1 = lk_vp(tris[t * 3 + 1]);
-			let p2 = lk_vp(tris[t * 3 + 2]);
-			let x0 = lk_cell(min(p0.x, min(p1.x, p2.x)), lo.x, gx);
-			let x1 = lk_cell(max(p0.x, max(p1.x, p2.x)), lo.x, gx);
-			let y0 = lk_cell(min(p0.y, min(p1.y, p2.y)), lo.y, gy);
-			let y1 = lk_cell(max(p0.y, max(p1.y, p2.y)), lo.y, gy);
-			let z0 = lk_cell(min(p0.z, min(p1.z, p2.z)), lo.z, gz);
-			let z1 = lk_cell(max(p0.z, max(p1.z, p2.z)), lo.z, gz);
-			for cz in z0..z1 + 1 {
-				for cy in y0..y1 + 1 {
-					for cx in x0..x1 + 1 {
-						let c = (cz * gy + cy) * gx + cx;
-						if pass == 0 {
-							start[c + 1] += 1;
-						} else {
-							list[fillp[c]] = t;
-							fillp[c] += 1;
-						}
-					}
+	sort(order) { a, b => kx[a] < kx[b] || (kx[a] == kx[b] && (ky[a] < ky[b] || (ky[a] == ky[b] && kz[a] < kz[b]))) };
+	lk_post(curv, tris, order, kx, ky, kz);
+	let grow = float3 { 0.06, 0.06, 0.06 };
+	lk_grid(asset, lo - grow, hi + grow);
+	var thick f32[>..] = [];
+	for i in n {
+		let g = vs[i];
+		let p = lk_vp(g);
+		let nn = linalg::unit3(lk_vn(g));
+		let d = nn * -1.0;
+		let t = lk_cast(p - nn * 0.0004, d, 0.03);
+		var th = t;
+		if t < 0.015 {
+			let b = p - nn * (t + 0.0008);
+			var rf = float3 { 0.0, 1.0, 0.0 };
+			if abs(d.y) > 0.99 { rf = float3 { 1.0, 0.0, 0.0 }; }
+			let u = linalg::unit3(linalg::cross3(d, rf));
+			let w = linalg::unit3(linalg::cross3(d, u));
+			var open f32 = 0.0;
+			var total f32 = 1.0;
+			if lk_cast(b, d, 0.04) >= 0.04 { open += 1.0; }
+			for ai in 2 {
+				let a f32 = if ai == 0 { 0.45 } else { 0.9 };
+				let ca = cos(a as real) as f32;
+				let sa = sin(a as real) as f32;
+				for k in 7 {
+					let phi f32 = 2.0 * (PI as f32) * (k as f32) / 7.0;
+					let cp = cos(phi as real) as f32;
+					let sp = sin(phi as real) as f32;
+					let dir = linalg::unit3(d * ca + (u * cp + w * sp) * sa);
+					total += ca;
+					if lk_cast(b, dir, 0.04) >= 0.04 { open += ca; }
 				}
 			}
+			let openness = open / total;
+			th = 0.03 + (t - 0.03) * openness;
 		}
+		thick.push(th);
 	}
-	var th f32[>..] = [];
-	th.resize(nv, 0.03);
-	for k in order.len {
-		let g = order[k];
-		let n = linalg::unit3(lk_vn(g));
-		let dir = n * -1.0;
-		let o = lk_vp(g) - n * 0.0004;
-		let e = o + dir * 0.03;
-		let x0 = lk_cell(min(o.x, e.x), lo.x, gx);
-		let x1 = lk_cell(max(o.x, e.x), lo.x, gx);
-		let y0 = lk_cell(min(o.y, e.y), lo.y, gy);
-		let y1 = lk_cell(max(o.y, e.y), lo.y, gy);
-		let z0 = lk_cell(min(o.z, e.z), lo.z, gz);
-		let z1 = lk_cell(max(o.z, e.z), lo.z, gz);
-		var best f32 = 0.03;
-		for cz in z0..z1 + 1 {
-			for cy in y0..y1 + 1 {
-				for cx in x0..x1 + 1 {
-					let c = (cz * gy + cy) * gx + cx;
-					for q in start[c]..start[c + 1] {
-						let ti = list[q];
-						let p0 = lk_vp(tris[ti * 3]);
-						let p1 = lk_vp(tris[ti * 3 + 1]);
-						let p2 = lk_vp(tris[ti * 3 + 2]);
-						let e1 = p1 - p0;
-						let e2 = p2 - p0;
-						let pv = linalg::cross3(dir, e2);
-						let det = linalg::dot3(e1, pv);
-						if abs(det) < 1e-12 { continue; }
-						let inv = 1.0 / det;
-						let tv = o - p0;
-						let u = linalg::dot3(tv, pv) * inv;
-						if u < 0.0 || u > 1.0 { continue; }
-						let qv = linalg::cross3(tv, e1);
-						let v = linalg::dot3(dir, qv) * inv;
-						if v < 0.0 || u + v > 1.0 { continue; }
-						let t = linalg::dot3(e2, qv) * inv;
-						if t > 0.0002 && t < best { best = t; }
-					}
-				}
-			}
-		}
-		th[g] = best;
-	}
-	lk_group(order, th);
-	lk_smooth(tris, th);
-	for k in order.len {
-		let g = order[k];
-		gltf::verts[g * gltf::VERTEX_FLOATS + 8] = curv[g];
-		gltf::verts[g * gltf::VERTEX_FLOATS + 9] = th[g];
+	lk_post(thick, tris, order, kx, ky, kz);
+	for i in n {
+		let o = vs[i] * gltf::VERTEX_FLOATS;
+		gltf::verts[o + 8] = curv[i];
+		gltf::verts[o + 9] = thick[i];
 	}
 }
 === 424e5b9e0ed28860
@@ -512,21 +608,57 @@ fn lk_pick(name const byte[:]) int {
 	else if name == "shorts_lace" || name == "lace" { 6 }
 	else { -1 }
 }
-=== -ad11eb264a3f59b
+=== -594979163603303f
+fn lk_cloth_tile(k int) f32 {
+	match k {
+		1 => 0.0125,
+		2 => 0.022,
+		3 => 0.009,
+		4 => 0.0075,
+		5 => 0.03,
+		6 => 0.017,
+		_ => 0.009,
+	}
+}
+fn lk_cloth_strength(k int) f32 {
+	match k {
+		1 => 0.9,
+		2 => 1.0,
+		3 => 0.8,
+		4 => 0.9,
+		5 => 0.5,
+		6 => 0.8,
+		_ => 0.8,
+	}
+}
+fn lk_cloth_a(k int) float4 {
+	match k {
+		1 => float4 { 0.25, 0.5, 0.55, 0.0 },
+		2 => float4 { 0.25, 0.5, 0.55, 0.0 },
+		3 => float4 { 0.2, 0.35, 0.5, 0.0 },
+		4 => float4 { 0.15, 0.25, 0.7, 0.0 },
+		5 => float4 { 0.35, 0.55, 0.35, 0.0 },
+		6 => float4 { 0.2, 0.3, 0.8, 0.0 },
+		_ => float4 { 0.2, 0.4, 0.7, 0.0 },
+	}
+}
+fn lk_detail(tex int, xf float4) gltf::TexRef {
+	var d = gltf::TexRef { tex, 0 };
+	d.m = xf;
+	d
+}
 fn look_setup(asset int) {
 	if lk_tex.len == 0 {
-		let bumps f32[8] = [2.2, 2.4, 2.4, 2.0, 2.0, 1.1, 2.0, 2.4];
-		for kind in 8 {
-			let n = if kind == 0 { 512 } else { 128 };
-			lk_tex.push(lk_make_tile(kind, n, bumps[kind]));
-		}
+		lk_tex.push(lk_make_tile(0, 512, 2.2));
+		lk_tex.push(lk_make_tile(1, 128, 2.4));
+		lk_tex.push(lk_make_tile(2, 128, 2.4));
+		lk_tex.push(lk_make_tile(3, 128, 2.0));
+		lk_tex.push(lk_make_tile(4, 128, 2.0));
+		lk_tex.push(lk_make_tile(5, 128, 1.1));
+		lk_tex.push(lk_make_tile(6, 128, 2.0));
+		lk_tex.push(lk_make_tile(7, 128, 2.4));
 	}
 	lk_skin_geo(asset);
-	let tiles f32[8] = [0.0, 0.0125, 0.022, 0.009, 0.0075, 0.03, 0.017, 0.009];
-	let strength f32[8] = [0.0, 0.9, 1.0, 0.8, 0.9, 0.5, 0.8, 0.8];
-	let wraps f32[8] = [0.0, 0.25, 0.25, 0.2, 0.15, 0.35, 0.2, 0.2];
-	let fuzzs f32[8] = [0.0, 0.5, 0.5, 0.35, 0.25, 1.0, 0.3, 0.4];
-	let specs f32[8] = [0.0, 0.55, 0.55, 0.5, 0.7, 0.35, 0.8, 0.7];
 	let ms = gltf::assets[asset].materials;
 	for m in ms.first..ms.first + ms.count {
 		let name = gltf::text_of(gltf::materials[m].name);
@@ -534,12 +666,14 @@ fn look_setup(asset int) {
 		var x = gltf::materials[m];
 		if k == 0 {
 			x.shading = 1;
-			x.shade_a = float4 { 0.0024, 0.00095, 0.0005, 1.4 };
-			x.shade_b = float4 { 0.35, 0.45, 0.12, 0.55 };
-			x.shade_c = float4 { 0.028, 0.0, 0.0, 0.55 };
-			x.detail = gltf::TexRef { texture: lk_tex[0], m: lk_scale(asset, m, 0.009), .. };
+			if x.shade_c.x == 0.0 {
+				x.shade_a = gltf::shade_preset(1, 0);
+				x.shade_b = gltf::shade_preset(1, 1);
+				x.shade_c = gltf::shade_preset(1, 2);
+			}
+			x.detail = lk_detail(lk_tex[0], lk_scale(asset, m, 0.009));
 			if name == "skin" { x.roughness = 0.6; }
-			if name == "face" { x.roughness = 1.15; }
+			if name == "face" { x.roughness = 0.9; }
 		}
 		if name == "teeth" {
 			x.shading = 1;
@@ -555,26 +689,24 @@ fn look_setup(asset int) {
 		}
 		if name == "eyes" {
 			let c, r = lk_iris(x.base_tex.texture);
+			let e = gltf::shade_preset(2, 2);
 			x.shading = 2;
 			x.shade_a = c;
-			x.shade_b = float4 { 0.0, 0.0, 1.0, 0.035 };
-			x.shade_c = float4 { r, 0.0024, 0.55, 0.35 };
+			x.shade_b = gltf::shade_preset(2, 1);
+			x.shade_c = float4 { r, e.y, e.z, e.w };
 			x.roughness = 0.5;
 		}
 		if k >= 1 {
 			x.shading = 3;
 			x.normal_tex = gltf::TexRef { -1, 0 };
-			x.detail = gltf::TexRef { texture: lk_tex[k], m: lk_scale(asset, m, tiles[k]), .. };
-			x.shade_b = float4 { strength[k], 0.85, 0.0, 0.0 };
-			x.shade_a = float4 { wraps[k], fuzzs[k], specs[k], 0.0 };
+			x.detail = lk_detail(lk_tex[k], lk_scale(asset, m, lk_cloth_tile(k)));
+			x.shade_b = float4 { lk_cloth_strength(k), 0.85, 0.0, 0.0 };
+			x.shade_a = lk_cloth_a(k);
 			if x.sheen.x < 0.001 && x.sheen.y < 0.001 && x.sheen.z < 0.001 {
 				x.sheen = float3 { 0.08 * x.base.x + 0.03, 0.08 * x.base.y + 0.03, 0.08 * x.base.z + 0.03 };
 				x.sheen_rough = 0.7;
 			}
-			if k == 5 {
-				x.sheen_rough = 0.75;
-				x.sheen = x.sheen * 1.4;
-			}
+			if k == 5 { x.sheen_rough = 0.75; }
 		}
 		gltf::materials[m] = x;
 	}
