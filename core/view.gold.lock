@@ -1,4 +1,4 @@
-=== 646969da9ba40a82
+=== 391ba7aa6bf37274
 import os;
 import web;
 import gfx;
@@ -11,6 +11,7 @@ import hair;
 import spring;
 import mix;
 import cloth;
+import look;
 === -7b2221d4bed818f8
 var P f32[10240];
 var C f32[16];
@@ -42,7 +43,7 @@ var last_t = -1.0;
 extern fn hv_f32(id i32, xs f32[:]);
 extern fn hv_i32(id i32, xs i32[:]);
 extern fn hv_bytes(id i32, xs byte[:]);
-=== 45c4e898ba007fd9
+=== -7bb9667a1fdf008b
 fn main() {
 	hv_f32(0, P[..]);
 	hv_f32(1, C[..]);
@@ -63,24 +64,23 @@ fn main() {
 	}
 	cloth = cloth_setup("/m/avatar.cloth", asset);
 	no_skirt = cloth > 0;
-	if a.len > 2 || hair_find_cards(asset) {
-		let first = gltf::assets[asset].nodes.first;
+	look_setup(asset);
+	if a.len > 2 {
 		for i in gltf::assets[asset].nodes.count {
-			let n = first + i;
+			let n = gltf::assets[asset].nodes.first + i;
 			if gltf::nodes[n].mesh >= 0 && gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "hair" {
 				gltf::nodes[n].mesh = -1;
 			}
 		}
-		head = gltf::find_node(asset, "head");
-		if head >= 0 {
-			motion::rest(asset);
-			motion::update(asset, gfx::mat4_identity);
-			rest_inv = linalg::inverse(motion::world[head]);
-		}
 	}
-	let first_node = gltf::assets[asset].nodes.first;
+	head = gltf::find_node(asset, "head");
+	if head >= 0 {
+		motion::rest(asset);
+		motion::update(asset, gfx::mat4_identity);
+		rest_inv = linalg::inverse(motion::world[head]);
+	}
 	for i in gltf::assets[asset].nodes.count {
-		let n = first_node + i;
+		let n = gltf::assets[asset].nodes.first + i;
 		if gltf::nodes[n].mesh >= 0 && gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "teeth" {
 			teeth_mat = gltf::prims[gltf::meshes[gltf::nodes[n].mesh].prims.first].material;
 			if teeth_mat >= 0 {
@@ -136,15 +136,12 @@ fn main() {
 	s3d::init(sw, sh);
 	if a.len > 2 {
 		hair_open(a[2], sw, sh, 96);
-	} else if card_node >= 0 {
-		hair_cards(asset, sw, sh, 64);
-	}
-	if on { hair_body(asset); }
-	if bones > 0 {
-		motion::rest(asset);
-		motion::update(asset, gfx::mat4_identity);
-		for i in bones {
-			bone_rest.push(linalg::inverse(motion::world[gltf::assets[asset].nodes.first + hair_bone(i)]));
+		if bones > 0 {
+			motion::rest(asset);
+			motion::update(asset, gfx::mat4_identity);
+			for i in bones {
+				bone_rest.push(linalg::inverse(motion::world[gltf::assets[asset].nodes.first + hair_bone(i)]));
+			}
 		}
 	}
 	web::frames(true);
@@ -222,19 +219,11 @@ export fn hv_live() {
 	place_m();
 	mix_live(L[..]);
 }
-=== -73b794bce1898c53
-export fn hv_cloth() {
-	cloth_stats(L[..]);
-}
-=== -648bd77517f83128
-export fn hv_hair_probe(k i32) f32 {
-	return hair_probe(k as int);
-}
 === -7fca3609b903f82b
 export fn hv_stop() {
 	web::frames(false);
 }
-=== 59b2638be35fcbaf
+=== -502d8c98bd38e308
 export fn he_frame(t real) {
 	if !gfx::frame() { return; }
 	for k in nb {
@@ -255,8 +244,8 @@ export fn he_frame(t real) {
 			gltf::materials[teeth_mat].roughness = C[13];
 		}
 	}
-	let dt = if last_t < 0.0 { 0.0 } else { min(0.05, (t - last_t) / 1000.0) };
-	if springs > 0 || cloth > 0 || on {
+	if springs > 0 || cloth > 0 {
+		let dt real = if last_t < 0.0 { 0.0 } else { min(0.05, (t - last_t) / 1000.0) };
 		s3d::pose(item);
 		if springs > 0 { spring_step(dt as f32); }
 		if cloth > 0 { cloth_step(dt as f32); }
@@ -276,7 +265,7 @@ export fn he_frame(t real) {
 			for i in bones {
 				hair_pose(i, gfx::mul(hi, gfx::mul(motion::world[gltf::assets[asset].nodes.first + hair_bone(i)], bone_rest[i])));
 			}
-			hair_draw(hm, dt as f32);
+			hair_draw(hm);
 		}
 		s3d::render_end(gfx::screen());
 	}

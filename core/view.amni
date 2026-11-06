@@ -10,6 +10,7 @@ import hair;
 import spring;
 import mix;
 import cloth;
+import look;
 var P f32[10240];
 var C f32[16];
 var N byte[16384];
@@ -59,9 +60,11 @@ fn main() {
 	}
 	cloth = cloth_setup("/m/avatar.cloth", asset);
 	no_skirt = cloth > 0;
+	look_setup(asset);
 	if a.len > 2 || hair_find_cards(asset) {
 		let first = gltf::assets[asset].nodes.first;
-		for i in gltf::assets[asset].nodes.count {
+		let cnt = gltf::assets[asset].nodes.count;
+		for i in cnt {
 			let n = first + i;
 			if gltf::nodes[n].mesh >= 0 && gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "hair" {
 				gltf::nodes[n].mesh = -1;
@@ -74,9 +77,10 @@ fn main() {
 			rest_inv = linalg::inverse(motion::world[head]);
 		}
 	}
-	let first_node = gltf::assets[asset].nodes.first;
-	for i in gltf::assets[asset].nodes.count {
-		let n = first_node + i;
+	let tfirst = gltf::assets[asset].nodes.first;
+	let tcnt = gltf::assets[asset].nodes.count;
+	for i in tcnt {
+		let n = tfirst + i;
 		if gltf::nodes[n].mesh >= 0 && gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "teeth" {
 			teeth_mat = gltf::prims[gltf::meshes[gltf::nodes[n].mesh].prims.first].material;
 			if teeth_mat >= 0 {
@@ -110,7 +114,9 @@ fn main() {
 		s3d::place(ring, gfx::mat4_identity);
 	}
 	s3d::view = s3d::Camera { eye: float3 { 0.0, 1.2, 3.5 }, target: float3 { 0.0, 0.9, 0.0 }, up: float3 { 0.0, 1.0, 0.0 }, fov_y: 0.5236, near: 0.05, far: 100.0 };
-	s3d::sun = s3d::Sun { to_sun: linalg::unit3(float3 { 2.3, 3.0, 1.3 }), rgb: float3 { 3.1, 3.1, 3.1 }, shadows: true, shadow_far: 10.0, map_size: 2048 };
+	s3d::sun = s3d::Sun { to_sun: linalg::unit3(float3 { 2.3, 3.0, 1.3 }), rgb: float3 { 3.1, 3.1, 3.1 }, shadows: true, shadow_far: 10.0, map_size: 2048, angle: 0.07, reach: 1.0, fit: true, contact: 0.04 };
+	s3d::ao_mode = 1;
+	s3d::ssr_on = true;
 	s3d::add_light(float3 { -11.9, 14.3, -16.7 }, float3 { 371.0, 241.0, 936.0 }, 1000.0);
 	s3d::add_light(float3 { -17.3, 8.65, 15.85 }, float3 { 124.0, 136.0, 169.0 }, 1000.0);
 	s3d::add_light(float3 { 0.0, 9.0, 23.0 }, float3 { 600.0, 600.0, 600.0 }, 1000.0);
@@ -135,7 +141,9 @@ fn main() {
 	} else if card_node >= 0 {
 		hair_cards(asset, sw, sh, 64);
 	}
-	if on { hair_body(asset); }
+	if on {
+		hair_body(asset);
+	}
 	if bones > 0 {
 		motion::rest(asset);
 		motion::update(asset, gfx::mat4_identity);
@@ -245,8 +253,12 @@ export fn he_frame(t real) {
 	let dt = if last_t < 0.0 { 0.0 } else { min(0.05, (t - last_t) / 1000.0) };
 	if springs > 0 || cloth > 0 || on {
 		s3d::pose(item);
-		if springs > 0 { spring_step(dt as f32); }
-		if cloth > 0 { cloth_step(dt as f32); }
+		if springs > 0 {
+			spring_step(dt as f32);
+		}
+		if cloth > 0 {
+			cloth_step(dt as f32);
+		}
 	}
 	last_t = t;
 	let z = gfx::screen_size();
@@ -254,7 +266,9 @@ export fn he_frame(t real) {
 		sw = z.x as int;
 		sh = z.y as int;
 		s3d::init(sw, sh);
-		if on { hair_size(sw, sh); }
+		if on {
+			hair_size(sw, sh);
+		}
 	}
 	if s3d::render_begin() {
 		if on && head >= 0 {
