@@ -877,6 +877,141 @@ fn view_gain() {
 		print(o);
 	}
 }
+=== -5e9e29f758b4d81b
+var tc int[768];
+var tone_on = false;
+fn lutv(i int) int {
+	(i * 255 + 16) / 32
+}
+fn build_lut() {
+	var px byte[>..] = [];
+	for b in 33 {
+		for g in 33 {
+			for r in 33 {
+				px.push(tc[lutv(r)] as byte);
+				px.push(tc[256 + lutv(g)] as byte);
+				px.push(tc[512 + lutv(b)] as byte);
+				px.push(255);
+			}
+		}
+	}
+	s3d::set_lut(px, 33);
+}
+fn tone_fit() {
+	let before = tone();
+	let tc0 = tc;
+	let on0 = tone_on;
+	let cc0 = clear_c;
+	var hist int[>..] = [];
+	hist.resize(3 * 256 * 256, 0);
+	let n = tw * th;
+	for k in nview {
+		if !(k == 0 || v_fix[k]) { continue; }
+		use_view(k);
+		shot(cam_eye, cam_look);
+		for i in n {
+			if tmask[i] == 1.0 && rmask[i] == 1.0 {
+				for c in 3 {
+					let r = rpx[i * 4 + c] as int;
+					let t = tpx[i * 4 + c] as int;
+					hist[(c * 256 + r) * 256 + t] += 1;
+				}
+			}
+		}
+	}
+	for c in 3 {
+		var nm real[256] = [0.0; 256];
+		var set bool[256] = [false; 256];
+		for b in 256 {
+			var tmp int[256] = [0; 256];
+			var total = 0;
+			for r in max(0, b - 2)..min(255, b + 2) + 1 {
+				for t in 256 {
+					let h = hist[(c * 256 + r) * 256 + t];
+					tmp[t] += h;
+					total += h;
+				}
+			}
+			if total >= 30 {
+				var cum = 0;
+				var med = 0;
+				var found = false;
+				for t in 256 {
+					cum += tmp[t];
+					if !found && cum > total / 2 {
+						med = t;
+						found = true;
+					}
+				}
+				nm[b] = med as real;
+				set[b] = true;
+			}
+		}
+		var any = false;
+		for b in 256 { if set[b] { any = true; } }
+		if !any {
+			for b in 256 { nm[b] = b as real; }
+		} else {
+			var res real[256] = [0.0; 256];
+			for b in 256 {
+				if set[b] {
+					res[b] = nm[b];
+					continue;
+				}
+				var lo = -1;
+				var hi = -1;
+				var j = b - 1;
+				while j >= 0 && lo < 0 {
+					if set[j] { lo = j; }
+					j--;
+				}
+				j = b + 1;
+				while j < 256 && hi < 0 {
+					if set[j] { hi = j; }
+					j++;
+				}
+				if lo >= 0 && hi >= 0 {
+					let f = ((b - lo) as real) / ((hi - lo) as real);
+					res[b] = nm[lo] + (nm[hi] - nm[lo]) * f;
+				} else if lo >= 0 {
+					res[b] = nm[lo];
+				} else {
+					res[b] = nm[hi];
+				}
+			}
+			nm = res;
+		}
+		for b in 1..256 {
+			if nm[b] < nm[b - 1] { nm[b] = nm[b - 1]; }
+		}
+		for x in 256 {
+			let old = tc[256 * c + x];
+			tc[256 * c + x] = clamp(round(nm[old]), 0.0, 255.0) as int;
+		}
+	}
+	build_lut();
+	s3d::look.lut = 1.0;
+	tone_on = true;
+	learn_clear();
+	let after = tone();
+	if !(after < before) {
+		tc = tc0;
+		tone_on = on0;
+		clear_c = cc0;
+		if tone_on {
+			build_lut();
+		} else {
+			s3d::look.lut = 0.0;
+		}
+		print("tone rejected");
+	}
+	var o byte[>..] = [];
+	format(o, "tone");
+	for c in 3 {
+		format(o, " ", tc[256 * c + 32], " ", tc[256 * c + 128], " ", tc[256 * c + 224]);
+	}
+	print(o);
+}
 === -23552e18dad9d65f
 var mat_changed = false;
 var mf_m int[>..];
@@ -2472,92 +2607,112 @@ fn env_off(name const byte[:]) bool {
 	if !env_get(name, v) { return false; }
 	v == "0"
 }
-=== -7f7f06b13d6dd7bb
-var ever byte[>..];
-fn mark_ever() {
-	if ever.len < gltf::images.len { ever.resize(gltf::images.len, 0); }
-	for i in min(img_changed.len, ever.len) {
-		if img_changed[i] != 0 { ever[i] = 1; }
-	}
-}
+=== -672c843b3ac80f76
 fn env_is(name const byte[:], val const byte[:]) bool {
 	var v byte[>..] = [];
 	if !env_get(name, v) { return false; }
 	v == val
 }
-fn refit(n int) {
-	for k in nview {
-		cam_fit(k, n);
-	}
+fn learn_clear() {
+	s3d::place(item, gfx::translate(float3 { 0.0, -1000.0, 0.0 }));
+	s3d::view = s3d::Camera { eye: float3 { 0.0, 0.85, 3.2 }, target: float3 { 0.0, 0.85, 0.0 }, up: float3 { 0.0, 1.0, 0.0 }, fov_y: fov, near: 0.05, far: 100.0 };
+	s3d::render(big);
+	s3d::render(big);
+	s3d::render(big);
+	let px = gfx::read_pixels(big);
+	clear_c = float3 { px[0] as f32, px[1] as f32, px[2] as f32 };
+	var o byte[>..] = [];
+	format(o, "clear ");
+	f4(o, clear_c.x);
+	format(o, " ");
+	f4(o, clear_c.y);
+	format(o, " ");
+	f4(o, clear_c.z);
+	print(o);
+	s3d::place(item, gfx::mat4_identity);
 }
 fn main() {
 	let a = args();
-	if a.len < 4 {
-		print("usage: fit model.glb targets out_prefix [pose]");
-		return;
+	for c in 3 {
+		for x in 256 { tc[256 * c + x] = x; }
 	}
-	let parts = split(a[2], ',');
-	for p in parts {
-		if nview >= 7 { break; }
-		let fs = split(p, ':');
+	let targets = split(a[2], ',');
+	for t in targets {
+		if nview >= 7 { continue; }
+		let parts = split(t, ':');
 		var path const byte[:] = "";
-		var nums f32[..4] = [];
-		for w, k in fs {
-			if k == 0 { path = w; } else if nums.len < 4 { nums.push(num(w)); }
+		var yaw f32 = 0.0;
+		var dd f32 = 3.2;
+		var cyv f32 = 0.85;
+		var cxv f32 = 0.0;
+		var given = false;
+		for w, j in parts {
+			if j == 0 {
+				path = w;
+			} else if j == 1 {
+				yaw = num(w);
+			} else if j == 2 {
+				dd = num(w);
+				given = true;
+			} else if j == 3 {
+				cyv = num(w);
+				given = true;
+			} else if j == 4 {
+				cxv = num(w);
+				given = true;
+			}
 		}
 		var data byte[>..] = [];
 		if !read_file(path, data) {
-			print("target failed ", path);
+			print("target failed");
 			continue;
 		}
 		tpx.clear();
 		let w, h, ok = codec_png::decode(data, tpx);
 		if !ok {
-			print("target failed ", path);
+			print("target failed");
 			continue;
 		}
 		if nview == 0 {
 			tw = w;
 			th = h;
 		} else if w != tw || h != th {
-			print("target size mismatch ", path);
+			print("target skipped: size differs");
 			continue;
 		}
+		tmask.clear();
 		tmask.resize(tw * th, 1.0);
 		gray_bg();
 		v_px.append(tpx);
 		v_mask.append(tmask);
 		v_bg.push(bg);
-		let yaw f32 = if nums.len > 0 { nums[0] } else { 0.0 };
-		v_yaw.push(((yaw as real) * PI / 180.0) as f32);
-		v_d.push(if nums.len > 1 { nums[1] } else { 3.2 });
-		v_cy.push(if nums.len > 2 { nums[2] } else { 0.85 });
-		v_cx.push(if nums.len > 3 { nums[3] } else { 0.0 });
-		v_fix.push(nums.len > 1);
+		v_yaw.push((((yaw as real) * PI) / 180.0) as f32);
+		v_d.push(dd);
+		v_cy.push(cyv);
+		v_cx.push(cxv);
+		v_fix.push(given);
 		nview++;
 	}
 	if nview == 0 {
 		print("no targets");
 		return;
 	}
+	let n = tw * th;
 	if env_on("FIT_MASK") {
-		let n = tw * th;
 		for k in nview {
-			var mp byte[>..] = [];
-			mp.resize(n * 4, 0);
+			var px byte[>..] = [];
+			px.resize(n * 4, 255);
 			var cnt = 0;
 			for i in n {
-				let on = v_mask[k * n + i] >= 0.5;
-				let c byte = if on { 255 } else { 0 };
-				if on { cnt++; }
-				mp[i * 4] = c;
-				mp[i * 4 + 1] = c;
-				mp[i * 4 + 2] = c;
-				mp[i * 4 + 3] = 255;
+				let v byte = if v_mask[k * n + i] == 1.0 { 255 } else { 0 };
+				if v == 255 { cnt++; }
+				px[i * 4] = v;
+				px[i * 4 + 1] = v;
+				px[i * 4 + 2] = v;
 			}
-			var pth byte[>..] = [];
-			format(pth, a[3], "_v", k, "_mask.png");
-			gfx::save_shot(gfx::Shot { w: tw, h: th, pf: 376840196, px: mp }, pth);
+			var p byte[>..] = [];
+			format(p, a[3], "_v", k, "_mask.png");
+			gfx::save_shot(gfx::Shot { w: tw, h: th, pf: 376840196, px: px }, p);
 			var o byte[>..] = [];
 			format(o, "mask v", k, " ");
 			f4(o, (cnt as f32) / (n as f32));
@@ -2565,7 +2720,7 @@ fn main() {
 		}
 		return;
 	}
-	rmask.resize(tw * th, 0.0);
+	rmask.resize(n, 0.0);
 	if !gfx::open_headless(tw, th) {
 		print("gpu: skipped (no device: ", gfx::error(), ")");
 		return;
@@ -2585,22 +2740,16 @@ fn main() {
 	s3d::look.curve = 1;
 	s3d::init(2 * tw, 2 * th);
 	big = gfx::render_target(2 * tw, 2 * th, gfx::RGBA8);
-	s3d::place(item, gfx::translate(float3 { 0.0, -1000.0, 0.0 }));
-	s3d::view = s3d::Camera { eye: float3 { 0.0, 0.85, 3.2 }, target: float3 { 0.0, 0.85, 0.0 }, up: float3 { 0.0, 1.0, 0.0 }, fov_y: fov, near: 0.05, far: 100.0 };
-	for i in 3 { s3d::render(big); }
-	let cp = gfx::read_pixels(big);
-	clear_c = float3 { cp[0] as f32, cp[1] as f32, cp[2] as f32 };
-	print("clear ", clear_c.x, " ", clear_c.y, " ", clear_c.z);
-	s3d::place(item, gfx::mat4_identity);
+	learn_clear();
 	for k in nview {
 		if !cam_fit(k, 7) {
 			print("empty view ", k);
 			return;
 		}
 	}
-	if !env_off("FIT_POSE") {
+	if !env_is("FIT_POSE", "0") {
 		pose_fit();
-		refit(3);
+		for k in nview { cam_fit(k, 3); }
 		var pp byte[>..] = [];
 		format(pp, a[3], "_pose.txt");
 		save_pose(pp);
@@ -2608,62 +2757,84 @@ fn main() {
 	if env_is("FIT_SHAPE", "1") {
 		for r in 4 {
 			shape_fit(r);
-			refit(3);
+			for k in nview { cam_fit(k, 3); }
 			var tg byte[>..] = [];
 			format(tg, "shape", r);
 			report(tg, false, a[3]);
 		}
 	}
-	if !env_off("FIT_LIGHT") { light_fit(); }
+	if !env_is("FIT_LIGHT", "0") { light_fit(); }
 	report("fit", false, a[3]);
-	if !env_off("FIT_GAIN") { view_gain(); }
-	if !env_off("FIT_MATERIAL") { material_fit(); }
-	if !env_off("FIT_PATTERN") {
+	let tone_skip = env_is("FIT_TONE", "0") || env_is("FIT_TONE", "post");
+	if !tone_skip {
+		tone_fit();
+		report("tone", false, a[3]);
+	}
+	if !env_is("FIT_GAIN", "0") { view_gain(); }
+	if !env_is("FIT_MATERIAL", "0") { material_fit(); }
+	if !env_is("FIT_PATTERN", "0") {
 		if img_changed.len < gltf::images.len { img_changed.resize(gltf::images.len, 0); }
 		pattern_fit();
 	}
-	if !env_off("FIT_UNTILE") { untile(); }
-	mark_ever();
-	if !env_off("FIT_PAINT") {
+	if !env_is("FIT_UNTILE", "0") { untile(); }
+	var saved = 0;
+	if !env_is("FIT_PAINT", "0") {
 		for r in 4 {
 			paint(false);
-			mark_ever();
 			var tg byte[>..] = [];
 			format(tg, "paint", r);
 			report(tg, false, a[3]);
 		}
-		var anyfix = false;
-		for k in nview {
-			if v_fix[k] { anyfix = true; }
+		if !env_is("FIT_TONE", "0") {
+			tone_fit();
+			report("tone2", false, a[3]);
 		}
+		var anyfix = false;
+		for k in nview { if v_fix[k] { anyfix = true; } }
 		if anyfix {
 			pcell = 1;
 			for r in 4 {
 				paint(true);
-				mark_ever();
 				var tg byte[>..] = [];
 				format(tg, "fine", r);
 				report(tg, false, a[3]);
 			}
 			pcell = 4;
 		}
-	}
-	mark_ever();
-	var saved = 0;
-	for im in gltf::images.len {
-		if im >= ever.len || ever[im] == 0 { continue; }
-		let img = gltf::images[im];
-		var pxs byte[>..] = [];
-		pxs.append(gltf::image_pixels(im));
-		var pth byte[>..] = [];
-		format(pth, a[3], "_tex", im, ".png");
-		gfx::save_shot(gfx::Shot { w: img.width, h: img.height, pf: 376840196, px: pxs }, pth);
-		saved++;
+		for im in gltf::images.len {
+			if im < img_changed.len && img_changed[im] != 0 {
+				let img = gltf::images[im];
+				var p byte[>..] = [];
+				format(p, a[3], "_tex", im, ".png");
+				gfx::save_shot(gfx::Shot { w: img.width, h: img.height, pf: 376840196, px: gltf::image_pixels(im) }, p);
+				saved++;
+			}
+		}
 	}
 	if saved > 0 || shape_changed || mat_changed {
 		var gp byte[>..] = [];
 		format(gp, a[3], ".glb");
 		export_glb(a[1], gp, a[3]);
+	}
+	if tone_on {
+		var o byte[>..] = [];
+		format(o, "LUT_3D_SIZE 33\n");
+		for b in 33 {
+			for g in 33 {
+				for r in 33 {
+					format_flt(o, (tc[lutv(r)] as real) / 255.0, 6);
+					o.push(' ');
+					format_flt(o, (tc[256 + lutv(g)] as real) / 255.0, 6);
+					o.push(' ');
+					format_flt(o, (tc[512 + lutv(b)] as real) / 255.0, 6);
+					o.push('\n');
+				}
+			}
+		}
+		var cp byte[>..] = [];
+		format(cp, a[3], ".cube");
+		write_file(cp, o);
+		print("cube ", cp);
 	}
 	report("final", true, a[3]);
 }
