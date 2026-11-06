@@ -118,7 +118,7 @@ fn mquat(m gfx::mat4) linalg::Quat {
 }
 === 14d988dc68886528
 fn pos(m gfx::mat4) float3 { col3(m, 3) }
-=== 49ba97e97922f57e
+=== 0baacc125f750a7a
 var chains = 0;
 var item = -1;
 var sk = -1;
@@ -156,6 +156,7 @@ var rd f32[>..];
 var rd_ready = false;
 var th int[4] = [-1, -1, -1, -1];
 var warm = false;
+var no_skirt = false;
 === -6f5aab9fdbf8adc
 fn joint_of(node int) int {
 	if sk < 0 { return -1; }
@@ -194,66 +195,71 @@ fn md(xs f32[>..]&) f32 {
 	if idx < 0 { idx = 0; }
 	return xs[idx];
 }
-=== 68f62fb9ebe0b186
-fn chain_ok(asset int, nm const byte[:]) bool {
-	if nm.len < 3 { return false; }
-	if nm[nm.len - 2] != '_' || nm[nm.len - 1] != '0' { return false; }
-	let before = nm[..nm.len - 2];
+=== 45d97f7765731a4b
+fn is_lower(c byte) bool { c >= 'a' && c <= 'z' }
+fn is_digit(c byte) bool { c >= '0' && c <= '9' }
+fn stem_ok(s const byte[:]) bool {
+	if s.len < 1 { return false; }
+	if !is_lower(s[0]) { return false; }
 	var i = 0;
-	while i < before.len && before[i] >= 'a' && before[i] <= 'z' { i += 1; }
-	if i == 0 { return false; }
-	while i < before.len && before[i] >= '0' && before[i] <= '9' { i += 1; }
-	if i != before.len { return false; }
-	if find(asset, before) >= 0 { return false; }
-	var s2 byte[>..] = [];
-	s2.append(nm[..nm.len - 1]);
-	s2.push('2');
-	return find(asset, s2) >= 0;
+	while i < s.len && is_lower(s[i]) { i += 1; }
+	while i < s.len && is_digit(s[i]) { i += 1; }
+	return i == s.len;
 }
 fn spring_open(asset int, it int) int {
 	item = it;
+	let nodes = gltf::assets[asset].nodes;
 	var skin_node = -1;
-	let nfirst = gltf::assets[asset].nodes.first;
-	let ncount = gltf::assets[asset].nodes.count;
 	let sn = find(asset, "skin");
 	if sn >= 0 && gltf::nodes[sn].mesh >= 0 && gltf::nodes[sn].skin >= 0 {
 		skin_node = sn;
 	} else {
-		for k in ncount {
-			let n = nfirst + k;
-			if gltf::nodes[n].mesh >= 0 && gltf::nodes[n].skin >= 0 {
-				skin_node = n;
-				break;
-			}
+		for k in nodes.count {
+			let n = nodes.first + k;
+			if skin_node < 0 && gltf::nodes[n].mesh >= 0 && gltf::nodes[n].skin >= 0 { skin_node = n; }
 		}
 	}
 	if skin_node < 0 { return 0; }
 	sk = gltf::nodes[skin_node].skin;
-	for k in ncount {
-		let n = nfirst + k;
+	for k in nodes.count {
+		let n = nodes.first + k;
 		let nm = gltf::text_of(gltf::nodes[n].name);
-		if !chain_ok(asset, nm) { continue; }
+		if nm.len < 3 { continue; }
+		if nm[nm.len - 2] != '_' || nm[nm.len - 1] != '0' { continue; }
+		let stem = nm[..nm.len - 2];
+		if !stem_ok(stem) { continue; }
+		if find(asset, stem) >= 0 { continue; }
 		let base = nm[..nm.len - 1];
-		var bones int[>..] = [];
-		for idx in 64 {
-			var s byte[>..] = [];
-			s.append(base);
-			format(s, idx);
-			let nd = find(asset, s);
-			if nd < 0 { break; }
-			bones.push(nd);
+		var t2 byte[>..] = [];
+		t2.append(base);
+		t2.push('2');
+		if find(asset, t2) < 0 { continue; }
+		var e = stem.len;
+		while e > 0 && is_digit(stem[e - 1]) { e -= 1; }
+		let g = group_of(stem[..e]);
+		var order = 0;
+		if e < stem.len {
+			let v, ok = parse_int(stem[e..]);
+			order = v;
 		}
-		let e = base.len - 1;
-		var de = e;
-		while de > 0 && base[de - 1] >= '0' && base[de - 1] <= '9' { de -= 1; }
-		let gname = base[..de];
-		let ord, okp = parse_int(base[de..e]);
-		let first_slot = b_node.len;
-		for nd in bones {
-			b_node.push(nd);
-			b_rq.push(gltf::nodes[nd].r);
-			b_off.push(gltf::nodes[nd].t);
-			b_len.push(linalg::length3(gltf::nodes[nd].t));
+		if g == 3 && no_skirt { continue; }
+		var bones int[>..] = [];
+		var i = 0;
+		while i < 64 {
+			var nb byte[>..] = [];
+			nb.append(base);
+			format(nb, i);
+			let f = find(asset, nb);
+			if f < 0 { break; }
+			bones.push(f);
+			i += 1;
+		}
+		let first = b_node.len;
+		for bn in bones {
+			b_node.push(bn);
+			b_rq.push(gltf::nodes[bn].r);
+			b_off.push(gltf::nodes[bn].t);
+			b_len.push(linalg::length3(gltf::nodes[bn].t));
 			b_cur.push(linalg::v3(0.0, 0.0, 0.0));
 			b_prev.push(linalg::v3(0.0, 0.0, 0.0));
 			b_c0.push(linalg::v3(0.0, 0.0, 0.0));
@@ -263,44 +269,38 @@ fn spring_open(asset int, it int) int {
 			b_coln.push(linalg::v3(0.0, 0.0, 0.0));
 			rd.push(0.0);
 		}
-		ch_g.push(group_of(gname));
-		ch_first.push(first_slot);
+		ch_g.push(g);
+		ch_first.push(first);
 		ch_n.push(bones.len);
-		ch_order.push(if okp { ord } else { 0 });
+		ch_order.push(order);
 		ch_ready.push(false);
 		ch_fo.push(0.0);
 		ch_wl.push(0.0);
 	}
 	chains = ch_g.len;
 	var body int[>..] = [];
-	fn addb(nm const byte[:]) {
-		let b = find(asset, nm);
-		if b >= 0 && ibm(b) >= 0 { body.push(b); }
+	for bname in ["head", "neck_01", "spine_03", "spine_02", "spine_01", "pelvis"] {
+		let bi = find(asset, bname);
+		if bi >= 0 && ibm(bi) >= 0 { body.push(bi); }
 	}
-	addb("head");
-	addb("neck_01");
-	addb("spine_03");
-	addb("spine_02");
-	addb("spine_01");
-	addb("pelvis");
-	for c in chains {
-		for k in 1..ch_n[c] {
-			let slot = ch_first[c] + k;
-			let nd = b_node[slot];
-			if ibm(nd) < 0 { continue; }
-			let p = rp(nd);
-			var best = -1;
-			var bd f32 = 0.0;
-			for b in body {
-				let dd = abs(rp(b).y - p.y);
-				if best < 0 || dd < bd {
-					best = b;
-					bd = dd;
+	if body.len > 0 {
+		for c in chains {
+			for k in 1..ch_n[c] {
+				let slot = ch_first[c] + k;
+				let node = b_node[slot];
+				if ibm(node) < 0 { continue; }
+				let p = rp(node);
+				var best = -1;
+				var bd f32 = 0.0;
+				for b in body {
+					let dd = abs(rp(b).y - p.y);
+					if best < 0 || dd < bd {
+						best = b;
+						bd = dd;
+					}
 				}
-			}
-			if best >= 0 {
-				b_colb[slot] = best;
 				let rb = rp(best);
+				b_colb[slot] = best;
 				b_coln[slot] = linalg::unit3(linalg::v3(p.x - rb.x, 0.0, p.z - rb.z));
 			}
 		}
@@ -309,28 +309,32 @@ fn spring_open(asset int, it int) int {
 	th[1] = find(asset, "thigh_r");
 	th[2] = find(asset, "calf_l");
 	th[3] = find(asset, "calf_r");
-	if th[0] < 0 || th[1] < 0 || th[2] < 0 || th[3] < 0 || ibm(th[0]) < 0 || ibm(th[1]) < 0 {
+	if th[0] < 0 || th[1] < 0 || th[2] < 0 || th[3] < 0 {
+		th[0] = -1;
+	} else if ibm(th[0]) < 0 || ibm(th[1]) < 0 {
 		th[0] = -1;
 	}
-	let pelvis = find(asset, "pelvis");
-	let have_pv = pelvis >= 0 && ibm(pelvis) >= 0;
-	let pv = if have_pv { rp(pelvis) } else { linalg::v3(0.0, 0.0, 0.0) };
+	let pn = find(asset, "pelvis");
+	let have_pv = pn >= 0 && ibm(pn) >= 0;
+	var pv = linalg::v3(0.0, 0.0, 0.0);
+	if have_pv { pv = rp(pn); }
 	for c in chains {
 		let K = par(ch_g[c]);
-		let f0 = ch_first[c];
-		if K.follow > 0.0 && th[0] >= 0 && have_pv && ibm(b_node[f0]) >= 0 {
-			let r0 = rp(b_node[f0]);
+		if K.follow > 0.0 && th[0] >= 0 && have_pv && ibm(b_node[ch_first[c]]) >= 0 {
+			let r0 = rp(b_node[ch_first[c]]);
 			let nrm = linalg::unit3(linalg::v3(r0.x - pv.x, 0.0, r0.z - pv.z));
 			ch_fo[c] = clamp01((nrm.z + 0.55) * 1.3) * K.follow;
 			ch_wl[c] = clamp01(0.5 + r0.x / 0.06);
 			let il = qconj(rrot(th[0]));
 			let ir = qconj(rrot(th[1]));
 			for k in ch_n[c] - 1 {
-				let f = f0 + k;
-				if ibm(b_node[f]) >= 0 && ibm(b_node[f + 1]) >= 0 {
-					let dm = linalg::unit3(rp(b_node[f + 1]) - rp(b_node[f]));
-					b_ul[f] = linalg::qrotate(il, dm);
-					b_ur[f] = linalg::qrotate(ir, dm);
+				let slot = ch_first[c] + k;
+				let na = b_node[slot];
+				let nn = b_node[slot + 1];
+				if ibm(na) >= 0 && ibm(nn) >= 0 {
+					let dm = linalg::unit3(rp(nn) - rp(na));
+					b_ul[slot] = linalg::qrotate(il, dm);
+					b_ur[slot] = linalg::qrotate(ir, dm);
 				}
 			}
 		}
@@ -338,11 +342,10 @@ fn spring_open(asset int, it int) int {
 	var has3 = false;
 	for c in chains { if ch_g[c] == 3 { has3 = true; } }
 	if has3 {
-		let m = gltf::nodes[skin_node].mesh;
-		let pr = gltf::meshes[m].prims;
-		for sd in 2 {
-			let a = find(asset, if sd == 0 { "thigh_l" } else { "thigh_r" });
-			let b = find(asset, if sd == 0 { "calf_l" } else { "calf_r" });
+		let mesh = gltf::nodes[skin_node].mesh;
+		for side_i in 2 {
+			let a = find(asset, if side_i == 0 { "thigh_l" } else { "thigh_r" });
+			let b = find(asset, if side_i == 0 { "calf_l" } else { "calf_r" });
 			if a < 0 || b < 0 || ibm(a) < 0 { continue; }
 			let A = rp(a);
 			let B = rp(b);
@@ -350,14 +353,15 @@ fn spring_open(asset int, it int) int {
 			let bi = joint_of(a);
 			var lo f32[>..] = [];
 			var hi f32[>..] = [];
-			for pi in pr.count {
-				let prim = gltf::prims[pr.first + pi];
+			let prims = gltf::meshes[mesh].prims;
+			for pi in prims.count {
+				let prim = gltf::prims[prims.first + pi];
 				for vi in prim.vcount {
 					let v = prim.vfirst + vi;
 					let o = v * gltf::VERTEX_FLOATS;
 					var w f32 = 0.0;
 					for j in 4 {
-						if (gltf::verts[o + 18 + j] as int) == bi { w += gltf::verts[o + 22 + j]; }
+						if gltf::verts[o + 18 + j] as int == bi { w += gltf::verts[o + 22 + j]; }
 					}
 					if w < 0.6 { continue; }
 					let p = linalg::v3(gltf::verts[o], gltf::verts[o + 1], gltf::verts[o + 2]);
@@ -382,44 +386,43 @@ fn spring_open(asset int, it int) int {
 	}
 	for g in 4 {
 		var used = false;
-		for c in chains { if ch_g[c] == g { used = true; } }
-		if !used { continue; }
-		var y0 f32 = 1000000.0;
-		var y1 f32 = -1000000.0;
+		var y0 f32 = 1000000000.0;
+		var y1 f32 = -1000000000.0;
 		for c in chains {
 			if ch_g[c] != g { continue; }
+			used = true;
 			for k in ch_n[c] {
-				let nd = b_node[ch_first[c] + k];
-				if ibm(nd) < 0 { continue; }
-				let y = rp(nd).y;
+				let node = b_node[ch_first[c] + k];
+				if ibm(node) < 0 { continue; }
+				let y = rp(node).y;
 				y0 = min(y0, y);
 				y1 = max(y1, y);
 			}
 		}
+		if !used { continue; }
 		y0 -= 0.05;
 		let ns = par(g).ns;
-		for k in ncount {
-			let n = nfirst + k;
-			if gltf::nodes[n].mesh < 0 || gltf::nodes[n].skin != sk { continue; }
-			let m = gltf::nodes[n].mesh;
-			let name = gltf::text_of(gltf::meshes[m].name);
-			if !surf_ok(g, name) { continue; }
-			let pr = gltf::meshes[m].prims;
-			var coll int[>..] = [];
-			for pi in pr.count {
-				let prim = gltf::prims[pr.first + pi];
+		for k in nodes.count {
+			let n = nodes.first + k;
+			let mesh = gltf::nodes[n].mesh;
+			if mesh < 0 || gltf::nodes[n].skin != sk { continue; }
+			if !surf_ok(g, gltf::text_of(gltf::meshes[mesh].name)) { continue; }
+			var col int[>..] = [];
+			let prims = gltf::meshes[mesh].prims;
+			for pi in prims.count {
+				let prim = gltf::prims[prims.first + pi];
 				for vi in prim.vcount {
 					let v = prim.vfirst + vi;
 					let o = v * gltf::VERTEX_FLOATS;
 					let y = gltf::verts[o + 1];
-					if y > y0 && y < y1 && pick(g, gltf::verts[o], gltf::verts[o + 5]) { coll.push(v); }
+					if y > y0 && y < y1 && pick(g, gltf::verts[o], gltf::verts[o + 5]) { col.push(v); }
 				}
 			}
-			let st = max(1, (coll.len + ns - 1) / ns);
-			for j in coll.len {
+			let st = max(1, (col.len + ns - 1) / ns);
+			for j in col.len {
 				if j % st == 0 {
 					s_g.push(g);
-					s_v.push(coll[j]);
+					s_v.push(col[j]);
 					s_w.push(linalg::v3(0.0, 0.0, 0.0));
 				}
 			}

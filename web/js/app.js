@@ -11,12 +11,11 @@ import {arSupported,startAR} from './xr.js'
 const VERSION='1.2.0',$=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],BASE=new URL('../',import.meta.url),now=()=>performance.now()
 const STOCK={holo:{name:'Holo',file:'models/holo.glb',hair:'models/holo.hair',img:'models/holo.webp',persona:'holo',blurb:'Bubbly punk-pop holo buddy'},dex:{name:'Dex',file:'models/dex.glb',img:'models/dex.webp',persona:'dex',blurb:'Calm engineer, dry wit'},mannequin:{name:'Mannequin',cname:'Amni',file:'anim/AnimationLibrary_Godot_Standard.gltf',img:'models/mannequin.webp',persona:'neutral',blurb:'Plain and simple'}}
 const COOL={wave:7000,clap:7000,hands_up:7000,thumbs_up:7000,thumbs_down:7000,peace:7000,love:7000,fist:7000,pointing_up:7000,point:7000,wink:10000,nod:14000,head_shake:14000,object:4000},reacted={}
-let HE=!!navigator.gpu&&new URLSearchParams(location.search).get('renderer')!=='three'
+let HE=!!navigator.gpu
 let hm=null,S=store.load(),core,lib,av=null,avMeta={name:'',persona:'neutral'},senses=null,listener=null,xr=null,mode='room',busy=false,talking=false,lastReact=0,home=new THREE.Vector3(),go=null,roam=0,lookOff=null,history=S.remember?S.history||[]:[],ctrl=null,roomView=null,greeted=false
 const save=()=>{S.history=history;store.save(S)}
 const canvas=$('#stage');let renderer=null
-const mkR=()=>{renderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:true});renderer.setPixelRatio(Math.min(2,devicePixelRatio));renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.12;renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;scene.environment=new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(),.04).texture;resize();renderer.setAnimationLoop(tick)}
-const three=()=>{HE=false;hm?.dispose();hm=null;renderer||mkR()},loop=()=>renderer||requestAnimationFrame(function f(t){renderer||(tick(t),requestAnimationFrame(f))})
+const loop=()=>requestAnimationFrame(function f(t){tick(t);requestAnimationFrame(f)})
 const scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera(35,1,.05,100),clock=new THREE.Clock();camera.position.set(0,1.27,4.7)
 scene.environmentIntensity=.2
 const keyL=new THREE.DirectionalLight(0xffffff,3.1);keyL.position.set(2.3,3,1.3);keyL.castShadow=true;keyL.shadow.mapSize.set(2048,2048);keyL.shadow.normalBias=.02;Object.assign(keyL.shadow.camera,{left:-2,right:2,top:2,bottom:-2,near:.5,far:10});keyL.shadow.radius=4;scene.add(keyL)
@@ -88,12 +87,12 @@ let yaw=0;function tick(t,frame){
     av.lookAt(lp,go?0:.95)
     if(mode==='camera'&&S.track&&senses?.world){const res=core.pose(senses.world,S.mirror,now()/1000,av.slot,av.rest);av.pose(res.out,res.n?1:0)}else av.pose(null)
     av.update(dt)
-    const b=$('#bubble');if(!b.hidden){const hb=av.bones[av.slot[5]],p=hb.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0,.32*r.scale.x,0)).project(xr?renderer.xr.getCamera():camera),x=(p.x*.5+.5)*innerWidth,y=(-p.y*.5+.5)*innerHeight;b.style.left=Math.max(110,Math.min(innerWidth-110,x))+'px';b.style.top=Math.max(120,Math.min(innerHeight-170,y))+'px';now()>bubbleT&&(b.style.opacity=0,now()>bubbleT+400&&(b.hidden=true))}}
+    const b=$('#bubble');if(!b.hidden){const p=av.head().add(new THREE.Vector3(0,.32*r.scale.x,0)).project(xr?renderer.xr.getCamera():camera),x=(p.x*.5+.5)*innerWidth,y=(-p.y*.5+.5)*innerHeight;b.style.left=Math.max(110,Math.min(innerWidth-110,x))+'px';b.style.top=Math.max(120,Math.min(innerHeight-170,y))+'px';now()>bubbleT&&(b.style.opacity=0,now()>bubbleT+400&&(b.hidden=true))}}
   xr||controls.update();renderer?.render(scene,camera);xr||hm?.sync(camera,pad.position)
 }
 async function modelBytes(id){if(id.startsWith('user:')){const m=await store.models.get(id);if(!m)throw new Error('That model is no longer saved here.');avMeta={name:m.name.replace(/\.(glb|vrm)$/i,''),persona:m.persona||'neutral'};return m.blob.arrayBuffer()}const k=id.replace('stock:',''),s=STOCK[k]||STOCK.holo;avMeta={name:s.cname||s.name,persona:s.persona};if(k==='mannequin')return new URL(s.file,BASE).href;const r=await fetch(new URL(s.file,BASE));if(!r.ok)throw new Error(`${s.name} isn't available yet.`);return r.arrayBuffer()}
 async function useModel(id,quiet){
-  status('Loading model…');try{const src=await modelBytes(id),hb=HE?(typeof src==='string'?await(await import('./heview.js')).glbOf(src):src.slice(0)):null,next=await loadAvatar(core,src,lib);av?.dispose();hm?.dispose();hm=null;av=next;if(HE){const hs=STOCK[id.replace('stock:','')]?.hair,hr=hs&&await fetch(new URL(hs,BASE)).catch(()=>null);hm=await(await import('./heview.js')).heMirror(av,new Uint8Array(hb),hr?.ok?new Uint8Array(await hr.arrayBuffer()):null).catch(e=>(console.warn('helium renderer off:',e),three(),null))}scene.add(av.root);av.root.position.copy(home);av.root.scale.setScalar(S.scale);yaw=Math.atan2(camera.position.x,camera.position.z);S.model_id=id;save();$('#who').textContent=cname();renderModels();$('#rig').textContent=`Body parts matched: ${av.f.count} of 22.${av.morphs.open?' Talking mouth found.':''}${av.morphs.blink?' Blinks.':''}`;status('');quiet||respond(core.reply(context(),'who are you'),false)}
+  status('Loading model…');try{const src=await modelBytes(id),hb=typeof src==='string'?await(await import('./heview.js')).glbOf(src):src.slice(0),next=await loadAvatar(core,src,lib);av?.dispose();hm?.dispose();hm=null;av=next;{const st=STOCK[id.replace('stock:','')],get=async u=>{const r=u&&await fetch(new URL(u,BASE)).catch(()=>null);return r?.ok?new Uint8Array(await r.arrayBuffer()):null};hm=await(await import('./heview.js')).heMirror(av,new Uint8Array(hb),await get(st?.hair),await get(st?.cloth))}scene.add(av.root);av.root.position.copy(home);av.root.scale.setScalar(S.scale);yaw=Math.atan2(camera.position.x,camera.position.z);S.model_id=id;save();$('#who').textContent=cname();renderModels();$('#rig').textContent=`Body parts matched: ${av.f.count} of 22.${av.morphs.open?' Talking mouth found.':''}${av.morphs.blink?' Blinks.':''}`;status('');quiet||respond(core.reply(context(),'who are you'),false)}
   catch(e){status('');toast(e.message,8000);if(!av&&id!=='stock:mannequin')return useModel(id==='stock:holo'?'stock:mannequin':'stock:holo',true)}
 }
 async function addFile(f){
@@ -141,12 +140,12 @@ function bindUI(){
 }
 async function boot(){
   try{
-    $('#loadMsg').textContent='Starting the Helium core…';HE&&=!!await navigator.gpu.requestAdapter().catch(()=>null);core=await loadCore(new URL('companion.wasm',BASE));globalThis.amniCore=core
+    $('#loadMsg').textContent='Starting the Helium core…';HE&&=!!await navigator.gpu.requestAdapter().catch(()=>null);if(!HE)throw new Error('this browser has no WebGPU. Use a current Chrome, Edge or Safari.');core=await loadCore(new URL('companion.wasm',BASE));globalThis.amniCore=core
     $('#loadMsg').textContent='Loading animations…';lib=await loadLibrary(core,new URL('anim/AnimationLibrary_Godot_Standard.gltf',BASE).href)
     bindUI();bindSettings();$('#loadMsg').textContent='Bringing your companion in…';await useModel(S.model_id,true)
-    HE?loop():mkR();$('#loading').classList.add('done');setTimeout(()=>greeted||respond(core.reply(context(),'hello'),false),700)
+    loop();$('#loading').classList.add('done');setTimeout(()=>greeted||respond(core.reply(context(),'hello'),false),700)
     history.forEach(h=>logLine(h.role==='user'?'user':'bot',h.role==='user'?h.content:core.tags(h.content).clean))
-    arSupported().then(ok=>$('#arBtn').hidden=!ok)
+    $('#arBtn').hidden=true
     'serviceWorker'in navigator&&location.protocol==='https:'&&navigator.serviceWorker.register('sw.js').catch(()=>{})
   }catch(e){console.error(e);$('#loadMsg').textContent='Could not start: '+e.message}
 }

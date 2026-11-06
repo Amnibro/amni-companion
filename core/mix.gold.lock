@@ -1,0 +1,276 @@
+=== 290f7fcb75ace077
+import gfx;
+import math;
+import gfx.linalg;
+import gfx.gltf;
+import gfx.motion;
+import gfx.scene3d;
+import spring;
+=== -7b69c4f8220c46b6
+var item = -1;
+var asset = -1;
+var slot_node int[22] = [-1; 22];
+var rest_q linalg::Quat[22] = [linalg::quat_identity(); 22];
+var cur_q linalg::Quat[22] = [linalg::quat_identity(); 22];
+var hips_t = float3 { 0.0, 0.0, 0.0 };
+var frames f32[>..];
+var clip_first int[>..];
+var clip_nf int[>..];
+var clip_loop bool[>..];
+var act_clip int[>..];
+var act_t f32[>..];
+var act_w f32[>..];
+var act_dw f32[>..];
+var act_done bool[>..];
+var cur = -1;
+=== 17174834c93e42a6
+fn mix_open(a int, it int, slots i32[:]) {
+	asset = a;
+	item = it;
+	for k in 22 {
+		let q = slots[k] as int;
+		if q >= 0 && q < gltf::assets[a].nodes.count {
+			slot_node[k] = gltf::assets[a].nodes.first + q;
+			rest_q[k] = gltf::nodes[slot_node[k]].r;
+		} else {
+			slot_node[k] = -1;
+			rest_q[k] = linalg::quat_identity();
+		}
+		cur_q[k] = rest_q[k];
+	}
+	if slot_node[0] >= 0 {
+		hips_t = gltf::nodes[slot_node[0]].t;
+	}
+	frames.clear();
+	clip_first.clear();
+	clip_nf.clear();
+	clip_loop.clear();
+	act_clip.clear();
+	act_t.clear();
+	act_w.clear();
+	act_dw.clear();
+	act_done.clear();
+	cur = -1;
+}
+=== -26daf2fa17445842
+fn mix_clip(nf int, looping bool, src f32[:]) int {
+	clip_first.push(frames.len);
+	clip_nf.push(nf);
+	clip_loop.push(looping);
+	frames.append(src[..nf * 91]);
+	return clip_first.len - 1;
+}
+=== -79b982149ac771e3
+fn dur(c int) f32 {
+	(clip_nf[c] - 1) as f32 / 30.0
+}
+=== 017045215e8254d0
+fn mix_play(c int, fade f32) bool {
+	if c < 0 || c >= clip_first.len { return false; }
+	if cur >= 0 && act_clip[cur] == c && !act_done[cur] { return true; }
+	let f = max(fade, 0.0001);
+	for i in act_clip.len {
+		act_dw[i] = -act_w[i] / f;
+	}
+	var idx = -1;
+	for i in act_clip.len {
+		if act_clip[i] == c {
+			idx = i;
+			break;
+		}
+	}
+	if idx >= 0 {
+		act_t[idx] = 0.0;
+		act_w[idx] = 0.0;
+		act_done[idx] = false;
+	} else {
+		act_clip.push(c);
+		act_t.push(0.0);
+		act_w.push(0.0);
+		act_dw.push(0.0);
+		act_done.push(false);
+		idx = act_clip.len - 1;
+	}
+	if fade > 0.0001 {
+		act_dw[idx] = 1.0 / fade;
+	} else {
+		for i in act_clip.len {
+			act_w[i] = 0.0;
+		}
+		act_w[idx] = 1.0;
+		act_dw[idx] = 0.0;
+	}
+	cur = idx;
+	return true;
+}
+=== -62fb3bc1a876e197
+fn sample(c int, t f32, k int) linalg::Quat {
+	let x = clamp(t * 30.0, 0.0, (clip_nf[c] - 1) as f32);
+	let i0 = floor(x) as int;
+	let i1 = min(i0 + 1, clip_nf[c] - 1);
+	let u = x - (i0 as f32);
+	let o0 = clip_first[c] + i0 * 91 + k * 4;
+	let o1 = clip_first[c] + i1 * 91 + k * 4;
+	let a = linalg::Quat { frames[o0], frames[o0 + 1], frames[o0 + 2], frames[o0 + 3] };
+	let b = linalg::Quat { frames[o1], frames[o1 + 1], frames[o1 + 2], frames[o1 + 3] };
+	return linalg::qslerp(a, b, u);
+}
+fn sample_hips(c int, t f32) float3 {
+	let x = clamp(t * 30.0, 0.0, (clip_nf[c] - 1) as f32);
+	let i0 = floor(x) as int;
+	let i1 = min(i0 + 1, clip_nf[c] - 1);
+	let u = x - (i0 as f32);
+	let o0 = clip_first[c] + i0 * 91 + 88;
+	let o1 = clip_first[c] + i1 * 91 + 88;
+	let a = float3 { frames[o0], frames[o0 + 1], frames[o0 + 2] };
+	let b = float3 { frames[o1], frames[o1 + 1], frames[o1 + 2] };
+	return linalg::mix3(a, b, u);
+}
+=== -447861fe08e70f6a
+fn mix_advance(dt f32) int {
+	var result = -1;
+	for i in act_clip.len {
+		act_t[i] += dt;
+		let d = dur(act_clip[i]);
+		if clip_loop[act_clip[i]] {
+			if d > 0.0 {
+				while act_t[i] >= d { act_t[i] -= d; }
+			}
+		} else if act_t[i] >= d {
+			act_t[i] = d;
+			if !act_done[i] {
+				act_done[i] = true;
+				if i == cur { result = act_clip[i]; }
+			}
+		}
+		act_w[i] = clamp(act_w[i] + act_dw[i] * dt, 0.0, 1.0);
+		if (act_dw[i] < 0.0 && act_w[i] <= 0.0) || (act_dw[i] > 0.0 && act_w[i] >= 1.0) {
+			act_dw[i] = 0.0;
+		}
+	}
+	var wi = 0;
+	var newcur = -1;
+	for i in act_clip.len {
+		let keep = i == cur || act_w[i] > 0.0 || act_dw[i] > 0.0;
+		if keep {
+			if i == cur { newcur = wi; }
+			act_clip[wi] = act_clip[i];
+			act_t[wi] = act_t[i];
+			act_w[wi] = act_w[i];
+			act_dw[wi] = act_dw[i];
+			act_done[wi] = act_done[i];
+			wi += 1;
+		}
+	}
+	let removed = act_clip.len - wi;
+	if removed > 0 {
+		act_clip.pop_n(removed);
+		act_t.pop_n(removed);
+		act_w.pop_n(removed);
+		act_dw.pop_n(removed);
+		act_done.pop_n(removed);
+	}
+	cur = newcur;
+	for k in 22 {
+		if slot_node[k] >= 0 {
+			var cum f32 = 0.0;
+			var q = rest_q[k];
+			for i in act_clip.len {
+				if act_w[i] > 0.0 {
+					cum += act_w[i];
+					let s = sample(act_clip[i], act_t[i], k);
+					q = if cum == act_w[i] { s } else { linalg::qslerp(q, s, act_w[i] / cum) };
+				}
+			}
+			if cum < 1.0 && cum > 0.0 {
+				q = linalg::qslerp(rest_q[k], q, cum);
+			}
+			cur_q[k] = q;
+		}
+	}
+	if slot_node[0] >= 0 {
+		let base = gltf::nodes[slot_node[0]].t;
+		var cum f32 = 0.0;
+		var h = base;
+		for i in act_clip.len {
+			if act_w[i] > 0.0 {
+				cum += act_w[i];
+				let s = sample_hips(act_clip[i], act_t[i]);
+				h = if cum == act_w[i] { s } else { linalg::mix3(h, s, act_w[i] / cum) };
+			}
+		}
+		if cum < 1.0 && cum > 0.0 {
+			h = linalg::mix3(base, h, cum);
+		}
+		hips_t = h;
+	}
+	push();
+	return result;
+}
+=== -1da38e821c79dbff
+fn push() {
+	for k in 22 {
+		if slot_node[k] >= 0 {
+			let n = gltf::nodes[slot_node[k]];
+			s3d::set_node(item, slot_node[k], if k == 0 { hips_t } else { n.t }, cur_q[k], n.s);
+		}
+	}
+}
+=== 64a9a9822efa6317
+fn mix_apply(ov f32[:]) {
+	for k in 22 {
+		if slot_node[k] >= 0 {
+			let w = ov[k * 5 + 4];
+			if w > 0.0 {
+				cur_q[k] = linalg::qslerp(cur_q[k], linalg::Quat { ov[k * 5], ov[k * 5 + 1], ov[k * 5 + 2], ov[k * 5 + 3] }, min(w, 1.0));
+			}
+		}
+	}
+	push();
+}
+=== 601633085ed4fd1d
+fn mix_rest() {
+	for k in 22 {
+		cur_q[k] = rest_q[k];
+	}
+	if slot_node[0] >= 0 {
+		hips_t = gltf::nodes[slot_node[0]].t;
+	}
+	push();
+}
+=== -38d5f466ac088ca1
+fn mix_live(out f32[:]) {
+	s3d::pose(item);
+	for k in 22 {
+		if slot_node[k] < 0 {
+			out[12 * k + 11] = 0.0;
+		} else {
+			let node = slot_node[k];
+			let wq = mquat(motion::world[node]);
+			let wp = pos(motion::world[node]);
+			let par = gltf::nodes[node].parent;
+			var pq = linalg::quat_identity();
+			if par >= 0 {
+				pq = mquat(motion::world[par]);
+			}
+			out[12 * k] = wq.x;
+			out[12 * k + 1] = wq.y;
+			out[12 * k + 2] = wq.z;
+			out[12 * k + 3] = wq.w;
+			out[12 * k + 4] = wp.x;
+			out[12 * k + 5] = wp.y;
+			out[12 * k + 6] = wp.z;
+			out[12 * k + 7] = pq.x;
+			out[12 * k + 8] = pq.y;
+			out[12 * k + 9] = pq.z;
+			out[12 * k + 10] = pq.w;
+			out[12 * k + 11] = 1.0;
+		}
+	}
+	if slot_node[5] >= 0 {
+		let hp = pos(motion::world[slot_node[5]]);
+		out[264] = hp.x;
+		out[265] = hp.y;
+		out[266] = hp.z;
+	}
+}

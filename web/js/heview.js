@@ -1,18 +1,18 @@
 import {start} from '../heview/helium.js'
 export async function heView(canvas,glb,o={}){
   const V={},keep=(id,p,n)=>{V[id]=[Number(p),Number(n)]},te=new TextEncoder()
-  const rt=await start({wasm:o.wasm||new URL('../heview/view.wasm',import.meta.url).href,canvas,files:{'/m/avatar.glb':glb,...(o.ring?{'/m/ring.png':o.ring}:{}),...(o.hair?{'/m/avatar.hair':o.hair}:{})},args:['view','/m/avatar.glb',...(o.hair?['/m/avatar.hair']:[])],imports:{hv_f32:keep,hv_i32:keep,hv_bytes:keep}})
+  const rt=await start({wasm:o.wasm||new URL('../heview/view.wasm',import.meta.url).href,canvas,files:{'/m/avatar.glb':glb,...(o.ring?{'/m/ring.png':o.ring}:{}),...(o.hair?{'/m/avatar.hair':o.hair}:{}),...(o.cloth?{'/m/avatar.cloth':o.cloth}:{})},args:['view','/m/avatar.glb',...(o.hair?['/m/avatar.hair']:[])],imports:{hv_f32:keep,hv_i32:keep,hv_bytes:keep}})
   await rt.done
   const view=(T,id)=>new T(rt.mem().buffer,V[id][0],V[id][1])
-  return{rt,bones:names=>{const b=te.encode(names.join('\n'));view(Uint8Array,2).set(b);return rt.call('hv_bones',b.length)},nodes:ix=>{view(Int32Array,3).set(ix);return rt.call('hv_nodes',ix.length)},pose:a=>view(Float32Array,0).set(a),place:m=>view(Float32Array,4).set(m),camera:(eye,target,fov,pad=[0,0,0],tb=1,tr=0)=>view(Float32Array,1).set([...eye,...target,fov,0,...pad,0,tb,tr]),weights:(a,n)=>{view(Float32Array,5).set(a.subarray(0,3*n));rt.call('hv_weights',n)},stop:()=>rt.call('hv_stop')}
+  return{rt,bones:names=>{const b=te.encode(names.join('\n'));view(Uint8Array,2).set(b);return rt.call('hv_bones',b.length)},nodes:ix=>{view(Int32Array,3).set(ix);return rt.call('hv_nodes',ix.length)},pose:a=>view(Float32Array,0).set(a),place:m=>view(Float32Array,4).set(m),camera:(eye,target,fov,pad=[0,0,0],tb=1,tr=0)=>view(Float32Array,1).set([...eye,...target,fov,0,...pad,0,tb,tr]),weights:(a,n)=>{view(Float32Array,5).set(a.subarray(0,3*n));rt.call('hv_weights',n)},rig:sl=>{view(Int32Array,9).set(sl);rt.call('hv_rig')},clip:(fr,nf,lp)=>{view(Float32Array,6).set(fr.subarray(0,91*nf));return rt.call('hv_clip',nf,lp?1:0)},play:(c,f)=>rt.call('hv_play',c,f),advance:dt=>rt.call('hv_advance',dt),apply:o=>{view(Float32Array,7).set(o);rt.call('hv_apply')},rest:()=>rt.call('hv_rest'),live:()=>{rt.call('hv_live');return view(Float32Array,8)},stop:()=>rt.call('hv_stop')}
 }
-export async function heMirror(av,glb,hair){
+export async function heMirror(av,glb,hair,cloth){
   const cv=document.createElement('canvas');cv.id='hestage';cv.style.cssText='position:fixed;left:0;top:0;width:100%;height:100%;pointer-events:none';document.body.prepend(cv)
-  let shown;const rr=await fetch(new URL('../heview/ring.png',import.meta.url)).catch(()=>null),v=await heView(cv,glb,{hair,ring:rr?.ok?new Uint8Array(await rr.arrayBuffer()):null}).catch(e=>{cv.remove();throw e}),objs=[...av.byNode],P=new Float32Array(10*objs.length)
-  v.nodes(objs.map(x=>x[0]));const mo=objs.flatMap(([,o],k)=>{const m=o.morphTargetInfluences?o:o.children.find(c=>c.morphTargetInfluences);return m?[[k,m.morphTargetInfluences]]:[]}),nw=mo.reduce((s,[,f])=>s+Math.min(64,f.length),0),Wt=new Float32Array(3*nw);av.noSpring=true;shown=[];av.g.scene.traverse(o=>o.isMesh&&o.visible&&(shown.push(o),o.visible=false))
-  return{v,cv,sync(cam,pad){objs.forEach(([,o],k)=>P.set([o.position.x,o.position.y,o.position.z,o.quaternion.x,o.quaternion.y,o.quaternion.z,o.quaternion.w,o.scale.x,o.scale.y,o.scale.z],10*k));v.pose(P);if(nw){let i=0;for(const[k,f]of mo)for(let t=0;t<Math.min(64,f.length);t++)Wt.set([k,t,f[t]],3*i++);v.weights(Wt,nw)}v.place(av.g.scene.matrixWorld.elements)
+  const rr=await fetch(new URL('../heview/ring.png',import.meta.url)).catch(()=>null),v=await heView(cv,glb,{hair,cloth,ring:rr?.ok?new Uint8Array(await rr.arrayBuffer()):null}).catch(e=>{cv.remove();throw e})
+  av.attach(v);const mo=[...av.mw],nw=mo.reduce((s,[,f])=>s+Math.min(64,f.length),0),Wt=new Float32Array(3*nw)
+  return{v,cv,sync(cam,pad){if(nw){let i=0;for(const[k,f]of mo)for(let t=0;t<Math.min(64,f.length);t++)Wt.set([k,t,f[t]],3*i++);v.weights(Wt,nw)}v.place(av.g.scene.matrixWorld.elements)
     const m=cam.matrixWorld.elements,h=innerHeight,lift=cam.view?.enabled?cam.view.offsetY:0;cv.style.top=-2*lift+'px';cv.style.height=h+2*lift+'px'
     v.camera([m[12],m[13],m[14]],[m[12]-m[8],m[13]-m[9],m[14]-m[10]],2*Math.atan(Math.tan(cam.fov*Math.PI/360)*(h+2*lift)/h),pad?[pad.x,pad.y,pad.z]:[0,0,0],av.teethB??1,av.teethR??0)},
-    dispose(){v.stop();cv.remove();av.noSpring=false;shown.forEach(o=>o.visible=true)}}
+    dispose(){v.stop();cv.remove()}}
 }
 export async function glbOf(url){const j=await(await fetch(url)).json(),b=new Uint8Array(await(await fetch(new URL(j.buffers[0].uri,url))).arrayBuffer());delete j.buffers[0].uri;const t=new TextEncoder().encode(JSON.stringify(j)),jl=t.length+3&~3,bl=b.length+3&~3,o=new Uint8Array(28+jl+bl),d=new DataView(o.buffer);o.fill(32,20,20+jl);o.set(t,20);o.set(b,28+jl);[[0,0x46546C67],[4,2],[8,o.length],[12,jl],[16,0x4E4F534A],[20+jl,bl],[24+jl,0x004E4942]].forEach(([k,v])=>d.setUint32(k,v,true));return o.buffer}
