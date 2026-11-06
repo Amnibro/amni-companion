@@ -156,9 +156,8 @@ fn mesh_verts(mesh int, out int[>..]&) {
 		for v in pr.vcount { out.push(pr.vfirst + v); }
 	}
 }
-=== 7df4fd68f7a61877
-fn col3(v) float3 { float3 { v.x, v.y, v.z } }
-fn contact_slot(v int) int {
+=== -6125f7e33a1713e2
+fn hv_add(v int) int {
 	for k in h_v.len {
 		if h_v[k] == v { return k; }
 	}
@@ -168,356 +167,424 @@ fn contact_slot(v int) int {
 	return h_v.len - 1;
 }
 fn setup_group(asset int, sim int[:], sim_class int[:], still int[:]) {
+	let base0 = p_x.len;
+	let nfab = fabrics.len;
 	var gv int[>..] = [];
 	var gc int[>..] = [];
 	for k in sim.len {
-		let before = gv.len;
-		mesh_verts(gltf::nodes[sim[k]].mesh, gv);
-		for v in before..gv.len { gc.push(sim_class[k]); }
+		let mesh = gltf::nodes[sim[k]].mesh;
+		if mesh < 0 { continue; }
+		let ms = gltf::meshes[mesh];
+		for pi in ms.prims.count {
+			let pr = gltf::prims[ms.prims.first + pi];
+			for v in pr.vcount {
+				gv.push(pr.vfirst + v);
+				gc.push(sim_class[k]);
+			}
+		}
 	}
-	let n = gv.len;
-	if n == 0 { return; }
-	let pv = gltf::find_node(asset, "pelvis");
-	if pv < 0 { return; }
-	let VF = gltf::VERTEX_FLOATS;
-	let ncl = fabrics.len;
-	var gp float3[>..] = [];
-	for i in n { gp.push(vpos(gv[i])); }
-	var seeds int[>..] = [];
-	for i in n {
+	if gv.len == 0 { return; }
+	var seedp float3[>..] = [];
+	for i in gv.len {
+		let vp = vpos(gv[i]);
 		let cell = f_cell[gc[i]];
 		var ok = true;
-		for s in seeds {
-			if linalg::length3(gp[s] - gp[i]) < cell { ok = false; break; }
+		for s in seedp {
+			if linalg::length3(vp - s) < cell { ok = false; }
 		}
-		if ok { seeds.push(i); }
+		if ok { seedp.push(vp); }
 	}
-	let m = seeds.len;
+	let m = seedp.len;
 	var lab int[>..] = [];
-	for i in n {
-		var best = 0;
+	for i in gv.len {
+		let vp = vpos(gv[i]);
+		var bi = 0;
 		var bd f32 = 1.0e30;
-		for c in m {
-			let d = linalg::length3(gp[seeds[c]] - gp[i]);
-			if d < bd { bd = d; best = c; }
+		for s in m {
+			let d = linalg::length3(vp - seedp[s]);
+			if d < bd {
+				bd = d;
+				bi = s;
+			}
 		}
-		lab.push(best);
+		lab.push(bi);
 	}
-	var csum float3[>..] = [];
-	var ccnt int[>..] = [];
-	var cvote int[>..] = [];
-	for c in m {
-		csum.push(float3 { 0.0, 0.0, 0.0 });
-		ccnt.push(0);
-		for q in ncl { cvote.push(0); }
+	var sums float3[>..] = [];
+	var cnt int[>..] = [];
+	var votes int[>..] = [];
+	for s in m {
+		sums.push(float3 { 0.0, 0.0, 0.0 });
+		cnt.push(0);
 	}
-	for i in n {
-		let c = lab[i];
-		csum[c] = csum[c] + gp[i];
-		ccnt[c] += 1;
-		cvote[c * ncl + gc[i]] += 1;
+	for s in m * nfab { votes.push(0); }
+	for i in gv.len {
+		let l = lab[i];
+		sums[l] = sums[l] + vpos(gv[i]);
+		cnt[l] += 1;
+		votes[l * nfab + gc[i]] += 1;
 	}
-	var C float3[>..] = [];
+	var cpos float3[>..] = [];
 	var cls int[>..] = [];
-	for c in m {
-		C.push(csum[c] / (max(ccnt[c], 1) as f32));
+	for s in m {
+		cpos.push(sums[s] / (max(cnt[s], 1) as f32));
 		var bc = 0;
 		var bv = -1;
-		for q in ncl {
-			if cvote[c * ncl + q] > bv { bv = cvote[c * ncl + q]; bc = q; }
+		for c in nfab {
+			if votes[s * nfab + c] > bv {
+				bv = votes[s * nfab + c];
+				bc = c;
+			}
 		}
 		cls.push(bc);
 	}
 	var adj bool[>..] = [];
-	for q in m * m { adj.push(false); }
+	for s in m * m { adj.push(false); }
 	var base = 0;
 	for k in sim.len {
-		let mi = gltf::nodes[sim[k]].mesh;
-		if mi >= 0 {
-			let ms = gltf::meshes[mi];
-			for pi in ms.prims.count {
-				let pr = gltf::prims[ms.prims.first + pi];
-				for t in pr.icount / 3 {
-					for e in 3 {
-						let a = lab[base + (gltf::indices[pr.ifirst + 3 * t + e] as int)];
-						let b = lab[base + (gltf::indices[pr.ifirst + 3 * t + (e + 1) % 3] as int)];
-						if a != b {
-							adj[a * m + b] = true;
-							adj[b * m + a] = true;
-						}
+		let mesh = gltf::nodes[sim[k]].mesh;
+		if mesh < 0 { continue; }
+		let ms = gltf::meshes[mesh];
+		for pi in ms.prims.count {
+			let pr = gltf::prims[ms.prims.first + pi];
+			let nt = pr.icount / 3;
+			for t in nt {
+				let i0 = gltf::indices[pr.ifirst + 3 * t] as int;
+				let i1 = gltf::indices[pr.ifirst + 3 * t + 1] as int;
+				let i2 = gltf::indices[pr.ifirst + 3 * t + 2] as int;
+				let l = [lab[base + i0], lab[base + i1], lab[base + i2]];
+				for e in 3 {
+					let a = l[e];
+					let b = l[(e + 1) % 3];
+					if a != b {
+						adj[a * m + b] = true;
+						adj[b * m + a] = true;
 					}
 				}
-				base += pr.vcount;
 			}
+			base += pr.vcount;
 		}
 	}
-	var la int[>..] = [];
-	var lb int[>..] = [];
-	var ll f32[>..] = [];
-	var lk f32[>..] = [];
+	var ea int[>..] = [];
+	var eb int[>..] = [];
+	var el f32[>..] = [];
+	var ek f32[>..] = [];
 	for i in m {
 		for j in i + 1..m {
 			if adj[i * m + j] {
-				la.push(i);
-				lb.push(j);
-				ll.push(linalg::length3(C[i] - C[j]));
-				lk.push(1.0);
+				ea.push(i);
+				eb.push(j);
+				el.push(linalg::length3(cpos[i] - cpos[j]));
+				ek.push(1.0);
 			}
 		}
 	}
-	let nst = la.len;
-	var seen bool[>..] = [];
-	for q in m * m { seen.push(false); }
+	let nstruct = ea.len;
+	var done bool[>..] = [];
+	for s in m * m { done.push(false); }
 	for i in m {
 		for j in m {
 			if adj[i * m + j] {
 				for k in m {
-					if k > i && adj[j * m + k] && !adj[i * m + k] && !seen[i * m + k] {
-						seen[i * m + k] = true;
-						la.push(i);
-						lb.push(k);
-						ll.push(linalg::length3(C[i] - C[k]));
-						lk.push((f_bend[cls[i]] + f_bend[cls[k]]) * 0.5);
+					if k > i && adj[j * m + k] && !adj[i * m + k] && !done[i * m + k] {
+						done[i * m + k] = true;
+						ea.push(i);
+						eb.push(k);
+						el.push(linalg::length3(cpos[i] - cpos[k]));
+						ek.push((f_bend[cls[i]] + f_bend[cls[k]]) * 0.5);
 					}
 				}
 			}
 		}
 	}
-	let nj = gltf::skins[sk].joints.count;
+	let skin0 = gltf::skins[sk];
+	let nj = skin0.joints.count;
+	var wacc f32[>..] = [];
+	for s in m * nj { wacc.push(0.0); }
+	for i in gv.len {
+		let bs = gv[i] * gltf::VERTEX_FLOATS;
+		let l = lab[i];
+		for q in 4 {
+			let ji = gltf::verts[bs + 18 + q] as int;
+			let w = gltf::verts[bs + 22 + q];
+			if ji >= 0 && ji < nj { wacc[l * nj + ji] += w; }
+		}
+	}
 	let tl = gltf::find_node(asset, "thigh_l");
 	let tr = gltf::find_node(asset, "thigh_r");
-	var isleg bool[>..] = [];
+	var leg bool[>..] = [];
 	for k in nj {
-		var nd = gltf::ints[gltf::skins[sk].joints.first + k];
-		var leg = false;
-		while nd >= 0 {
-			if nd == tl || nd == tr { leg = true; break; }
-			nd = gltf::nodes[nd].parent;
+		var cur = gltf::ints[skin0.joints.first + k];
+		var isleg = false;
+		while cur >= 0 {
+			if cur == tl || cur == tr {
+				isleg = true;
+				break;
+			}
+			cur = gltf::nodes[cur].parent;
 		}
-		isleg.push(leg);
+		leg.push(isleg);
 	}
-	var jw f32[>..] = [];
-	for q in m * nj { jw.push(0.0); }
-	for i in n {
-		let c = lab[i];
-		let b = gv[i] * VF;
-		for q in 4 {
-			let ji = gltf::verts[b + 18 + q] as int;
-			if ji >= 0 && ji < nj { jw[c * nj + ji] += gltf::verts[b + 22 + q]; }
-		}
-	}
-	let pj = joint_index(pv);
+	let pv = gltf::find_node(asset, "pelvis");
+	var pz f32 = 0.0;
+	if pv >= 0 { pz = pos(linalg::inverse(ibm_of(pv))).z; }
+	let pjt = joint_index(pv);
+	let jl = joint_index(tl);
+	let jr = joint_index(tr);
 	var aj int[>..] = [];
 	var aw f32[>..] = [];
-	for c in m {
-		var keep f32 = 0.0;
-		for k in nj {
-			if !isleg[k] { keep += jw[c * nj + k]; }
+	for i in m {
+		var tw f32[>..] = [];
+		var kept f32 = 0.0;
+		for j in nj {
+			let w = wacc[i * nj + j];
+			tw.push(w);
+			if !leg[j] { kept += w; }
 		}
-		if keep > 0.0 {
-			for k in nj {
-				if isleg[k] { jw[c * nj + k] = 0.0; }
+		if kept > 0.0 {
+			for j in nj {
+				if leg[j] { tw[j] = 0.0; }
 			}
 		}
-		var bj int[4] = [-1; 4];
-		var bw f32[4] = [0.0; 4];
-		var tot f32 = 0.0;
+		if fabrics[cls[i]].name == "loose" {
+			let fr = clamp01((cpos[i].z - pz) / 0.07);
+			if fr > 0.0 && jl >= 0 && jr >= 0 {
+				var total f32 = 0.0;
+				for j in nj { total += tw[j]; }
+				let sc = (1.0 - fr) / max(total, 0.000001);
+				for j in nj { tw[j] = tw[j] * sc; }
+				tw[jl] += 0.5 * fr;
+				tw[jr] += 0.5 * fr;
+			}
+		}
+		var sel int[>..] = [];
+		var selw f32[>..] = [];
+		var wsum f32 = 0.0;
 		for q in 4 {
-			var best = -1;
-			var bv f32 = 0.0;
-			for k in nj {
-				let w = jw[c * nj + k];
-				if w > bv { bv = w; best = k; }
+			var bi = -1;
+			var bw f32 = -1.0;
+			for j in nj {
+				if tw[j] > bw {
+					bw = tw[j];
+					bi = j;
+				}
 			}
-			if best >= 0 {
-				bj[q] = best;
-				bw[q] = bv;
-				jw[c * nj + best] = 0.0;
-				tot += bv;
+			if bi >= 0 {
+				sel.push(bi);
+				selw.push(bw);
+				wsum += bw;
+				tw[bi] = -1.0;
+			} else {
+				sel.push(0);
+				selw.push(0.0);
 			}
 		}
-		if tot > 0.0 {
-			for q in 4 { bw[q] = bw[q] / tot; }
+		if wsum > 0.0 {
+			for q in 4 {
+				aj.push(sel[q]);
+				aw.push(selw[q] / wsum);
+			}
 		} else {
-			bj[0] = pj;
-			bw[0] = 1.0;
-		}
-		for q in 4 {
-			aj.push(if bj[q] < 0 { max(pj, 0) } else { bj[q] });
-			aw.push(bw[q]);
+			aj.push(max(pjt, 0));
+			aw.push(1.0);
+			for q in 3 {
+				aj.push(0);
+				aw.push(0.0);
+			}
 		}
 	}
-	var sv int[>..] = [];
 	let sn = gltf::find_node(asset, "skin");
-	if sn >= 0 { mesh_verts(gltf::nodes[sn].mesh, sv); }
+	var sv int[>..] = [];
 	var stv int[>..] = [];
+	if sn >= 0 { mesh_verts(gltf::nodes[sn].mesh, sv); }
 	for k in still.len { mesh_verts(gltf::nodes[still[k]].mesh, stv); }
-	var md f32[>..] = [];
-	var hv int[>..] = [];
-	for c in m {
-		let r = C[c];
+	var pmd f32[>..] = [];
+	var hv0 int[>..] = [];
+	var hv1 int[>..] = [];
+	for i in m {
+		let c = cpos[i];
+		var gap f32 = 1.0e30;
 		var nsd f32 = 1.0e30;
 		var ns = -1;
 		for v in sv {
-			let d = linalg::length3(vpos(v) - r);
-			if d < nsd { nsd = d; ns = v; }
+			let d = linalg::length3(vpos(v) - c);
+			if d < gap { gap = d; }
+			if d < nsd {
+				nsd = d;
+				ns = v;
+			}
 		}
-		var gap = nsd;
 		for v in stv {
-			let d = linalg::length3(vpos(v) - r);
+			let d = linalg::length3(vpos(v) - c);
 			if d < gap { gap = d; }
 		}
-		let cl = cls[c];
-		md.push(min(f_swing[cl], f_gain[cl] * max(gap - 0.01, 0.0)));
+		let cl = cls[i];
+		pmd.push(min(f_swing[cl], f_gain[cl] * max(gap - 0.01, 0.0)));
 		var h0 = -1;
 		var h1 = -1;
 		if ns >= 0 {
-			let dv = r - vpos(ns);
-			let nn = if gap < 0.00001 { vnorm(ns) } else { dv / max(linalg::length3(dv), 0.000001) };
-			var hp = -1;
-			var hb f32 = -1.0e30;
+			var nrm = vnorm(ns);
+			if gap >= 0.00001 { nrm = linalg::unit3(c - vpos(ns)); }
+			var high = -1;
+			var best f32 = -1.0e30;
 			for v in sv {
-				let d = vpos(v) - r;
-				if linalg::length3(d) < 0.07 {
-					let e = linalg::dot3(d, nn);
-					if e > hb { hb = e; hp = v; }
+				let vp = vpos(v);
+				if linalg::length3(vp - c) < 0.07 {
+					let dd = linalg::dot3(vp - c, nrm);
+					if dd > best {
+						best = dd;
+						high = v;
+					}
 				}
 			}
-			h0 = contact_slot(ns);
-			if hp >= 0 && hp != ns { h1 = contact_slot(hp); }
+			h0 = hv_add(ns);
+			if high >= 0 && high != ns { h1 = hv_add(high); }
 		}
-		hv.push(h0);
-		hv.push(h1);
+		hv0.push(h0);
+		hv1.push(h1);
 	}
 	var dist f32[>..] = [];
 	var src int[>..] = [];
-	var done bool[>..] = [];
-	for c in m {
-		let pinned = md[c] < 0.0001;
-		dist.push(if pinned { 0.0 } else { 1.0e30 });
-		src.push(if pinned { c } else { -1 });
-		done.push(false);
+	var settled bool[>..] = [];
+	for i in m {
+		if pmd[i] < 0.0001 {
+			dist.push(0.0);
+			src.push(i);
+		} else {
+			dist.push(1.0e30);
+			src.push(-1);
+		}
+		settled.push(false);
 	}
-	for it in m {
+	loop {
 		var u = -1;
-		var ud f32 = 1.0e30;
-		for c in m {
-			if !done[c] && dist[c] < ud { ud = dist[c]; u = c; }
+		var ud f32 = 1.0e29;
+		for i in m {
+			if !settled[i] && dist[i] < ud {
+				ud = dist[i];
+				u = i;
+			}
 		}
 		if u < 0 { break; }
-		done[u] = true;
-		for k in nst {
-			let o = if la[k] == u { lb[k] } else if lb[k] == u { la[k] } else { -1 };
-			if o >= 0 && !done[o] && ud + ll[k] < dist[o] {
-				dist[o] = ud + ll[k];
+		settled[u] = true;
+		for e in nstruct {
+			var o = -1;
+			if ea[e] == u { o = eb[e]; }
+			else if eb[e] == u { o = ea[e]; }
+			if o >= 0 && !settled[o] && ud + el[e] < dist[o] {
+				dist[o] = ud + el[e];
 				src[o] = src[u];
 			}
 		}
 	}
+	let ib = ibm_of(pv);
+	let node_base = gltf::nodes.len;
+	for k in m {
+		gltf::nodes.push(gltf::Node { parent: pv, mesh: -1, skin: -1, children: gltf::Span { 0, 0 }, t: linalg::point(ib, cpos[k]), r: mquat(ib), s: float3 { 1.0, 1.0, 1.0 }, matrix: gfx::mat4_identity, has_matrix: false, weights: gltf::Span { 0, 0 }, name: gltf::Span { 0, 0 }, .. });
+	}
+	let oldc = gltf::nodes[pv].children;
+	let cfirst = gltf::ints.len;
+	for q in oldc.count {
+		let v = gltf::ints[oldc.first + q];
+		gltf::ints.push(v);
+	}
+	for k in m { gltf::ints.push(node_base + k); }
+	gltf::nodes[pv].children = gltf::Span { cfirst, oldc.count + m };
+	let oldj = gltf::skins[sk].joints;
+	let jfirst = gltf::ints.len;
+	for q in oldj.count {
+		let v = gltf::ints[oldj.first + q];
+		gltf::ints.push(v);
+	}
+	for k in m { gltf::ints.push(node_base + k); }
+	gltf::skins[sk].joints = gltf::Span { jfirst, oldj.count + m };
+	let oldb = gltf::skins[sk].inverse_binds;
+	let bfirst = gltf::matrices.len;
+	for q in oldb.count {
+		let mt = gltf::matrices[oldb.first + q];
+		gltf::matrices.push(mt);
+	}
+	for k in m { gltf::matrices.push(gfx::translate(cpos[k] * -1.0)); }
+	gltf::skins[sk].inverse_binds = gltf::Span { bfirst, oldb.count + m };
+	gltf::assets[asset].nodes.count += m;
 	var top f32 = -1.0e30;
 	var bot f32 = 1.0e30;
-	for i in n {
-		top = max(top, gp[i].y);
-		bot = min(bot, gp[i].y);
+	for i in gv.len {
+		let y = vpos(gv[i]).y;
+		top = max(top, y);
+		bot = min(bot, y);
 	}
-	let ib = ibm_of(pv);
-	let n0 = gltf::nodes.len;
-	for k in m {
-		gltf::nodes.push(gltf::Node { parent: pv, mesh: -1, skin: -1, children: gltf::Span { 0, 0 }, t: linalg::point(ib, C[k]), r: mquat(ib), s: float3 { 1.0, 1.0, 1.0 }, matrix: gfx::mat4_identity, has_matrix: false, weights: gltf::Span { 0, 0 }, name: gltf::Span { 0, 0 }, .. });
-	}
-	let ch = gltf::nodes[pv].children;
-	let cf = gltf::ints.len;
-	for q in ch.count {
-		let t = gltf::ints[ch.first + q];
-		gltf::ints.push(t);
-	}
-	for k in m { gltf::ints.push(n0 + k); }
-	gltf::nodes[pv].children = gltf::Span { cf, ch.count + m };
-	let sjs = gltf::skins[sk].joints;
-	let sib = gltf::skins[sk].inverse_binds;
-	let jf = gltf::ints.len;
-	for q in sjs.count {
-		let t = gltf::ints[sjs.first + q];
-		gltf::ints.push(t);
-	}
-	for k in m { gltf::ints.push(n0 + k); }
-	gltf::skins[sk].joints = gltf::Span { jf, sjs.count + m };
-	let mf = gltf::matrices.len;
-	for q in sib.count {
-		let t = gltf::matrices[sib.first + q];
-		gltf::matrices.push(t);
-	}
-	for k in m { gltf::matrices.push(gfx::translate(C[k] * -1.0)); }
-	gltf::skins[sk].inverse_binds = gltf::Span { mf, sib.count + m };
-	gltf::assets[asset].nodes.count = gltf::assets[asset].nodes.count + m;
-	for i in n {
-		var bi int[4] = [-1; 4];
+	for i in gv.len {
+		let g = gv[i];
+		let bs = g * gltf::VERTEX_FLOATS;
+		let vp = vpos(g);
 		var bd f32[4] = [1.0e30; 4];
+		var bi int[4] = [-1; 4];
 		for c in m {
-			let d = linalg::length3(gp[i] - C[c]);
+			let d = linalg::length3(vp - cpos[c]);
 			if d < bd[3] {
-				var pi = 3;
-				while pi > 0 && d < bd[pi - 1] {
-					bd[pi] = bd[pi - 1];
-					bi[pi] = bi[pi - 1];
-					pi -= 1;
+				bd[3] = d;
+				bi[3] = c;
+				var q = 3;
+				while q > 0 && bd[q] < bd[q - 1] {
+					let td = bd[q];
+					bd[q] = bd[q - 1];
+					bd[q - 1] = td;
+					let ti = bi[q];
+					bi[q] = bi[q - 1];
+					bi[q - 1] = ti;
+					q -= 1;
 				}
-				bd[pi] = d;
-				bi[pi] = c;
 			}
 		}
 		var ws f32[4] = [0.0; 4];
-		var tw f32 = 0.0;
+		var total f32 = 0.0;
 		for q in 4 {
 			if bi[q] >= 0 {
 				let dd = max(bd[q], 0.0001);
 				ws[q] = 1.0 / (dd * dd);
-				tw += ws[q];
+				total += ws[q];
 			}
 		}
-		let b = gv[i] * VF;
 		for q in 4 {
-			let ci = if bi[q] >= 0 { bi[q] } else { 0 };
-			gltf::verts[b + 18 + q] = (nj + ci) as f32;
-			gltf::verts[b + 22 + q] = ws[q] / tw;
+			gltf::verts[bs + 18 + q] = (nj + max(bi[q], 0)) as f32;
+			gltf::verts[bs + 22 + q] = if total > 0.0 { ws[q] / total } else { 0.0 };
 		}
 	}
-	let p0 = p_x.len;
 	for k in m {
-		let cl = cls[k];
+		let c = cls[k];
 		p_g.push(ngar);
-		p_y.push((C[k].y - bot) / max(top - bot, 0.000001));
-		p_node.push(n0 + k);
+		p_y.push((cpos[k].y - bot) / max(top - bot, 0.000001));
+		p_node.push(node_base + k);
 		for q in 4 {
 			p_j.push(aj[4 * k + q]);
 			p_w.push(aw[4 * k + q]);
 		}
-		p_md.push(md[k]);
-		p_damp.push(f_damp[cl]);
-		p_grav.push(f_grav[cl]);
-		p_rest.push(C[k]);
-		p_x.push(C[k]);
-		p_prev.push(C[k]);
-		p_anc.push(C[k]);
-		p_q.push(linalg::qaxis(float3 { 0.0, 1.0, 0.0 }, 0.0));
-		p_im.push(if md[k] < 0.0001 { 0.0 } else { 1.0 });
-		if md[k] >= 0.0001 && src[k] >= 0 {
-			p_tie.push(p0 + src[k]);
-			p_tl.push(dist[k]);
-		} else {
+		p_md.push(pmd[k]);
+		p_damp.push(f_damp[c]);
+		p_grav.push(f_grav[c]);
+		p_rest.push(cpos[k]);
+		p_x.push(cpos[k]);
+		p_prev.push(cpos[k]);
+		p_anc.push(cpos[k]);
+		p_q.push(mquat(gfx::mat4_identity));
+		p_im.push(if pmd[k] < 0.0001 { 0.0 } else { 1.0 });
+		if pmd[k] < 0.0001 || src[k] < 0 {
 			p_tie.push(-1);
 			p_tl.push(0.0);
+		} else {
+			p_tie.push(src[k] + base0);
+			p_tl.push(dist[k]);
 		}
-		p_hv.push(hv[2 * k]);
-		p_hv.push(hv[2 * k + 1]);
 		p_cap.push(-1);
 		p_cap.push(-1);
+		p_hv.push(hv0[k]);
+		p_hv.push(hv1[k]);
 	}
-	for k in la.len {
-		e_a.push(p0 + la[k]);
-		e_b.push(p0 + lb[k]);
-		e_l.push(ll[k]);
-		e_k.push(lk[k]);
+	for e in ea.len {
+		e_a.push(ea[e] + base0);
+		e_b.push(eb[e] + base0);
+		e_l.push(el[e]);
+		e_k.push(ek[e]);
 	}
 	ngar += 1;
 }
@@ -850,9 +917,10 @@ fn rotations(its int) {
 	}
 }
 === 4162efc7aa2db78b
+fn col_len<T>(c T) f32 { linalg::length3(float3 { c.x, c.y, c.z }) }
 fn cloth_step(dt f32) {
 	if npts == 0 { return; }
-	let s = linalg::length3(col3(s3d::items[item].place.c0));
+	let s = col_len(s3d::items[item].place.c0);
 	if s < 0.001 { return; }
 	anchors();
 	if !ready || dt <= 0.0 {
@@ -911,7 +979,7 @@ fn cloth_step(dt f32) {
 		if pn < 0 { continue; }
 		let wp = motion::world[pn];
 		let iw = linalg::inverse(wp);
-		let ps = linalg::length3(col3(wp.c0));
+		let ps = col_len(wp.c0);
 		s3d::set_node(item, n, linalg::point(iw, p_x[i]), linalg::qnorm(linalg::qmul(qconj(mquat(wp)), p_q[i])), float3 { s / ps, s / ps, s / ps });
 	}
 }
@@ -920,7 +988,7 @@ fn cloth_stats(out f32[:]) {
 	if out.len < 1 { return; }
 	out[0] = ngar as f32;
 	var s f32 = 1.0;
-	if item >= 0 { s = linalg::length3(col3(s3d::items[item].place.c0)); }
+	if item >= 0 { s = col_len(s3d::items[item].place.c0); }
 	let pl = gltf::find_node(cl_asset, "pelvis");
 	var cp = float3 { 0.0, 0.0, 0.0 };
 	if pl >= 0 { cp = pos(motion::world[pl]); }
