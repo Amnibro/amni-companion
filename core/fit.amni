@@ -1,3 +1,4 @@
+import gfx.codec_jpeg_enc;
 import os;
 import gfx;
 import math;
@@ -7,7 +8,6 @@ import gfx.codec_png;
 import gfx.motion;
 import gfx.scene3d;
 import json;
-import binary;
 var tw = 0;
 var th = 0;
 var nview = 0;
@@ -1403,439 +1403,352 @@ fn light_fit() {
 fn emit(d json::Doc&, n int, out byte[>..]&) {
 	json::format_node(out, d, n);
 }
-var ej_txt byte[>..];
-var ej_kind int[>..];
-var ej_s int[>..];
-var ej_e int[>..];
-var ej_ks int[>..];
-var ej_ke int[>..];
-var ej_first int[>..];
-var ej_next int[>..];
-fn ej_ws(p int) int {
-	var i = p;
-	while i < ej_txt.len && ej_txt[i] <= 32 { i++; }
-	i
-}
-fn ej_str(p int) int {
-	var i = p + 1;
-	while i < ej_txt.len && ej_txt[i] != 34 {
-		if ej_txt[i] == 92 { i++; }
-		i++;
-	}
-	i + 1
-}
-recursive fn ej_val(p0 int, ks int, ke int) int, int {
-	let p = ej_ws(p0);
-	let id = ej_kind.len;
-	ej_kind.push(4);
-	ej_s.push(p);
-	ej_e.push(p);
-	ej_ks.push(ks);
-	ej_ke.push(ke);
-	ej_first.push(-1);
-	ej_next.push(-1);
-	if p >= ej_txt.len { return id, p; }
-	let c = ej_txt[p];
-	if c == '{' || c == '[' {
-		ej_kind[id] = if c == '{' { 0 } else { 1 };
-		let close int = if c == '{' { 125 } else { 93 };
-		var q = ej_ws(p + 1);
-		var last = -1;
-		while q < ej_txt.len && ej_txt[q] != close {
-			var k0 = 0;
-			var k1 = 0;
-			if c == '{' {
-				let se = ej_str(q);
-				k0 = q + 1;
-				k1 = se - 1;
-				q = ej_ws(se);
-				q = ej_ws(q + 1);
-			}
-			let ch, e2 = ej_val(q, k0, k1);
-			if last < 0 { ej_first[id] = ch; } else { ej_next[last] = ch; }
-			last = ch;
-			q = ej_ws(e2);
-			if q < ej_txt.len && ej_txt[q] == 44 { q = ej_ws(q + 1); }
-		}
-		ej_e[id] = q + 1;
-		return id, q + 1;
-	}
-	if c == 34 {
-		let se = ej_str(p);
-		ej_kind[id] = 2;
-		ej_e[id] = se;
-		return id, se;
-	}
-	var i = p;
-	while i < ej_txt.len {
-		let d = ej_txt[i];
-		if d == 44 || d == 125 || d == 93 || d <= 32 { break; }
-		i++;
-	}
-	if i == p { i = p + 1; }
-	ej_kind[id] = if c == 45 || (c >= 48 && c <= 57) { 3 } else { 4 };
-	ej_e[id] = i;
-	return id, i;
-}
-fn ej_is(c int, name const byte[:]) bool {
-	ej_txt[ej_ks[c]..ej_ke[c]] == name
-}
-fn ej_key(n int, name const byte[:]) int {
-	if n < 0 { return -1; }
-	var c = ej_first[n];
-	while c >= 0 {
-		if ej_is(c, name) { return c; }
-		c = ej_next[c];
-	}
-	-1
-}
-fn ej_at(n int, i int) int {
-	if n < 0 { return -1; }
-	var c = ej_first[n];
-	var k = 0;
-	while c >= 0 && k < i {
-		c = ej_next[c];
-		k++;
-	}
-	c
-}
-fn ej_count(n int) int {
-	if n < 0 { return 0; }
-	var c = ej_first[n];
-	var k = 0;
-	while c >= 0 {
-		c = ej_next[c];
-		k++;
-	}
-	k
-}
-fn ej_int(n int) int {
-	if n < 0 { return 0; }
-	let v, ok = parse_int(ej_txt[ej_s[n]..ej_e[n]]);
-	v
-}
-fn ej_raw(o byte[>..]&, n int) {
-	o.append(ej_txt[ej_s[n]..ej_e[n]]);
-}
-fn ej_key_out(o byte[>..]&, c int) {
-	o.append(ej_txt[(ej_ks[c] - 1)..(ej_ke[c] + 1)]);
-	o.push(':');
-}
-fn ej_f(o byte[>..]&, v f32) {
-	json::format_number(o, v as real);
-}
-fn ej_arr3(o byte[>..]&, v float3) {
-	o.push('[');
-	ej_f(o, v.x);
-	o.push(',');
-	ej_f(o, v.y);
-	o.push(',');
-	ej_f(o, v.z);
-	o.push(']');
-}
-fn ej_u32(o byte[>..]&, v int) {
-	var x = v;
-	for i in 4 {
-		o.push((x % 256) as byte);
-		x /= 256;
-	}
-}
-fn ej_with(o byte[>..]&, n int, name const byte[:], v f32) {
-	if ej_kind[n] != 0 {
-		ej_raw(o, n);
-		return;
-	}
-	o.push('{');
-	var c = ej_first[n];
-	var more = false;
-	var found = false;
-	while c >= 0 {
-		if more { o.push(','); }
-		more = true;
-		ej_key_out(o, c);
-		if ej_is(c, name) {
-			ej_f(o, v);
-			found = true;
-		} else {
-			ej_raw(o, c);
-		}
-		c = ej_next[c];
-	}
-	if !found {
-		if more { o.push(','); }
-		o.push('"');
-		o.append(name);
-		o.append("\":");
-		ej_f(o, v);
-	}
-	o.push('}');
-}
-fn ej_acc(o byte[>..]&, n int, mn float3, mx float3) {
-	if ej_kind[n] != 0 {
-		ej_raw(o, n);
-		return;
-	}
-	o.push('{');
-	var c = ej_first[n];
-	var more = false;
-	var fmin = false;
-	var fmax = false;
-	while c >= 0 {
-		if more { o.push(','); }
-		more = true;
-		ej_key_out(o, c);
-		if ej_is(c, "min") {
-			ej_arr3(o, mn);
-			fmin = true;
-		} else if ej_is(c, "max") {
-			ej_arr3(o, mx);
-			fmax = true;
-		} else {
-			ej_raw(o, c);
-		}
-		c = ej_next[c];
-	}
-	if !fmin {
-		if more { o.push(','); }
-		more = true;
-		o.append("\"min\":");
-		ej_arr3(o, mn);
-	}
-	if !fmax {
-		if more { o.push(','); }
-		o.append("\"max\":");
-		ej_arr3(o, mx);
-	}
-	o.push('}');
-}
-fn ej_material(o byte[>..]&, n int, r f32, ns f32) {
-	if ej_kind[n] != 0 {
-		ej_raw(o, n);
-		return;
-	}
-	o.push('{');
-	var c = ej_first[n];
-	var more = false;
-	var havep = false;
-	while c >= 0 {
-		if more { o.push(','); }
-		more = true;
-		ej_key_out(o, c);
-		if ej_is(c, "pbrMetallicRoughness") {
-			ej_with(o, c, "roughnessFactor", r);
-			havep = true;
-		} else if ej_is(c, "normalTexture") {
-			ej_with(o, c, "scale", ns);
-		} else {
-			ej_raw(o, c);
-		}
-		c = ej_next[c];
-	}
-	if !havep {
-		if more { o.push(','); }
-		o.append("\"pbrMetallicRoughness\":{\"roughnessFactor\":");
-		ej_f(o, r);
-		o.push('}');
-	}
-	o.push('}');
-}
-fn emit(d json::Doc&, n int, out byte[>..]&) {
-	json::format_node(out, d, n);
-}
 fn export_glb(src const byte[:], out const byte[:], prefix const byte[:]) {
 	var data byte[>..] = [];
 	if !read_file(src, data) { return; }
-	if data.len < 28 { return; }
-	let jl = binary::gather(data, 12, 4) as int;
-	if 28 + jl > data.len { return; }
-	var bl = binary::gather(data, 20 + jl, 4) as int;
-	let bs = 20 + jl + 8;
-	if bs + bl > data.len { bl = data.len - bs; }
-	ej_txt.clear();
-	ej_txt.append(data[20..20 + jl]);
-	ej_kind.clear();
-	ej_s.clear();
-	ej_e.clear();
-	ej_ks.clear();
-	ej_ke.clear();
-	ej_first.clear();
-	ej_next.clear();
-	let root, rend = ej_val(0, 0, 0);
-	if ej_kind[root] != 0 { return; }
-	var nb byte[>..] = [];
-	nb.append(data[bs..bs + bl]);
-	let imgs = ej_key(root, "images");
-	let bvs = ej_key(root, "bufferViews");
-	let nv0 = ej_count(bvs);
-	let ni = ej_count(imgs);
-	var ev int[>..] = [];
-	var eo int[>..] = [];
-	var el int[>..] = [];
-	for k in ni {
-		let g = gltf::assets[asset].images.first + k;
-		var v = -1;
-		if g < img_changed.len && img_changed[g] != 0 {
-			var pn byte[>..] = [];
-			format(pn, prefix, "_tex", g, ".png");
-			var pd byte[>..] = [];
-			if read_file(pn, pd) {
-				eo.push(nb.len);
-				el.push(pd.len);
-				nb.append(pd);
-				while nb.len % 4 != 0 { nb.push(0); }
-				v = nv0 + eo.len - 1;
-			}
-		}
-		ev.push(v);
+	fn rd(p int) int {
+		(data[p] as int) + (data[p + 1] as int) * 256 + (data[p + 2] as int) * 65536 + (data[p + 3] as int) * 16777216
 	}
-	var am_i int[>..] = [];
-	var am_min float3[>..] = [];
-	var am_max float3[>..] = [];
-	if shape_changed {
-		let meshes = ej_key(root, "meshes");
-		let accs = ej_key(root, "accessors");
-		for k in ej_count(meshes) {
-			let mnode = ej_at(meshes, k);
-			let gm = gltf::assets[asset].meshes.first + k;
-			let mesh = gltf::meshes[gm];
-			let prims = ej_key(mnode, "primitives");
-			for j in ej_count(prims) {
-				if j >= mesh.prims.count { continue; }
-				let prim = gltf::prims[mesh.prims.first + j];
-				let attrs = ej_key(ej_at(prims, j), "attributes");
-				let pa = ej_key(attrs, "POSITION");
+	let jl = rd(12);
+	let bin0 = 20 + jl + 8;
+	var d = json::Doc {};
+	let pr, perr = json::parse(data[20..20 + jl], d);
+	let root = 0;
+	fn ni(n int) int {
+		var tmp byte[>..] = [];
+		json::format_node(tmp, d, n);
+		let v, ok = parse_flt(tmp);
+		v as int
+	}
+	fn mi(n int, key const byte[:], def int) int {
+		let m = json::member(d, n, key);
+		if m < 0 { def } else { ni(m) }
+	}
+	fn cnt_of(n int) int {
+		if n < 0 { return 0; }
+		var c = 0;
+		json::each(d, n) { e =>
+			c += 1;
+		};
+		c
+	}
+	fn is_jpeg(n int) bool {
+		if n < 0 { return false; }
+		var tmp byte[>..] = [];
+		json::format_node(tmp, d, n);
+		tmp == "\"image/jpeg\""
+	}
+	let bvs = json::member(d, root, "bufferViews");
+	let accs = json::member(d, root, "accessors");
+	let imgs = json::member(d, root, "images");
+	let mats = json::member(d, root, "materials");
+	let ms = json::member(d, root, "meshes");
+	let nbv = cnt_of(bvs);
+	let nacc = cnt_of(accs);
+	let nimg = cnt_of(imgs);
+	let nmat = cnt_of(mats);
+	fn chg(k int) bool {
+		let g = gltf::assets[asset].images.first + k;
+		g < img_changed.len && img_changed[g] != 0
+	}
+	var used bool[>..] = [];
+	used.resize(nbv, false);
+	for a in nacc {
+		let b = mi(json::element(d, accs, a), "bufferView", -1);
+		if b >= 0 && b < nbv { used[b] = true; }
+	}
+	for k in nimg {
+		if chg(k) { continue; }
+		let b = mi(json::element(d, imgs, k), "bufferView", -1);
+		if b >= 0 && b < nbv { used[b] = true; }
+	}
+	var nb byte[>..] = [];
+	for z in 4 { nb.push(0); }
+	var nvoff int[>..] = [];
+	for i in nbv {
+		if !used[i] {
+			nvoff.push(0);
+			continue;
+		}
+		let bv = json::element(d, bvs, i);
+		let off = mi(bv, "byteOffset", 0);
+		let ln = mi(bv, "byteLength", 0);
+		nvoff.push(nb.len);
+		nb.append(data[bin0 + off..bin0 + off + ln]);
+		while nb.len % 4 != 0 { nb.push(0); }
+	}
+	var ioff int[>..] = [];
+	var ilen int[>..] = [];
+	var ijpg bool[>..] = [];
+	var iview int[>..] = [];
+	var newn = 0;
+	for k in nimg {
+		ioff.push(0);
+		ilen.push(0);
+		ijpg.push(false);
+		iview.push(-1);
+		if !chg(k) { continue; }
+		let g = gltf::assets[asset].images.first + k;
+		let mt = json::member(d, json::element(d, imgs, k), "mimeType");
+		let isj = is_jpeg(mt);
+		var bytes byte[>..] = [];
+		if isj {
+			let im = gltf::images[g];
+			codec_jpeg_enc::encode(gltf::image_pixels(g), im.width, im.height, 92, bytes);
+		} else {
+			var pth byte[>..] = [];
+			format(pth, prefix, "_tex", g, ".png");
+			read_file(pth, bytes);
+		}
+		ioff[k] = nb.len;
+		ilen[k] = bytes.len;
+		ijpg[k] = isj;
+		iview[k] = nbv + newn;
+		newn++;
+		nb.append(bytes);
+		while nb.len % 4 != 0 { nb.push(0); }
+	}
+	var amin float3[>..] = [];
+	var amax float3[>..] = [];
+	var ahas bool[>..] = [];
+	amin.resize(nacc, float3 { 0.0, 0.0, 0.0 });
+	amax.resize(nacc, float3 { 0.0, 0.0, 0.0 });
+	ahas.resize(nacc, false);
+	if shape_changed && ms >= 0 {
+		for k in cnt_of(ms) {
+			let jm = json::element(d, ms, k);
+			let mesh = gltf::meshes[gltf::assets[asset].meshes.first + k];
+			let jps = json::member(d, jm, "primitives");
+			if jps < 0 { continue; }
+			for pj in mesh.prims.count {
+				let prim = gltf::prims[mesh.prims.first + pj];
+				let jp = json::element(d, jps, pj);
+				let att = json::member(d, jp, "attributes");
+				if att < 0 { continue; }
+				let pa = json::member(d, att, "POSITION");
 				if pa < 0 { continue; }
-				let ai = ej_int(pa);
-				let an = ej_at(accs, ai);
-				if an < 0 { continue; }
-				let bvk = ej_key(an, "bufferView");
-				if bvk < 0 { continue; }
-				let bvn = ej_at(bvs, ej_int(bvk));
-				if bvn < 0 { continue; }
-				let cnt = ej_int(ej_key(an, "count"));
-				if cnt != prim.vcount { continue; }
-				var base = 0;
-				let bo = ej_key(bvn, "byteOffset");
-				if bo >= 0 { base += ej_int(bo); }
-				let ao = ej_key(an, "byteOffset");
-				if ao >= 0 { base += ej_int(ao); }
-				var stride = 12;
-				let sk = ej_key(bvn, "byteStride");
-				if sk >= 0 { stride = ej_int(sk); }
-				var mnv = float3 { 1e30, 1e30, 1e30 };
-				var mxv = float3 { -1e30, -1e30, -1e30 };
+				let ai = ni(pa);
+				let acc = json::element(d, accs, ai);
+				let cnt = mi(acc, "count", 0);
+				if cnt != prim.vcount || cnt == 0 { continue; }
+				let bi = mi(acc, "bufferView", -1);
+				if bi < 0 { continue; }
+				let bv = json::element(d, bvs, bi);
+				let stride = mi(bv, "byteStride", 12);
+				let base = nvoff[bi] + mi(acc, "byteOffset", 0);
+				var mn f32[3] = [1e30, 1e30, 1e30];
+				var mx f32[3] = [-1e30, -1e30, -1e30];
 				for v in cnt {
 					let o = (prim.vfirst + v) * gltf::VERTEX_FLOATS;
-					let px = gltf::verts[o];
-					let py = gltf::verts[o + 1];
-					let pz = gltf::verts[o + 2];
-					let ofs = base + v * stride;
-					if ofs + 12 > nb.len { break; }
-					let fv f32[3] = [px, py, pz];
-					let bb = bytes_of(fv);
-					for q in 12 { nb[ofs + q] = bb[q]; }
-					mnv = float3 { min(mnv.x, px), min(mnv.y, py), min(mnv.z, pz) };
-					mxv = float3 { max(mxv.x, px), max(mxv.y, py), max(mxv.z, pz) };
+					for c in 3 {
+						let x = gltf::verts[o + c];
+						var fb f32[1] = [x];
+						let bb = bytes_of(fb);
+						for q in 4 { nb[base + v * stride + c * 4 + q] = bb[q]; }
+						mn[c] = min(mn[c], x);
+						mx[c] = max(mx[c], x);
+					}
 				}
-				am_i.push(ai);
-				am_min.push(mnv);
-				am_max.push(mxv);
+				amin[ai] = float3 { mn[0], mn[1], mn[2] };
+				amax[ai] = float3 { mx[0], mx[1], mx[2] };
+				ahas[ai] = true;
 			}
 		}
 	}
-	while nb.len % 4 != 0 { nb.push(0); }
 	var js byte[>..] = [];
+	fn emit_num_obj(n int, key const byte[:], val f32) {
+		js.push('{');
+		var first = true;
+		var seen = false;
+		json::each(d, n) { c =>
+			let nm = json::name_of(d, c);
+			if !first { js.push(','); }
+			first = false;
+			json::format_key(js, nm);
+			if nm == key {
+				json::format_number(js, val as real);
+				seen = true;
+			} else {
+				json::format_node(js, d, c);
+			}
+		};
+		if !seen {
+			if !first { js.push(','); }
+			json::format_key(js, key);
+			json::format_number(js, val as real);
+		}
+		js.push('}');
+	}
+	fn emit_vec3(v float3) {
+		js.push('[');
+		json::format_number(js, v.x as real);
+		js.push(',');
+		json::format_number(js, v.y as real);
+		js.push(',');
+		json::format_number(js, v.z as real);
+		js.push(']');
+	}
+	fn emit_bvs() {
+		js.push('[');
+		var wrote = 0;
+		for i in nbv {
+			if wrote > 0 { js.push(','); }
+			wrote++;
+			if !used[i] {
+				format(js, "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":4}");
+				continue;
+			}
+			let bv = json::element(d, bvs, i);
+			js.push('{');
+			format(js, "\"byteOffset\":", nvoff[i]);
+			json::each(d, bv) { c =>
+				let nm = json::name_of(d, c);
+				if nm != "byteOffset" {
+					js.push(',');
+					json::format_key(js, nm);
+					json::format_node(js, d, c);
+				}
+			};
+			js.push('}');
+		}
+		for k in nimg {
+			if iview[k] < 0 { continue; }
+			if wrote > 0 { js.push(','); }
+			wrote++;
+			format(js, "{\"buffer\":0,\"byteOffset\":", ioff[k], ",\"byteLength\":", ilen[k], "}");
+		}
+		js.push(']');
+	}
+	fn emit_accs() {
+		js.push('[');
+		for a in nacc {
+			if a > 0 { js.push(','); }
+			let acc = json::element(d, accs, a);
+			if !ahas[a] {
+				json::format_node(js, d, acc);
+				continue;
+			}
+			js.push('{');
+			var first = true;
+			json::each(d, acc) { c =>
+				let nm = json::name_of(d, c);
+				if !first { js.push(','); }
+				first = false;
+				json::format_key(js, nm);
+				if nm == "min" {
+					emit_vec3(amin[a]);
+				} else if nm == "max" {
+					emit_vec3(amax[a]);
+				} else {
+					json::format_node(js, d, c);
+				}
+			};
+			js.push('}');
+		}
+		js.push(']');
+	}
+	fn emit_imgs() {
+		js.push('[');
+		for k in nimg {
+			if k > 0 { js.push(','); }
+			let im = json::element(d, imgs, k);
+			if iview[k] < 0 {
+				json::format_node(js, d, im);
+				continue;
+			}
+			format(js, "{\"bufferView\":", iview[k], ",\"mimeType\":");
+			json::format_string(js, if ijpg[k] { "image/jpeg" } else { "image/png" });
+			format(js, ",\"name\":");
+			let nm = json::member(d, im, "name");
+			if nm >= 0 {
+				json::format_node(js, d, nm);
+			} else {
+				json::format_string(js, "");
+			}
+			js.push('}');
+		}
+		js.push(']');
+	}
+	fn emit_mats() {
+		js.push('[');
+		for k in nmat {
+			if k > 0 { js.push(','); }
+			let mt = json::element(d, mats, k);
+			if !mat_changed {
+				json::format_node(js, d, mt);
+				continue;
+			}
+			let gm = gltf::materials[gltf::assets[asset].materials.first + k];
+			js.push('{');
+			var first = true;
+			var seen = false;
+			json::each(d, mt) { c =>
+				let nm = json::name_of(d, c);
+				if !first { js.push(','); }
+				first = false;
+				json::format_key(js, nm);
+				if nm == "pbrMetallicRoughness" {
+					seen = true;
+					emit_num_obj(c, "roughnessFactor", gm.roughness);
+				} else if nm == "normalTexture" {
+					emit_num_obj(c, "scale", gm.normal_scale);
+				} else {
+					json::format_node(js, d, c);
+				}
+			};
+			if !seen {
+				if !first { js.push(','); }
+				format(js, "\"pbrMetallicRoughness\":{\"roughnessFactor\":");
+				json::format_number(js, gm.roughness as real);
+				js.push('}');
+			}
+			js.push('}');
+		}
+		js.push(']');
+	}
 	js.push('{');
-	var c = ej_first[root];
-	var more = false;
-	while c >= 0 {
-		if more { js.push(','); }
-		more = true;
-		ej_key_out(js, c);
-		if ej_is(c, "bufferViews") {
-			js.push('[');
-			var fst = true;
-			var e = ej_first[c];
-			while e >= 0 {
-				if !fst { js.push(','); }
-				fst = false;
-				ej_raw(js, e);
-				e = ej_next[e];
-			}
-			for q in eo.len {
-				if !fst { js.push(','); }
-				fst = false;
-				format(js, "{\"buffer\":0,\"byteOffset\":", eo[q], ",\"byteLength\":", el[q], "}");
-			}
-			js.push(']');
-		} else if ej_is(c, "images") {
-			js.push('[');
-			var e = ej_first[c];
-			var k = 0;
-			while e >= 0 {
-				if k > 0 { js.push(','); }
-				if k < ev.len && ev[k] >= 0 {
-					format(js, "{\"bufferView\":", ev[k], ",\"mimeType\":\"image/png\",\"name\":");
-					let nm = ej_key(e, "name");
-					if nm >= 0 { ej_raw(js, nm); } else { js.append("\"\""); }
-					js.push('}');
-				} else {
-					ej_raw(js, e);
-				}
-				e = ej_next[e];
-				k++;
-			}
-			js.push(']');
-		} else if ej_is(c, "accessors") {
-			js.push('[');
-			var e = ej_first[c];
-			var k = 0;
-			while e >= 0 {
-				if k > 0 { js.push(','); }
-				var qi = -1;
-				for q in am_i.len { if am_i[q] == k { qi = q; } }
-				if qi >= 0 { ej_acc(js, e, am_min[qi], am_max[qi]); } else { ej_raw(js, e); }
-				e = ej_next[e];
-				k++;
-			}
-			js.push(']');
-		} else if ej_is(c, "materials") {
-			js.push('[');
-			var e = ej_first[c];
-			var k = 0;
-			while e >= 0 {
-				if k > 0 { js.push(','); }
-				if mat_changed && k < gltf::assets[asset].materials.count {
-					let m = gltf::materials[gltf::assets[asset].materials.first + k];
-					ej_material(js, e, m.roughness, m.normal_scale);
-				} else {
-					ej_raw(js, e);
-				}
-				e = ej_next[e];
-				k++;
-			}
-			js.push(']');
-		} else if ej_is(c, "buffers") {
+	var firstm = true;
+	json::each(d, root) { c =>
+		let nm = json::name_of(d, c);
+		if !firstm { js.push(','); }
+		firstm = false;
+		json::format_key(js, nm);
+		if nm == "bufferViews" {
+			emit_bvs();
+		} else if nm == "images" {
+			emit_imgs();
+		} else if nm == "accessors" {
+			emit_accs();
+		} else if nm == "materials" {
+			emit_mats();
+		} else if nm == "buffers" {
 			format(js, "[{\"byteLength\":", nb.len, "}]");
 		} else {
-			ej_raw(js, c);
+			json::format_node(js, d, c);
 		}
-		c = ej_next[c];
-	}
+	};
 	js.push('}');
 	while js.len % 4 != 0 { js.push(' '); }
-	var fo byte[>..] = [];
-	fo.append("glTF");
-	ej_u32(fo, 2);
-	ej_u32(fo, 12 + 8 + js.len + 8 + nb.len);
-	ej_u32(fo, js.len);
-	fo.append("JSON");
-	fo.append(js);
-	ej_u32(fo, nb.len);
-	fo.append("BIN");
-	fo.push(0);
-	fo.append(nb);
-	write_file(out, fo);
+	var o byte[>..] = [];
+	fn w32(v int) {
+		var x = v;
+		for q in 4 {
+			o.push((x % 256) as byte);
+			x /= 256;
+		}
+	}
+	let total = 12 + 8 + js.len + 8 + nb.len;
+	o.append("glTF");
+	w32(2);
+	w32(total);
+	w32(js.len);
+	o.append("JSON");
+	o.append(js);
+	w32(nb.len);
+	o.append("BIN");
+	o.push(0);
+	o.append(nb);
+	write_file(out, o);
 	print("glb ", out);
 }
 fn report(tag const byte[:], save bool, prefix const byte[:]) {
