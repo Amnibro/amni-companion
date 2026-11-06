@@ -1,0 +1,240 @@
+import gfx;
+import math;
+import gfx.linalg;
+import gfx.gltf;
+import gfx.motion;
+import cv.rig;
+import cv.kin;
+import spring;
+namespace clips;
+var kc_lib = -1;
+var kc_names byte[>..];
+var kc_nf int[>..];
+var kc_loop bool[>..];
+var kc_frames f32[>..];
+var kc_first int[>..];
+var kc_slot int[22];
+fn kc_bones(asset int, out int[>..]&) {
+	out.clear();
+	let a .= gltf::assets[asset];
+	var best = -1;
+	var bestn = -1;
+	for s in a.skins.count {
+		let sk .= gltf::skins[a.skins.first + s];
+		if sk.joints.count > bestn {
+			bestn = sk.joints.count;
+			best = a.skins.first + s;
+		}
+	}
+	if best >= 0 {
+		let sk .= gltf::skins[best];
+		for j in sk.joints.count {
+			out.push(gltf::ints[sk.joints.first + j]);
+		}
+	} else {
+		for n in a.nodes.count {
+			out.push(a.nodes.first + n);
+		}
+	}
+}
+fn kc_rest(asset int, root gfx::mat4, bones int[:], slot i32[:], rest real[:]) bool {
+	motion::rest(asset);
+	motion::update(asset, root);
+	var names byte[>..] = [];
+	var parents i32[>..] = [];
+	var positions real[>..] = [];
+	for i in bones.len {
+		let node = bones[i];
+		names.append(gltf::text_of(gltf::nodes[node].name));
+		names.push(10);
+		let pn = gltf::nodes[node].parent;
+		var pi i32 = -1;
+		for j in bones.len {
+			if bones[j] == pn { pi = j as i32; }
+		}
+		parents.push(pi);
+		let wp = pos(motion::world[node]);
+		positions.push(wp.x as real);
+		positions.push(wp.y as real);
+		positions.push(wp.z as real);
+	}
+	let nb i32 = bones.len as i32;
+	rig::rig_map(names[..], nb, parents[..], positions[..], slot);
+	if !rig::rig_humanoid(slot) { return false; }
+	for i in 264 { rest[i] = 0.0; }
+	for k in 22 {
+		rest[12 * k + 3] = 1.0;
+		rest[12 * k + 10] = 1.0;
+		if slot[k] >= 0 {
+			let b = bones[slot[k]];
+			let q = mquat(motion::world[b]);
+			rest[12 * k] = q.x as real;
+			rest[12 * k + 1] = q.y as real;
+			rest[12 * k + 2] = q.z as real;
+			rest[12 * k + 3] = q.w as real;
+			let wp = pos(motion::world[b]);
+			rest[12 * k + 4] = wp.x as real;
+			rest[12 * k + 5] = wp.y as real;
+			rest[12 * k + 6] = wp.z as real;
+			let p = gltf::nodes[b].parent;
+			if p >= 0 {
+				let pq = mquat(motion::world[p]);
+				rest[12 * k + 7] = pq.x as real;
+				rest[12 * k + 8] = pq.y as real;
+				rest[12 * k + 9] = pq.z as real;
+				rest[12 * k + 10] = pq.w as real;
+			}
+			rest[12 * k + 11] = 1.0;
+		}
+	}
+	return true;
+}
+fn kc_facing(asset int, bones int[:], slot i32[:]) gfx::mat4 {
+	if slot[7] >= 0 && slot[11] >= 0 {
+		motion::rest(asset);
+		motion::update(asset, gfx::mat4_identity);
+		let lx = pos(motion::world[bones[slot[7]]]).x;
+		let rx = pos(motion::world[bones[slot[11]]]).x;
+		if lx < rx {
+			return linalg::qmatrix(linalg::qaxis(float3 { 0.0, 1.0, 0.0 }, 3.14159265));
+		}
+	}
+	return gfx::mat4_identity;
+}
+fn clips_load(path const byte[:], asset int) int {
+	if kc_lib < 0 {
+		kc_lib = gltf::load(path);
+		if kc_lib < 0 {
+			kc_lib = -1;
+			return -1;
+		}
+	}
+	kc_names.clear();
+	kc_nf.clear();
+	kc_loop.clear();
+	kc_frames.clear();
+	kc_first.clear();
+	var lb int[>..] = [];
+	kc_bones(kc_lib, lb);
+	var ls i32[22] = [0; 22];
+	var lr real[264] = [0.0; 264];
+	if !kc_rest(kc_lib, gfx::mat4_identity, lb, ls, lr) { return -2; }
+	let lroot = kc_facing(kc_lib, lb, ls);
+	if !kc_rest(kc_lib, lroot, lb, ls, lr) { return -2; }
+	var ab int[>..] = [];
+	kc_bones(asset, ab);
+	var avs i32[22] = [0; 22];
+	var avr real[264] = [0.0; 264];
+	if !kc_rest(asset, gfx::mat4_identity, ab, avs, avr) { return -3; }
+	let aroot = kc_facing(asset, ab, avs);
+	if !kc_rest(asset, aroot, ab, avs, avr) { return -3; }
+	var arl f32[88] = [0.0; 88];
+	for k in 22 {
+		arl[4 * k + 3] = 1.0;
+		kc_slot[k] = -1;
+		if avs[k] >= 0 {
+			let node = ab[avs[k]];
+			kc_slot[k] = node;
+			let r = gltf::nodes[node].r;
+			arl[4 * k] = r.x as f32;
+			arl[4 * k + 1] = r.y as f32;
+			arl[4 * k + 2] = r.z as f32;
+			arl[4 * k + 3] = r.w as f32;
+		}
+	}
+	motion::rest(asset);
+	motion::update(asset, aroot);
+	var hips_parent = -1;
+	if kc_slot[0] >= 0 { hips_parent = gltf::nodes[kc_slot[0]].parent; }
+	var hinv = gfx::mat4_identity;
+	if hips_parent >= 0 { hinv = linalg::inverse(motion::world[hips_parent]); }
+	let a .= gltf::assets[kc_lib];
+	var src real[>..] = [];
+	var res real[>..] = [];
+	for ai in a.animations.count {
+		let anim = a.animations.first + ai;
+		let name = gltf::text_of(gltf::animations[anim].name);
+		if ends_with(name, "_RM") { continue; }
+		let dur = gltf::animations[anim].duration as real;
+		let nf = clamp(round(dur * 30.0) as int + 1, 2, 1000);
+		src.clear();
+		src.resize(nf * 91, 0.0);
+		res.clear();
+		res.resize(nf * 91, 0.0);
+		for i in nf {
+			let t = min(dur, i as real / 30.0);
+			motion::rest(kc_lib);
+			motion::apply(anim, t as f32, 1.0);
+			motion::update(kc_lib, lroot);
+			let base = i * 91;
+			for k in 22 {
+				if ls[k] >= 0 {
+					let q = mquat(motion::world[lb[ls[k]]]);
+					src[base + 4 * k] = q.x as real;
+					src[base + 4 * k + 1] = q.y as real;
+					src[base + 4 * k + 2] = q.z as real;
+					src[base + 4 * k + 3] = q.w as real;
+				} else {
+					src[base + 4 * k] = 0.0;
+					src[base + 4 * k + 1] = 0.0;
+					src[base + 4 * k + 2] = 0.0;
+					src[base + 4 * k + 3] = 1.0;
+				}
+			}
+			if ls[0] >= 0 {
+				let wp = pos(motion::world[lb[ls[0]]]);
+				src[base + 88] = wp.x as real;
+				src[base + 89] = wp.y as real;
+				src[base + 90] = wp.z as real;
+			}
+		}
+		kin::retarget_clip(ls, lr, avs, avr, nf, src, res);
+		kc_first.push(kc_frames.len);
+		for f in nf {
+			let base = f * 91;
+			for k in 22 {
+				if ls[k] >= 0 && avs[k] >= 0 {
+					for c in 4 { kc_frames.push(res[base + 4 * k + c] as f32); }
+				} else if avs[k] >= 0 {
+					for c in 4 { kc_frames.push(arl[4 * k + c]); }
+				} else {
+					kc_frames.push(0.0);
+					kc_frames.push(0.0);
+					kc_frames.push(0.0);
+					kc_frames.push(1.0);
+				}
+			}
+			var p = float3 { res[base + 88] as f32, res[base + 89] as f32, res[base + 90] as f32 };
+			if hips_parent >= 0 { p = linalg::point(hinv, p); }
+			kc_frames.push(p.x);
+			kc_frames.push(p.y);
+			kc_frames.push(p.z);
+		}
+		kc_nf.push(nf);
+		kc_loop.push(ends_with(name, "_Loop") || name == "A_TPose");
+		kc_names.append(name);
+		kc_names.push(10);
+	}
+	motion::rest(asset);
+	motion::update(asset, gfx::mat4_identity);
+	return kc_nf.len;
+}
+fn clips_count() int { kc_nf.len }
+fn clips_frames(c int) f32[:] {
+	return kc_frames[kc_first[c]..kc_first[c] + kc_nf[c] * 91];
+}
+fn clips_name(c int, out byte[>..]&) {
+	out.clear();
+	var line = 0;
+	var start = 0;
+	for i in kc_names.len {
+		if kc_names[i] == 10 {
+			if line == c {
+				out.append(kc_names[start..i]);
+				return;
+			}
+			line++;
+			start = i + 1;
+		}
+	}
+}

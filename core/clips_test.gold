@@ -1,0 +1,13 @@
+use std
+into clips_test.amni
+
+Imports: os, gfx, gfx.linalg, gfx.gltf, gfx.motion and clips (the local module clips.amni). A native check of the Helium clip baker on the stock Holo model, with no GPU.
+
+`main()`: load "../web/models/holo.glb" with `gltf::load` into `asset` (print "load failed" and return when negative). `n = clips::clips_load("../web/anim/AnimationLibrary_Godot_Standard.gltf", asset)`; print "clips " n and return when n <= 0. Check every clip: every frame's 22 quaternions have length within 0.001 of 1, and no float is NaN; print "unit ok" when all hold, else "unit bad " plus the first failing clip's name. Find the clips named "Walk_Loop" and "Sitting_Idle_Loop" with `clips::clips_name(c, out)` (c an int; it fills a growable `var out byte[>..] = [];` passed by reference) and `clips::clips_count()`; print "walk " plus its frame count, then "walk seam ok" when its last frame's quaternions each match its first frame's within 0.05 (compare q and -q, keep the smaller difference) and "walk seam bad" otherwise; print "hips drop ok" when Sitting_Idle_Loop's first-frame hips y (float 89) is lower than Walk_Loop's first-frame hips y by at least 0.1 times Walk_Loop's hips y, else "hips drop bad".
+
+expect:
+clips 44
+unit ok
+walk 41
+walk seam ok
+hips drop ok

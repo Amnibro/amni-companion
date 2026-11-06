@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/../core"
-H=${HELIUM:-$HOME/ai/amni-lang/helium-gold}
+H=${HELIUM:-$HOME/ai/amni-lang/helium-webgpu}
 out=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/companion-test.XXXXXX")
 trap 'rm -rf "$out"' EXIT
 fail=0

@@ -1,0 +1,106 @@
+=== 0cf3e7ebf706e34b
+import os;
+import gfx;
+import gfx.linalg;
+import gfx.gltf;
+import gfx.motion;
+import clips;
+=== 6e637eae6109ecdc
+let FRAME_FLOATS = 91;
+let JOINTS = 22;
+fn clip_named(name const byte[:]) int {
+	var out byte[>..] = [];
+	for c in clips::clips_count() {
+		out.clear();
+		clips::clips_name(c, out);
+		if out == name { return c; }
+	}
+	return -1;
+}
+fn quat_diff(d const f32[:], a int, b int) real {
+	var same real = 0.0;
+	var flip real = 0.0;
+	for k in 4 {
+		let x real = d[a + k];
+		let y real = d[b + k];
+		same += abs(x - y);
+		flip += abs(x + y);
+	}
+	return min(same, flip);
+}
+fn main() {
+	let asset = gltf::load("../web/models/holo.glb");
+	if asset < 0 {
+		print("load failed");
+		return;
+	}
+	let n = clips::clips_load("../web/anim/AnimationLibrary_Godot_Standard.gltf", asset);
+	if n <= 0 {
+		print("clips ", n);
+		return;
+	}
+	print("clips ", n);
+	var bad = -1;
+	for c in clips::clips_count() {
+		if bad >= 0 { continue; }
+		let d = clips::clips_frames(c);
+		let frames = d.len / FRAME_FLOATS;
+		var ok = true;
+		for f in frames {
+			let base = f * FRAME_FLOATS;
+			for j in JOINTS {
+				var l real = 0.0;
+				for k in 4 {
+					let v real = d[base + j * 4 + k];
+					l += v * v;
+				}
+				let len = sqrt(l);
+				if !(abs(len - 1.0) <= 0.001) { ok = false; }
+			}
+			for i in FRAME_FLOATS {
+				let v real = d[base + i];
+				if v != v { ok = false; }
+			}
+		}
+		if !ok { bad = c; }
+	}
+	if bad < 0 {
+		print("unit ok");
+	} else {
+		var nm byte[>..] = [];
+		clips::clips_name(bad, nm);
+		print("unit bad ", nm);
+	}
+	let walk = clip_named("Walk_Loop");
+	let sit = clip_named("Sitting_Idle_Loop");
+	var walk_y real = 0.0;
+	var sit_y real = 0.0;
+	if walk >= 0 {
+		let d = clips::clips_frames(walk);
+		let frames = d.len / FRAME_FLOATS;
+		walk_y = d[89];
+		print("walk ", frames);
+		let last = (frames - 1) * FRAME_FLOATS;
+		var seam = true;
+		for j in JOINTS {
+			if quat_diff(d, last + j * 4, j * 4) > 0.05 { seam = false; }
+		}
+		if seam {
+			print("walk seam ok");
+		} else {
+			print("walk seam bad");
+		}
+	} else {
+		print("walk ", 0);
+		print("walk seam bad");
+	}
+	if sit >= 0 {
+		let d = clips::clips_frames(sit);
+		sit_y = d[89];
+	}
+	if walk >= 0 && sit >= 0 && sit_y <= walk_y - 0.1 * walk_y {
+		print("hips drop ok");
+	} else {
+		print("hips drop bad");
+	}
+}

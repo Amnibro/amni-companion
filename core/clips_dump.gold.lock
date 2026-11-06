@@ -1,0 +1,37 @@
+=== -7e747fc3d8a5fb74
+import os;
+import gfx;
+import gfx.linalg;
+import gfx.gltf;
+import gfx.motion;
+import clips;
+=== -1c52501601df9887
+fn main() {
+	let a = args();
+	let asset = gltf::load(a[1]);
+	if asset < 0 {
+		print("load failed");
+		return;
+	}
+	let n = clips::clips_load("../web/anim/AnimationLibrary_Godot_Standard.gltf", asset);
+	if n <= 0 {
+		print("clips ", n);
+		return;
+	}
+	var bytes byte[>..] = [];
+	for c in n {
+		var name byte[>..] = [];
+		clips::clips_name(c, name);
+		bytes.append(name);
+		bytes.push(10);
+		let fr = clips::clips_frames(c);
+		let cnt = fr.len;
+		bytes.push(cnt as! byte);
+		bytes.push((cnt >> 8) as! byte);
+		bytes.push((cnt >> 16) as! byte);
+		bytes.push((cnt >> 24) as! byte);
+		bytes.append(bytes_of(fr));
+	}
+	write_file(a[2], bytes);
+	print("wrote ", n, " clips");
+}

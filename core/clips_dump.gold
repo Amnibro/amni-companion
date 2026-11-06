@@ -1,0 +1,6 @@
+use std
+into clips_dump.amni
+
+Imports: os, gfx, gfx.linalg, gfx.gltf, gfx.motion, codec and clips (the local module clips.amni). A native tool for checks: bakes the library for one model and writes every clip's frames to a file.
+
+`main()`: with `a = args()`, `a[1]` is the model .glb and `a[2]` the output path. Load the model with `gltf::load` (print "load failed" and return when negative), `n = clips::clips_load("../web/anim/AnimationLibrary_Godot_Standard.gltf", asset)` (print "clips " n and return when n <= 0). Build one byte list: for each clip c, its name (from `clips::clips_name(c, out)` with a growable byte list), a newline byte 10, its frame count as 4 little-endian bytes, then its frames (`clips::clips_frames(c)`) as little-endian f32 bytes. Write it with the unqualified `write_file(a[2], bytes)` and print "wrote " n " clips".
