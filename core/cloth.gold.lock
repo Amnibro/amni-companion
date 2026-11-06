@@ -590,7 +590,7 @@ fn cap_r_on(wa int, wb int, a int, b int, k f32) float2 {
 	float2 { min(ql, qh * 1.1), qh }
 }
 fn cap_r(a int, b int, k f32) float2 { cap_r_on(a, b, a, b, k) }
-=== -7f44f321249b6371
+=== 35413d7569c6f18f
 fn add_cap(asset int, an const byte[:], bn const byte[:]) {
 	let a = gltf::find_node(asset, an);
 	let b = gltf::find_node(asset, bn);
@@ -606,35 +606,38 @@ fn cloth_setup(path const byte[:], asset int) int {
 	cur_asset = asset;
 	build_fabrics();
 	build_wears(path);
-	sk = -1;
 	let nf = gltf::assets[asset].nodes.first;
 	let nc = gltf::assets[asset].nodes.count;
+	sk = -1;
 	let sn = gltf::find_node(asset, "skin");
 	if sn >= 0 && gltf::nodes[sn].mesh >= 0 && gltf::nodes[sn].skin >= 0 {
 		sk = gltf::nodes[sn].skin;
 	} else {
-		for k in nc {
-			let nd = nf + k;
+		for q in nc {
+			let nd = nf + q;
 			if sk < 0 && gltf::nodes[nd].mesh >= 0 && gltf::nodes[nd].skin >= 0 {
 				sk = gltf::nodes[nd].skin;
 			}
 		}
 	}
 	if sk < 0 { return 0; }
-	for w, wi in wears {
-		var seen = false;
-		for r, ri in wears {
-			if ri < wi && r.group == w.group { seen = true; }
+	var wi = 0;
+	for w in wears {
+		var dup = false;
+		var ui = 0;
+		for u in wears {
+			if ui < wi && u.group == w.group { dup = true; }
+			ui += 1;
 		}
-		if !seen {
+		if !dup {
 			var sim int[>..] = [];
 			var simc int[>..] = [];
 			var still int[>..] = [];
-			for r in wears {
-				if r.group == w.group {
-					let nd = gltf::find_node(asset, r.mesh);
-					let cr = class_row(r.class);
-					if nd >= 0 && cr >= 0 && gltf::nodes[nd].mesh >= 0 {
+			for v in wears {
+				if v.group == w.group {
+					let nd = gltf::find_node(asset, v.mesh);
+					let cr = class_row(v.class);
+					if nd >= 0 && cr >= 0 {
 						if f_sim[cr] {
 							sim.push(nd);
 							simc.push(cr);
@@ -646,76 +649,82 @@ fn cloth_setup(path const byte[:], asset int) int {
 			}
 			if sim.len > 0 { setup_group(asset, sim, simc, still); }
 		}
+		wi += 1;
 	}
-	let np = p_x.len;
-	if np > 0 {
-		add_cap(asset, "thigh_l", "calf_l");
-		add_cap(asset, "thigh_r", "calf_r");
-		add_cap(asset, "calf_l", "foot_l");
-		add_cap(asset, "calf_r", "foot_r");
-		add_cap(asset, "upperarm_l", "lowerarm_l");
-		add_cap(asset, "upperarm_r", "lowerarm_r");
-		add_cap(asset, "lowerarm_l", "hand_l");
-		add_cap(asset, "lowerarm_r", "hand_r");
-		let pel = gltf::find_node(asset, "pelvis");
-		let tl = gltf::find_node(asset, "thigh_l");
-		let tr = gltf::find_node(asset, "thigh_r");
-		if pel >= 0 && tl >= 0 && tr >= 0 {
-			let r = cap_r_on(pel, pel, tl, tr, 0.95);
-			c_a.push(tl);
-			c_b.push(tr);
-			c_r0.push(r.y);
-			c_r1.push(r.y);
-		}
-		var ca float3[>..] = [];
-		var cb float3[>..] = [];
+	npts = p_x.len;
+	if npts == 0 { return 0; }
+	c_a.clear();
+	c_b.clear();
+	c_r0.clear();
+	c_r1.clear();
+	add_cap(asset, "thigh_l", "calf_l");
+	add_cap(asset, "thigh_r", "calf_r");
+	add_cap(asset, "calf_l", "foot_l");
+	add_cap(asset, "calf_r", "foot_r");
+	add_cap(asset, "upperarm_l", "lowerarm_l");
+	add_cap(asset, "upperarm_r", "lowerarm_r");
+	add_cap(asset, "lowerarm_l", "hand_l");
+	add_cap(asset, "lowerarm_r", "hand_r");
+	let pel = gltf::find_node(asset, "pelvis");
+	let tl = gltf::find_node(asset, "thigh_l");
+	let tr = gltf::find_node(asset, "thigh_r");
+	if pel >= 0 && tl >= 0 && tr >= 0 {
+		let rr = cap_r_on(pel, pel, tl, tr, 0.95);
+		c_a.push(tl);
+		c_b.push(tr);
+		c_r0.push(rr.y);
+		c_r1.push(rr.y);
+	}
+	var ca float3[>..] = [];
+	var cb float3[>..] = [];
+	for z in c_a.len {
+		ca.push(pos(linalg::inverse(ibm_of(c_a[z]))));
+		cb.push(pos(linalg::inverse(ibm_of(c_b[z]))));
+	}
+	for i in npts {
+		var b0 = -1;
+		var b1 = -1;
+		var d0 f32 = 1.0e30;
+		var d1 f32 = 1.0e30;
+		let x = p_rest[i];
 		for z in c_a.len {
-			ca.push(pos(linalg::inverse(ibm_of(c_a[z]))));
-			cb.push(pos(linalg::inverse(ibm_of(c_b[z]))));
-		}
-		for i in np {
-			var b1 = -1;
-			var d1 f32 = 1.0e30;
-			var b2 = -1;
-			var d2 f32 = 1.0e30;
-			for z in c_a.len {
-				let A = ca[z];
-				let B = cb[z];
-				let ab = B - A;
-				let t = clamp01(linalg::dot3(p_rest[i] - A, ab) / max(linalg::dot3(ab, ab), 0.000001));
-				let d = linalg::length3(p_rest[i] - (A + ab * t)) - max(c_r0[z], c_r1[z]);
-				if d < d1 {
-					b2 = b1;
-					d2 = d1;
-					b1 = z;
+			let ab = cb[z] - ca[z];
+			let t = clamp01(linalg::dot3(x - ca[z], ab) / max(linalg::dot3(ab, ab), 0.000001));
+			let c = ca[z] + ab * t;
+			let d = linalg::length3(x - c) - (c_r0[z] + (c_r1[z] - c_r0[z]) * t);
+			if d >= 0.0 {
+				if d < d0 {
+					d1 = d0;
+					b1 = b0;
+					d0 = d;
+					b0 = z;
+				} else if d < d1 {
 					d1 = d;
-				} else if d < d2 {
-					b2 = z;
-					d2 = d;
+					b1 = z;
 				}
 			}
-			p_cap[2 * i] = b1;
-			p_cap[2 * i + 1] = b2;
 		}
+		p_cap[2 * i] = b0;
+		p_cap[2 * i + 1] = b1;
 	}
-	var deg int[>..] = [];
-	for i in np { deg.push(0); }
+	var cnt int[>..] = [];
+	for i in npts { cnt.push(0); }
 	for k in e_a.len {
 		if e_k[k] >= 0.99 {
-			deg[e_a[k]] += 1;
-			deg[e_b[k]] += 1;
+			cnt[e_a[k]] += 1;
+			cnt[e_b[k]] += 1;
 		}
 	}
 	nb_first.clear();
 	nbr.clear();
 	var acc = 0;
-	for i in np {
+	var fillp int[>..] = [];
+	for i in npts {
 		nb_first.push(acc);
-		acc += deg[i];
+		fillp.push(acc);
+		acc += cnt[i];
 	}
 	nb_first.push(acc);
-	var fillp int[>..] = [];
-	for i in np { fillp.push(nb_first[i]); }
 	for q in acc { nbr.push(0); }
 	for k in e_a.len {
 		if e_k[k] >= 0.99 {
@@ -727,8 +736,7 @@ fn cloth_setup(path const byte[:], asset int) int {
 			fillp[b] += 1;
 		}
 	}
-	npts = np;
-	return np;
+	return npts;
 }
 === 32105aedcbaa5318
 fn cloth_open(it int) { item = it; }
