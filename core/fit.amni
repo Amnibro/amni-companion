@@ -67,61 +67,83 @@ fn at(px const byte[:], i int, c int) f32 {
 	px[i * 4 + c] as f32
 }
 fn gray_bg() {
-	var rs f32[>..] = [];
-	var gs f32[>..] = [];
-	var bs f32[>..] = [];
-	for y in th {
-		for x in tw {
-			if y == 0 || y == th - 1 || x == 0 || x == tw - 1 {
-				let i = y * tw + x;
-				rs.push(at(tpx, i, 0));
-				gs.push(at(tpx, i, 1));
-				bs.push(at(tpx, i, 2));
-			}
+	let n = tw * th;
+	if n == 0 { return; }
+	var cr f32[>..] = [];
+	var cg f32[>..] = [];
+	var cb f32[>..] = [];
+	for i in n {
+		let x = i % tw;
+		let y = i / tw;
+		if x == 0 || x == tw - 1 || y == 0 || y == th - 1 {
+			cr.push(at(tpx, i, 0));
+			cg.push(at(tpx, i, 1));
+			cb.push(at(tpx, i, 2));
 		}
 	}
-	sort(rs) { p, q => p < q };
-	sort(gs) { p, q => p < q };
-	sort(bs) { p, q => p < q };
-	bg = float3 { rs[rs.len / 2], gs[gs.len / 2], bs[bs.len / 2] };
-	let n = tw * th;
+	sort(cr) { a, b => a < b };
+	sort(cg) { a, b => a < b };
+	sort(cb) { a, b => a < b };
+	bg = float3 { cr[cr.len / 2], cg[cg.len / 2], cb[cb.len / 2] };
+	var smo float3[>..] = [];
+	smo.resize(n, float3 { 0.0, 0.0, 0.0 });
+	for y in th {
+		for x in tw {
+			var s0 f32 = 0.0;
+			var s1 f32 = 0.0;
+			var s2 f32 = 0.0;
+			for dy in -2..3 {
+				for dx in -2..3 {
+					let j = clamp(y + dy, 0, th - 1) * tw + clamp(x + dx, 0, tw - 1);
+					s0 += at(tpx, j, 0);
+					s1 += at(tpx, j, 1);
+					s2 += at(tpx, j, 2);
+				}
+			}
+			smo[y * tw + x] = float3 { s0 / 25.0, s1 / 25.0, s2 / 25.0 };
+		}
+	}
+	if tmask.len != n { tmask.resize(n, 1.0); }
+	for i in n { tmask[i] = 1.0; }
 	var seen byte[>..] = [];
 	seen.resize(n, 0);
-	var stack int[>..<] = [];
-	for i in n { tmask[i] = 1.0; }
-	fn visit(i int, from int) {
-		if seen[i] != 0 { return; }
-		let r = at(tpx, i, 0);
-		let g = at(tpx, i, 1);
-		let b = at(tpx, i, 2);
-		let r0 = at(tpx, from, 0);
-		let g0 = at(tpx, from, 1);
-		let b0 = at(tpx, from, 2);
-		let dp = max(max(abs(r - r0), abs(g - g0)), abs(b - b0));
-		let db = max(max(abs(r - bg.x), abs(g - bg.y)), abs(b - bg.z));
-		let sat = max(max(r, g), b) - min(min(r, g), b);
-		if dp <= 6.0 && db <= 40.0 && sat <= 18.0 {
-			seen[i] = 1;
-			tmask[i] = 0.0;
-			stack.push(i);
-		}
+	var st int[>..<] = [];
+	fn joins(i int, from int) bool {
+		let p = smo[i];
+		let q = smo[from];
+		let dq = max(max(abs(p.x - q.x), abs(p.y - q.y)), abs(p.z - q.z));
+		let db = max(max(abs(p.x - bg.x), abs(p.y - bg.y)), abs(p.z - bg.z));
+		let sat = max(max(p.x, p.y), p.z) - min(min(p.x, p.y), p.z);
+		dq <= 4.0 && db <= 48.0 && sat <= 20.0
 	}
-	for y in th {
-		for x in tw {
-			if y == 0 || y == th - 1 || x == 0 || x == tw - 1 {
-				let i = y * tw + x;
-				visit(i, i);
+	for i in n {
+		let x = i % tw;
+		let y = i / tw;
+		if x == 0 || x == tw - 1 || y == 0 || y == th - 1 {
+			if seen[i] == 0 && joins(i, i) {
+				seen[i] = 1;
+				st.push(i);
 			}
 		}
 	}
-	while stack.len > 0 {
-		let p = stack.pop();
-		let x = p % tw;
-		let y = p / tw;
-		if x > 0 { visit(p - 1, p); }
-		if x < tw - 1 { visit(p + 1, p); }
-		if y > 0 { visit(p - tw, p); }
-		if y < th - 1 { visit(p + tw, p); }
+	let dxs int[4] = [1, -1, 0, 0];
+	let dys int[4] = [0, 0, 1, -1];
+	while st.len > 0 {
+		let i = st.pop();
+		tmask[i] = 0.0;
+		let x = i % tw;
+		let y = i / tw;
+		for d in 4 {
+			let nx = x + dxs[d];
+			let ny = y + dys[d];
+			if nx < 0 || ny < 0 || nx >= tw || ny >= th { continue; }
+			let j = ny * tw + nx;
+			if seen[j] != 0 { continue; }
+			if joins(j, i) {
+				seen[j] = 1;
+				st.push(j);
+			}
+		}
 	}
 }
 fn right_of(k int) float3 {
@@ -1430,16 +1452,35 @@ fn report(tag const byte[:], save bool, prefix const byte[:]) {
 	f4(m, sg / n);
 	print(m);
 }
-fn env_on(name const byte[:]) bool {
-	var e byte[>..] = [];
-	if !read_file("/proc/self/environ", e) { return true; }
-	let ents = split(e, 0);
-	var key byte[>..] = [];
-	format(key, name, "=0");
-	for en in ents {
-		if en == key { return false; }
+fn env_get(name const byte[:], out byte[>..]&) bool {
+	var data byte[>..] = [];
+	if !read_file("/proc/self/environ", data) { return false; }
+	var start = 0;
+	var i = 0;
+	while i <= data.len {
+		if i == data.len || data[i] == 0 {
+			if i > start {
+				let entry = data[start..i];
+				if entry.len > name.len && entry[..name.len] == name && entry[name.len] == '=' {
+					out.clear();
+					out.append(entry[name.len + 1..]);
+					return true;
+				}
+			}
+			start = i + 1;
+		}
+		i++;
 	}
-	true
+	return false;
+}
+fn env_has(name const byte[:]) bool {
+	var e byte[>..] = [];
+	env_get(name, e)
+}
+fn env_is0(name const byte[:]) bool {
+	var e byte[>..] = [];
+	if !env_get(name, e) { return false; }
+	e == "0"
 }
 fn main() {
 	let a = args();
@@ -1447,13 +1488,11 @@ fn main() {
 		print("usage: fit model.glb targets prefix [pose]");
 		return;
 	}
-	let specs = split(a[2], ',');
-	for sp in specs {
-		if nview >= 7 { continue; }
-		let parts = split(sp, ':');
+	for t in split(a[2], ',') {
+		if nview >= 7 { break; }
 		var path const byte[:] = "";
 		var yaw f32 = 0.0;
-		for w, k in parts {
+		for w, k in split(t, ':') {
 			if k == 0 { path = w; } else if k == 1 { yaw = num(w); }
 		}
 		var data byte[>..] = [];
@@ -1462,16 +1501,16 @@ fn main() {
 			continue;
 		}
 		tpx.clear();
-		let w, h, ok = codec_png::decode(data, tpx);
+		let wd, ht, ok = codec_png::decode(data, tpx);
 		if !ok {
 			print("target failed ", path);
 			continue;
 		}
 		if nview == 0 {
-			tw = w;
-			th = h;
-		} else if w != tw || h != th {
-			print("target size differs ", path);
+			tw = wd;
+			th = ht;
+		} else if wd != tw || ht != th {
+			print("target size differs, skipped ", path);
 			continue;
 		}
 		tmask.clear();
@@ -1480,7 +1519,7 @@ fn main() {
 		v_px.append(tpx);
 		v_mask.append(tmask);
 		v_bg.push(bg);
-		v_yaw.push(((yaw as real) * PI / 180.0) as f32);
+		v_yaw.push((((yaw as real) * PI) / 180.0) as f32);
 		v_d.push(3.2);
 		v_cy.push(0.85);
 		v_cx.push(0.0);
@@ -1488,6 +1527,32 @@ fn main() {
 	}
 	if nview == 0 {
 		print("no targets");
+		return;
+	}
+	if env_has("FIT_MASK") {
+		let n = tw * th;
+		for k in nview {
+			var px byte[>..] = [];
+			px.resize(n * 4, 0);
+			var cnt = 0;
+			for i in n {
+				let on = v_mask[k * n + i] >= 0.5;
+				let c byte = if on { 255 } else { 0 };
+				px[i * 4] = c;
+				px[i * 4 + 1] = c;
+				px[i * 4 + 2] = c;
+				px[i * 4 + 3] = 255;
+				if on { cnt++; }
+			}
+			var p byte[>..] = [];
+			format(p, a[3], "_v", k, "_mask.png");
+			let s = gfx::Shot { w: tw, h: th, pf: 376840196, px: px };
+			gfx::save_shot(s, p);
+			var o byte[>..] = [];
+			format(o, "mask v", k, " ");
+			f4(o, (cnt as f32) / (n as f32));
+			print(o);
+		}
 		return;
 	}
 	rmask.clear();
@@ -1517,47 +1582,49 @@ fn main() {
 			return;
 		}
 	}
-	if env_on("FIT_POSE") {
+	if !env_is0("FIT_POSE") {
 		pose_fit();
 		for k in nview { cam_fit(k, 3); }
 		var pp byte[>..] = [];
 		format(pp, a[3], "_pose.txt");
 		save_pose(pp);
 	}
-	if env_on("FIT_SHAPE") {
+	if !env_is0("FIT_SHAPE") {
 		for r in 4 {
 			shape_fit(r);
 			for k in nview { cam_fit(k, 3); }
-			var t byte[>..] = [];
-			format(t, "shape", r);
-			report(t, false, a[3]);
+			var tg byte[>..] = [];
+			format(tg, "shape", r);
+			report(tg, false, a[3]);
 		}
 	}
-	if env_on("FIT_LIGHT") { light_fit(); }
+	if !env_is0("FIT_LIGHT") { light_fit(); }
 	report("fit", false, a[3]);
 	var saved = 0;
-	if env_on("FIT_PAINT") {
+	if !env_is0("FIT_PAINT") {
 		for r in 4 {
 			paint();
-			var t byte[>..] = [];
-			format(t, "paint", r);
-			report(t, false, a[3]);
+			var tg byte[>..] = [];
+			format(tg, "paint", r);
+			report(tg, false, a[3]);
 		}
 		for img in gltf::images.len {
 			if img < img_changed.len && img_changed[img] != 0 {
 				let im = gltf::images[img];
+				var cp byte[>..] = [];
+				cp.append(gltf::image_pixels(img));
 				var p byte[>..] = [];
 				format(p, a[3], "_tex", img, ".png");
-				let sh = gfx::Shot { w: im.width, h: im.height, pf: 376840196, px: gltf::image_pixels(img) };
-				gfx::save_shot(sh, p);
+				let s = gfx::Shot { w: im.width, h: im.height, pf: 376840196, px: cp };
+				gfx::save_shot(s, p);
 				saved++;
 			}
 		}
 	}
 	if saved > 0 || shape_changed {
-		var gp byte[>..] = [];
-		format(gp, a[3], ".glb");
-		export_glb(a[1], gp, a[3]);
+		var og byte[>..] = [];
+		format(og, a[3], ".glb");
+		export_glb(a[1], og, a[3]);
 	}
 	report("final", true, a[3]);
 }
