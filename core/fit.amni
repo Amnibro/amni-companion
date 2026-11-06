@@ -1,0 +1,415 @@
+import os;
+import gfx;
+import math;
+import gfx.linalg;
+import gfx.gltf;
+import gfx.codec_png;
+import gfx.scene3d;
+
+var tw = 0;
+var th = 0;
+var tpx byte[>..];
+var tmask f32[>..];
+var rpx byte[>..];
+var rmask f32[>..];
+var bg = float3 { 0.0, 0.0, 0.0 };
+var item = -1;
+var asset = -1;
+var big = default<gfx::Texture>();
+var fov f32 = 0.5;
+fn num(s const byte[:]) f32 {
+	let v, ok = parse_flt(s);
+	v as f32
+}
+fn at(px const byte[:], i int, c int) f32 {
+	px[i * 4 + c] as f32
+}
+fn gray_bg() {
+	var rs f32[>..] = [];
+	var gs f32[>..] = [];
+	var bs f32[>..] = [];
+	for y in th {
+		for x in tw {
+			if y == 0 || y == th - 1 || x == 0 || x == tw - 1 {
+				let i = y * tw + x;
+				rs.push(at(tpx, i, 0));
+				gs.push(at(tpx, i, 1));
+				bs.push(at(tpx, i, 2));
+			}
+		}
+	}
+	sort(rs) { p, q => p < q };
+	sort(gs) { p, q => p < q };
+	sort(bs) { p, q => p < q };
+	bg = float3 { rs[rs.len / 2], gs[gs.len / 2], bs[bs.len / 2] };
+	let n = tw * th;
+	var seen byte[>..] = [];
+	seen.resize(n, 0);
+	var stack int[>..<] = [];
+	for i in n { tmask[i] = 1.0; }
+	fn visit(i int, from int) {
+		if seen[i] != 0 { return; }
+		let r = at(tpx, i, 0);
+		let g = at(tpx, i, 1);
+		let b = at(tpx, i, 2);
+		let r0 = at(tpx, from, 0);
+		let g0 = at(tpx, from, 1);
+		let b0 = at(tpx, from, 2);
+		let dp = max(max(abs(r - r0), abs(g - g0)), abs(b - b0));
+		let db = max(max(abs(r - bg.x), abs(g - bg.y)), abs(b - bg.z));
+		let sat = max(max(r, g), b) - min(min(r, g), b);
+		if dp <= 6.0 && db <= 40.0 && sat <= 18.0 {
+			seen[i] = 1;
+			tmask[i] = 0.0;
+			stack.push(i);
+		}
+	}
+	for y in th {
+		for x in tw {
+			if y == 0 || y == th - 1 || x == 0 || x == tw - 1 {
+				let i = y * tw + x;
+				visit(i, i);
+			}
+		}
+	}
+	while stack.len > 0 {
+		let p = stack.pop();
+		let x = p % tw;
+		let y = p / tw;
+		if x > 0 { visit(p - 1, p); }
+		if x < tw - 1 { visit(p + 1, p); }
+		if y > 0 { visit(p - tw, p); }
+		if y < th - 1 { visit(p + tw, p); }
+	}
+}
+fn load_pose(path const byte[:]) {
+	var data byte[>..] = [];
+	if !read_file(path, data) { return; }
+	let lines = split(data, '\n');
+	for ln in lines {
+		let t = trim(ln);
+		if t.len == 0 { continue; }
+		let fields = split(t, ' ');
+		var name const byte[:] = "";
+		var vals f32[..10] = [];
+		for w, k in fields {
+			if k == 0 { name = w; } else if vals.len < 10 { vals.push(num(w)); }
+		}
+		if vals.len < 10 { continue; }
+		let node = gltf::find_node(asset, name);
+		if node >= 0 {
+			s3d::set_node(item, node, float3 { vals[0], vals[1], vals[2] }, linalg::Quat { vals[3], vals[4], vals[5], vals[6] }, float3 { vals[7], vals[8], vals[9] });
+		}
+	}
+}
+fn shot(eye float3, look float3) {
+	s3d::view = s3d::Camera { eye: eye, target: look, up: float3 { 0.0, 1.0, 0.0 }, fov_y: fov, near: 0.05, far: 100.0 };
+	for k in 3 { s3d::render(big); }
+	let px = gfx::read_pixels(big);
+	let bw = 2 * tw;
+	rpx.resize(tw * th * 4, 0);
+	rmask.resize(tw * th, 0.0);
+	fn q(s f32) byte { clamp(round((s as real) / 4.0), 0.0, 255.0) as byte }
+	for y in th {
+		for x in tw {
+			var cnt = 0;
+			var sr f32 = 0.0;
+			var sg f32 = 0.0;
+			var sb f32 = 0.0;
+			for v in 2 {
+				for u in 2 {
+					let j = ((2 * y + v) * bw + 2 * x + u) * 4;
+					if px[j] == 0 && px[j + 1] == 0 && px[j + 2] == 0 {
+						sr += bg.x;
+						sg += bg.y;
+						sb += bg.z;
+					} else {
+						sr += px[j] as f32;
+						sg += px[j + 1] as f32;
+						sb += px[j + 2] as f32;
+						cnt++;
+					}
+				}
+			}
+			let i = y * tw + x;
+			rmask[i] = (cnt as f32) / 4.0;
+			rpx[i * 4] = q(sr);
+			rpx[i * 4 + 1] = q(sg);
+			rpx[i * 4 + 2] = q(sb);
+			rpx[i * 4 + 3] = 255;
+		}
+	}
+}
+fn bbox(m const f32[:]) int, int, f32 {
+	var y0 = -1;
+	var y1 = -1;
+	var sx f32 = 0.0;
+	var n = 0;
+	for y in th {
+		for x in tw {
+			if m[y * tw + x] >= 0.5 {
+				if y0 < 0 { y0 = y; }
+				y1 = y;
+				sx += x as f32;
+				n++;
+			}
+		}
+	}
+	if n == 0 { return 0, 0, 0.0; }
+	return y0, y1, sx / (n as f32);
+}
+fn srgb_lin(c f32) real {
+	let v = (c as real) / 255.0;
+	if v <= 0.04045 { v / 12.92 } else { pow((v + 0.055) / 1.055, 2.4) }
+}
+fn lab_f(t real) real {
+	if t > 0.008856 { pow(t, 1.0 / 3.0) } else { 7.787 * t + 16.0 / 116.0 }
+}
+fn lab(r f32, g f32, b f32) float3 {
+	let lr = srgb_lin(r);
+	let lg = srgb_lin(g);
+	let lb = srgb_lin(b);
+	let x = (0.4124564 * lr + 0.3575761 * lg + 0.1804375 * lb) / 0.95047;
+	let y = 0.2126729 * lr + 0.7151522 * lg + 0.0721750 * lb;
+	let z = (0.0193339 * lr + 0.1191920 * lg + 0.9503041 * lb) / 1.08883;
+	let fx = lab_f(x);
+	let fy = lab_f(y);
+	let fz = lab_f(z);
+	float3 { (116.0 * fy - 16.0) as f32, (500.0 * (fx - fy)) as f32, (200.0 * (fy - fz)) as f32 }
+}
+fn de2000(p float3, q float3) f32 {
+	let l1 = p.x as real;
+	let a1 = p.y as real;
+	let b1 = p.z as real;
+	let l2 = q.x as real;
+	let a2 = q.y as real;
+	let b2 = q.z as real;
+	let rad = PI / 180.0;
+	let c1 = sqrt(a1 * a1 + b1 * b1);
+	let c2 = sqrt(a2 * a2 + b2 * b2);
+	let cb = (c1 + c2) / 2.0;
+	let cb7 = pow(cb, 7.0);
+	let p25 = pow(25.0, 7.0);
+	let g = 0.5 * (1.0 - sqrt(cb7 / (cb7 + p25)));
+	let ap1 = (1.0 + g) * a1;
+	let ap2 = (1.0 + g) * a2;
+	let cp1 = sqrt(ap1 * ap1 + b1 * b1);
+	let cp2 = sqrt(ap2 * ap2 + b2 * b2);
+	let hp1 = if ap1 == 0.0 && b1 == 0.0 { 0.0 } else { let h = atan2(b1, ap1) / rad; if h < 0.0 { h + 360.0 } else { h } };
+	let hp2 = if ap2 == 0.0 && b2 == 0.0 { 0.0 } else { let h = atan2(b2, ap2) / rad; if h < 0.0 { h + 360.0 } else { h } };
+	let dl = l2 - l1;
+	let dc = cp2 - cp1;
+	var dh = 0.0;
+	if cp1 * cp2 != 0.0 {
+		dh = hp2 - hp1;
+		if dh > 180.0 { dh -= 360.0; } else if dh < -180.0 { dh += 360.0; }
+	}
+	let dhh = 2.0 * sqrt(cp1 * cp2) * sin(dh * rad / 2.0);
+	let lbar = (l1 + l2) / 2.0;
+	let cbar = (cp1 + cp2) / 2.0;
+	let hbar = if cp1 * cp2 == 0.0 { hp1 + hp2 } else if abs(hp1 - hp2) <= 180.0 { (hp1 + hp2) / 2.0 } else if hp1 + hp2 < 360.0 { (hp1 + hp2 + 360.0) / 2.0 } else { (hp1 + hp2 - 360.0) / 2.0 };
+	let t = 1.0 - 0.17 * cos((hbar - 30.0) * rad) + 0.24 * cos(2.0 * hbar * rad) + 0.32 * cos((3.0 * hbar + 6.0) * rad) - 0.20 * cos((4.0 * hbar - 63.0) * rad);
+	let hh = (hbar - 275.0) / 25.0;
+	let dtheta = 30.0 * exp(-(hh * hh));
+	let cbar7 = pow(cbar, 7.0);
+	let rc = 2.0 * sqrt(cbar7 / (cbar7 + p25));
+	let lm = (lbar - 50.0) * (lbar - 50.0);
+	let sl = 1.0 + 0.015 * lm / sqrt(20.0 + lm);
+	let sc = 1.0 + 0.045 * cbar;
+	let sh = 1.0 + 0.015 * cbar * t;
+	let rt = -sin(2.0 * dtheta * rad) * rc;
+	let x1 = dl / sl;
+	let x2 = dc / sc;
+	let x3 = dhh / sh;
+	sqrt(x1 * x1 + x2 * x2 + x3 * x3 + rt * x2 * x3) as f32
+}
+fn metrics(heat byte[>..]&) f32, f32, f32, f32 {
+	let n = tw * th;
+	heat.resize(n * 4, 0);
+	var inter f32 = 0.0;
+	var uni f32 = 0.0;
+	var sumd f32 = 0.0;
+	var cnt = 0;
+	var good = 0;
+	var lt f32[>..] = [];
+	var lr f32[>..] = [];
+	lt.resize(n, 0.0);
+	lr.resize(n, 0.0);
+	var x0 = tw;
+	var x1 = -1;
+	var y0 = th;
+	var y1 = -1;
+	for i in n {
+		let tm = tmask[i];
+		let rm = rmask[i];
+		inter += min(tm, rm);
+		uni += max(tm, rm);
+		lt[i] = 0.299 * at(tpx, i, 0) + 0.587 * at(tpx, i, 1) + 0.114 * at(tpx, i, 2);
+		lr[i] = 0.299 * at(rpx, i, 0) + 0.587 * at(rpx, i, 1) + 0.114 * at(rpx, i, 2);
+		if max(tm, rm) > 0.0 {
+			let x = i % tw;
+			let y = i / tw;
+			x0 = min(x0, x);
+			x1 = max(x1, x);
+			y0 = min(y0, y);
+			y1 = max(y1, y);
+			let d = de2000(lab(at(tpx, i, 0), at(tpx, i, 1), at(tpx, i, 2)), lab(at(rpx, i, 0), at(rpx, i, 1), at(rpx, i, 2)));
+			sumd += d;
+			cnt++;
+			if d < 3.0 { good++; }
+			heat[i * 4] = (min(d / 10.0, 1.0) * 255.0) as byte;
+			heat[i * 4 + 1] = (clamp((d - 10.0) / 10.0, 0.0, 1.0) * 255.0) as byte;
+			heat[i * 4 + 2] = (clamp((d - 10.0) / 10.0, 0.0, 1.0) * 255.0) as byte;
+			heat[i * 4 + 3] = 255;
+		} else {
+			heat[i * 4] = tpx[i * 4] / 4;
+			heat[i * 4 + 1] = tpx[i * 4 + 1] / 4;
+			heat[i * 4 + 2] = tpx[i * 4 + 2] / 4;
+			heat[i * 4 + 3] = 255;
+		}
+	}
+	let c1 = 6.5025;
+	let c2 = 58.5225;
+	var ssum = 0.0;
+	var wc = 0;
+	var wy = y0;
+	while wy + 7 <= y1 + 1 {
+		var wx = x0;
+		while wx + 7 <= x1 + 1 {
+			var sx = 0.0;
+			var sy = 0.0;
+			var sxx = 0.0;
+			var syy = 0.0;
+			var sxy = 0.0;
+			var has = false;
+			for v in 7 {
+				for u in 7 {
+					let i = (wy + v) * tw + wx + u;
+					let a = lt[i] as real;
+					let b = lr[i] as real;
+					sx += a;
+					sy += b;
+					sxx += a * a;
+					syy += b * b;
+					sxy += a * b;
+					if max(tmask[i], rmask[i]) > 0.0 { has = true; }
+				}
+			}
+			if has {
+				let mx = sx / 49.0;
+				let my = sy / 49.0;
+				let vx = sxx / 49.0 - mx * mx;
+				let vy = syy / 49.0 - my * my;
+				let cxy = sxy / 49.0 - mx * my;
+				ssum += ((2.0 * mx * my + c1) * (2.0 * cxy + c2)) / ((mx * mx + my * my + c1) * (vx + vy + c2));
+				wc++;
+			}
+			wx += 2;
+		}
+		wy += 2;
+	}
+	let iou = if uni > 0.0 { inter / uni } else { 0.0 };
+	let ssim = if wc > 0 { (ssum / (wc as real)) as f32 } else { 0.0 };
+	let de = if cnt > 0 { sumd / (cnt as f32) } else { 0.0 };
+	let gs = if cnt > 0 { (good as f32) / (cnt as f32) } else { 0.0 };
+	return iou, ssim, de, gs;
+}
+fn main() {
+	let a = args();
+	var data byte[>..] = [];
+	if !read_file(a[2], data) {
+		print("target failed");
+		return;
+	}
+	let w, h, ok = codec_png::decode(data, tpx);
+	if !ok {
+		print("target failed");
+		return;
+	}
+	tw = w;
+	th = h;
+	tmask.resize(tw * th, 0.0);
+	rmask.resize(tw * th, 0.0);
+	gray_bg();
+	if !gfx::open_headless(tw, th) {
+		print("gpu: skipped (no device: ", gfx::error(), ")");
+		return;
+	}
+	asset = gltf::load(a[1]);
+	if asset < 0 {
+		print("load failed: ", gltf::error());
+		return;
+	}
+	item = s3d::add(asset);
+	s3d::place(item, gfx::mat4_identity);
+	if a.len > 4 { load_pose(a[4]); }
+	s3d::sun = s3d::Sun { to_sun: linalg::unit3(float3 { 0.35, 0.8, 1.0 }), rgb: float3 { 2.2, 2.2, 2.2 }, shadows: true, shadow_far: 10.0, map_size: 2048 };
+	s3d::add_light(float3 { -14.0, 7.0, 14.0 }, float3 { 260.0, 260.0, 260.0 }, 1000.0);
+	s3d::sky = s3d::Sky { zenith: float3 { 0.6, 0.6, 0.6 }, horizon: float3 { 0.55, 0.55, 0.55 }, ground: float3 { 0.3, 0.3, 0.3 }, ambient: 1.0, draw: false };
+	s3d::look.bloom = 0.0;
+	s3d::look.desaturate = 0.0;
+	s3d::look.curve = 1;
+	s3d::init(2 * tw, 2 * th);
+	big = gfx::render_target(2 * tw, 2 * th, gfx::RGBA8);
+	let ty0, ty1, tcx = bbox(tmask);
+	if ty1 <= ty0 {
+		print("empty target");
+		return;
+	}
+	var d f32 = 3.2;
+	var cy f32 = 0.85;
+	var cx f32 = 0.0;
+	for k in 7 {
+		shot(float3 { cx, cy, d }, float3 { cx, cy, 0.0 });
+		let my0, my1, mcx = bbox(rmask);
+		if my1 <= my0 {
+			print("empty render");
+			return;
+		}
+		let wpp = (2.0 * (d as real) * tan((fov as real) / 2.0) / (th as real)) as f32;
+		cy -= ((((my0 + my1) as f32) - ((ty0 + ty1) as f32)) / 2.0) * wpp;
+		cx += (mcx - tcx) * wpp;
+		d *= ((my1 - my0) as f32) / ((ty1 - ty0) as f32);
+	}
+	shot(float3 { cx, cy, d }, float3 { cx, cy, 0.0 });
+	var heat byte[>..] = [];
+	let iou, ssim, de, good = metrics(heat);
+	var p1 byte[>..] = [];
+	format(p1, a[3], "_render.png");
+	gfx::save_shot(gfx::Shot { w: tw, h: th, pf: 376840196, px: rpx }, p1);
+	var p2 byte[>..] = [];
+	format(p2, a[3], "_heat.png");
+	gfx::save_shot(gfx::Shot { w: tw, h: th, pf: 376840196, px: heat }, p2);
+	var side byte[>..] = [];
+	side.resize(tw * 3 * th * 4, 0);
+	for y in th {
+		for x in tw {
+			for c in 4 {
+				let s = y * tw + x;
+				let o = (y * tw * 3 + x) * 4 + c;
+				side[o] = tpx[s * 4 + c];
+				side[o + tw * 4] = rpx[s * 4 + c];
+				side[o + tw * 8] = heat[s * 4 + c];
+			}
+		}
+	}
+	var p3 byte[>..] = [];
+	format(p3, a[3], "_side.png");
+	gfx::save_shot(gfx::Shot { w: tw * 3, h: th, pf: 376840196, px: side }, p3);
+	var line byte[>..] = [];
+	line.append("fit iou ");
+	format_flt(line, iou, 4);
+	line.append(" ssim ");
+	format_flt(line, ssim, 4);
+	line.append(" de ");
+	format_flt(line, de, 4);
+	line.append(" good ");
+	format_flt(line, good, 4);
+	line.append(" cam ");
+	format_flt(line, cx, 4);
+	line.append(" ");
+	format_flt(line, cy, 4);
+	line.append(" ");
+	format_flt(line, d, 4);
+	print(line);
+}
