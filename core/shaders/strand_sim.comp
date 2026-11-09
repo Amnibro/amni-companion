@@ -39,6 +39,9 @@ void main() {
 	}
 	if (pr.y > 0.5) for (uint i = 0u; i < n; i++) { X[i] = T[i]; P[i] = T[i]; }
 	else {
+		mat4 cy = m4(116u);
+		for (uint i = 0u; i < n; i++) { X[i] = (cy * vec4(X[i], 1.0)).xyz; P[i] = (cy * vec4(P[i], 1.0)).xyz; }
+		float vm = 0.03 * length(hm[0].xyz);
 		vec3 ga = sm[9].xyz - (hm * vec4(sm[14].w * vec3(0.0, -9.81, 0.0), 0.0)).xyz * (1.0 / length(hm[0].xyz));
 		uint ns = 2u;
 		float hs = dt / float(ns), dmp = 1.0 - sm[16].w;
@@ -47,6 +50,8 @@ void main() {
 			mat4 hr = hp * (1.0 - a) + hm * a;
 			for (uint i = 0u; i < n; i++) {
 				vec3 v = (X[i] - P[i]) * dmp;
+				float vl = length(v);
+				if (vl > vm) v *= vm / vl;
 				P[i] = X[i];
 				X[i] = i < nr ? (hr * vec4(R[i], 1.0)).xyz : X[i] + v + ga * (hs * hs);
 			}
