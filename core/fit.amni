@@ -8,6 +8,7 @@ import gfx.codec_png;
 import gfx.motion;
 import gfx.scene3d;
 import json;
+import look;
 var tw = 0;
 var th = 0;
 var nview = 0;
@@ -2572,76 +2573,68 @@ fn learn_clear() {
 	s3d::render(big);
 	let px = gfx::read_pixels(big);
 	clear_c = float3 { px[0] as f32, px[1] as f32, px[2] as f32 };
-	var o byte[>..] = [];
-	format(o, "clear ");
-	f4(o, clear_c.x);
-	format(o, " ");
-	f4(o, clear_c.y);
-	format(o, " ");
-	f4(o, clear_c.z);
-	print(o);
+	print("clear ", clear_c.x, " ", clear_c.y, " ", clear_c.z);
 	s3d::place(item, gfx::mat4_identity);
 }
 fn main() {
 	let a = args();
-	for c in 3 {
-		for x in 256 { tc[256 * c + x] = x; }
+	if a.len < 4 {
+		print("usage: fit model.glb targets prefix [pose]");
+		return;
 	}
-	let targets = split(a[2], ',');
-	for t in targets {
-		if nview >= 7 { continue; }
-		let parts = split(t, ':');
+	for tgt in split(a[2], ',') {
+		if nview >= 7 { break; }
 		var path const byte[:] = "";
 		var yaw f32 = 0.0;
 		var dd f32 = 3.2;
-		var cyv f32 = 0.85;
-		var cxv f32 = 0.0;
-		var given = false;
-		for w, j in parts {
-			if j == 0 {
+		var cyy f32 = 0.85;
+		var cxx f32 = 0.0;
+		var fixed = false;
+		let parts = split(tgt, ':');
+		for w, k in parts {
+			if k == 0 {
 				path = w;
-			} else if j == 1 {
+			} else if k == 1 {
 				yaw = num(w);
-			} else if j == 2 {
-				dd = num(w);
-				given = true;
-			} else if j == 3 {
-				cyv = num(w);
-				given = true;
-			} else if j == 4 {
-				cxv = num(w);
-				given = true;
+			} else {
+				fixed = true;
+				if k == 2 {
+					dd = num(w);
+				} else if k == 3 {
+					cyy = num(w);
+				} else if k == 4 {
+					cxx = num(w);
+				}
 			}
 		}
 		var data byte[>..] = [];
 		if !read_file(path, data) {
-			print("target failed");
+			print("target failed ", path);
 			continue;
 		}
 		tpx.clear();
 		let w, h, ok = codec_png::decode(data, tpx);
 		if !ok {
-			print("target failed");
+			print("target failed ", path);
 			continue;
 		}
 		if nview == 0 {
 			tw = w;
 			th = h;
 		} else if w != tw || h != th {
-			print("target skipped: size differs");
+			print("target size differs, skipped ", path);
 			continue;
 		}
-		tmask.clear();
 		tmask.resize(tw * th, 1.0);
 		gray_bg();
 		v_px.append(tpx);
 		v_mask.append(tmask);
 		v_bg.push(bg);
-		v_yaw.push((((yaw as real) * PI) / 180.0) as f32);
+		v_yaw.push(((yaw as real) * PI / 180.0) as f32);
 		v_d.push(dd);
-		v_cy.push(cyv);
-		v_cx.push(cxv);
-		v_fix.push(given);
+		v_cy.push(cyy);
+		v_cx.push(cxx);
+		v_fix.push(fixed);
 		nview++;
 	}
 	if nview == 0 {
@@ -2651,19 +2644,23 @@ fn main() {
 	let n = tw * th;
 	if env_on("FIT_MASK") {
 		for k in nview {
-			var px byte[>..] = [];
-			px.resize(n * 4, 255);
+			var m byte[>..] = [];
+			m.resize(n * 4, 0);
 			var cnt = 0;
 			for i in n {
-				let v byte = if v_mask[k * n + i] == 1.0 { 255 } else { 0 };
-				if v == 255 { cnt++; }
-				px[i * 4] = v;
-				px[i * 4 + 1] = v;
-				px[i * 4 + 2] = v;
+				var v byte = 0;
+				if v_mask[k * n + i] == 1.0 {
+					v = 255;
+					cnt++;
+				}
+				m[i * 4] = v;
+				m[i * 4 + 1] = v;
+				m[i * 4 + 2] = v;
+				m[i * 4 + 3] = 255;
 			}
 			var p byte[>..] = [];
 			format(p, a[3], "_v", k, "_mask.png");
-			gfx::save_shot(gfx::Shot { w: tw, h: th, pf: 376840196, px: px }, p);
+			gfx::save_shot(gfx::Shot { w: tw, h: th, pf: 376840196, px: m }, p);
 			var o byte[>..] = [];
 			format(o, "mask v", k, " ");
 			f4(o, (cnt as f32) / (n as f32));
@@ -2681,6 +2678,7 @@ fn main() {
 		print("load failed: ", gltf::error());
 		return;
 	}
+	if !env_off("FIT_LOOK") { look_setup(asset); }
 	item = s3d::add(asset);
 	s3d::place(item, gfx::mat4_identity);
 	if a.len > 4 { load_pose(a[4]); }
@@ -2698,7 +2696,7 @@ fn main() {
 			return;
 		}
 	}
-	if !env_is("FIT_POSE", "0") {
+	if !env_off("FIT_POSE") {
 		pose_fit();
 		for k in nview { cam_fit(k, 3); }
 		var pp byte[>..] = [];
@@ -2714,29 +2712,25 @@ fn main() {
 			report(tg, false, a[3]);
 		}
 	}
-	if !env_is("FIT_LIGHT", "0") { light_fit(); }
+	if !env_off("FIT_LIGHT") { light_fit(); }
 	report("fit", false, a[3]);
-	let tone_skip = env_is("FIT_TONE", "0") || env_is("FIT_TONE", "post");
-	if !tone_skip {
+	if !env_off("FIT_TONE") && !env_is("FIT_TONE", "post") {
 		tone_fit();
 		report("tone", false, a[3]);
 	}
-	if !env_is("FIT_GAIN", "0") { view_gain(); }
-	if !env_is("FIT_MATERIAL", "0") { material_fit(); }
-	if !env_is("FIT_PATTERN", "0") {
-		if img_changed.len < gltf::images.len { img_changed.resize(gltf::images.len, 0); }
-		pattern_fit();
-	}
-	if !env_is("FIT_UNTILE", "0") { untile(); }
-	var saved = 0;
-	if !env_is("FIT_PAINT", "0") {
+	if !env_off("FIT_GAIN") { view_gain(); }
+	if !env_off("FIT_MATERIAL") { material_fit(); }
+	if img_changed.len < gltf::images.len { img_changed.resize(gltf::images.len, 0); }
+	if !env_off("FIT_PATTERN") { pattern_fit(); }
+	if !env_off("FIT_UNTILE") { untile(); }
+	if !env_off("FIT_PAINT") {
 		for r in 4 {
 			paint(false);
 			var tg byte[>..] = [];
 			format(tg, "paint", r);
 			report(tg, false, a[3]);
 		}
-		if !env_is("FIT_TONE", "0") {
+		if !env_off("FIT_TONE") {
 			tone_fit();
 			report("tone2", false, a[3]);
 		}
@@ -2752,24 +2746,27 @@ fn main() {
 			}
 			pcell = 4;
 		}
-		for im in gltf::images.len {
-			if im < img_changed.len && img_changed[im] != 0 {
-				let img = gltf::images[im];
-				var p byte[>..] = [];
-				format(p, a[3], "_tex", im, ".png");
-				gfx::save_shot(gfx::Shot { w: img.width, h: img.height, pf: 376840196, px: gltf::image_pixels(im) }, p);
-				saved++;
-			}
+	}
+	var saved = 0;
+	for im in gltf::images.len {
+		if im < img_changed.len && img_changed[im] != 0 {
+			let info = gltf::images[im];
+			var px byte[>..] = [];
+			px.append(gltf::image_pixels(im));
+			var p byte[>..] = [];
+			format(p, a[3], "_tex", im, ".png");
+			gfx::save_shot(gfx::Shot { w: info.width, h: info.height, pf: 376840196, px: px }, p);
+			saved++;
 		}
 	}
 	if saved > 0 || shape_changed || mat_changed {
-		var gp byte[>..] = [];
-		format(gp, a[3], ".glb");
-		export_glb(a[1], gp, a[3]);
+		var op byte[>..] = [];
+		format(op, a[3], ".glb");
+		export_glb(a[1], op, a[3]);
 	}
 	if tone_on {
 		var o byte[>..] = [];
-		format(o, "LUT_3D_SIZE 33\n");
+		o.append("LUT_3D_SIZE 33\n");
 		for b in 33 {
 			for g in 33 {
 				for r in 33 {
