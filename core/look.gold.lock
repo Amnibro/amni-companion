@@ -608,59 +608,25 @@ fn lk_pick(name const byte[:]) int {
 	else if name == "shorts_lace" || name == "lace" { 6 }
 	else { -1 }
 }
-=== -594979163603303f
-fn lk_cloth_tile(k int) f32 {
-	match k {
-		1 => 0.0125,
-		2 => 0.022,
-		3 => 0.009,
-		4 => 0.0075,
-		5 => 0.03,
-		6 => 0.017,
-		_ => 0.009,
-	}
-}
-fn lk_cloth_strength(k int) f32 {
-	match k {
-		1 => 0.9,
-		2 => 1.0,
-		3 => 0.8,
-		4 => 0.9,
-		5 => 0.5,
-		6 => 0.8,
-		_ => 0.8,
-	}
-}
-fn lk_cloth_a(k int) float4 {
-	match k {
-		1 => float4 { 0.25, 0.5, 0.55, 0.0 },
-		2 => float4 { 0.25, 0.5, 0.55, 0.0 },
-		3 => float4 { 0.2, 0.35, 0.5, 0.0 },
-		4 => float4 { 0.15, 0.25, 0.7, 0.0 },
-		5 => float4 { 0.35, 0.55, 0.35, 0.0 },
-		6 => float4 { 0.2, 0.3, 0.8, 0.0 },
-		_ => float4 { 0.2, 0.4, 0.7, 0.0 },
-	}
-}
-fn lk_detail(tex int, xf float4) gltf::TexRef {
-	var d = gltf::TexRef { tex, 0 };
-	d.m = xf;
+=== 1b507b9eb04a8445
+fn lk_texref(tex int, m float4) gltf::TexRef {
+	var d = default<gltf::TexRef>();
+	d.texture = tex;
+	d.m = m;
 	d
 }
 fn look_setup(asset int) {
 	if lk_tex.len == 0 {
-		lk_tex.push(lk_make_tile(0, 512, 2.2));
-		lk_tex.push(lk_make_tile(1, 128, 2.4));
-		lk_tex.push(lk_make_tile(2, 128, 2.4));
-		lk_tex.push(lk_make_tile(3, 128, 2.0));
-		lk_tex.push(lk_make_tile(4, 128, 2.0));
-		lk_tex.push(lk_make_tile(5, 128, 1.1));
-		lk_tex.push(lk_make_tile(6, 128, 2.0));
-		lk_tex.push(lk_make_tile(7, 128, 2.4));
+		let bumps f32[8] = [2.2, 2.4, 2.4, 2.0, 2.0, 1.1, 2.0, 2.4];
+		for k in 8 {
+			let n = if k == 0 { 512 } else { 128 };
+			lk_tex.push(lk_make_tile(k, n, bumps[k]));
+		}
 	}
 	lk_skin_geo(asset);
-	let ms = gltf::assets[asset].materials;
-	for m in ms.first..ms.first + ms.count {
+	gltf::dome_normals(asset, "eyes");
+	let mats = gltf::assets[asset].materials;
+	for m in mats.first..mats.first + mats.count {
 		let name = gltf::text_of(gltf::materials[m].name);
 		let k = lk_pick(name);
 		var x = gltf::materials[m];
@@ -671,37 +637,49 @@ fn look_setup(asset int) {
 				x.shade_b = gltf::shade_preset(1, 1);
 				x.shade_c = gltf::shade_preset(1, 2);
 			}
-			x.detail = lk_detail(lk_tex[0], lk_scale(asset, m, 0.009));
-			if name == "skin" { x.roughness = 0.6; }
-			if name == "face" { x.roughness = 0.9; }
-		}
-		if name == "teeth" {
+			x.detail = lk_texref(lk_tex[0], lk_scale(asset, m, 0.009));
+			if name == "skin" { x.roughness = 0.45; }
+			if name == "face" { x.roughness = 0.4; }
+			x.shade_c.y = 0.45;
+			x.shade_a.x = x.shade_a.x * 0.7;
+			x.shade_a.y = x.shade_a.y * 0.7;
+			x.shade_a.z = x.shade_a.z * 0.7;
+		} else if name == "teeth" {
 			x.shading = 1;
 			x.shade_a = float4 { 0.0007, 0.0005, 0.0004, 0.0 };
 			x.shade_b = float4 { 0.0, 0.0, 0.3, 0.5 };
 			x.shade_c = float4 { 0.04, 0.0, 0.0, 0.3 };
-		}
-		if name == "tongue" || name == "mouth" {
+		} else if name == "tongue" || name == "mouth" {
 			x.shading = 1;
 			x.shade_a = float4 { 0.0015, 0.0007, 0.0003, 0.0 };
 			x.shade_b = float4 { 0.0, 0.0, 0.3, 0.5 };
 			x.shade_c = float4 { 0.028, 0.0, 0.0, 0.3 };
-		}
-		if name == "eyes" {
+		} else if name == "eyes" {
 			let c, r = lk_iris(x.base_tex.texture);
 			let e = gltf::shade_preset(2, 2);
 			x.shading = 2;
 			x.shade_a = c;
 			x.shade_b = gltf::shade_preset(2, 1);
 			x.shade_c = float4 { r, e.y, e.z, e.w };
-			x.roughness = 0.5;
-		}
-		if k >= 1 {
+			x.roughness = 1.0;
+		} else if k >= 1 {
+			var t f32 = 0.0;
+			var s f32 = 0.0;
+			var w f32 = 0.0;
+			var f f32 = 0.0;
+			var sp f32 = 0.0;
+			if k == 1 { t = 0.0125; s = 0.9; w = 0.25; f = 0.5; sp = 0.55; }
+			else if k == 2 { t = 0.022; s = 1.0; w = 0.25; f = 0.5; sp = 0.55; }
+			else if k == 3 { t = 0.009; s = 0.8; w = 0.2; f = 0.35; sp = 0.5; }
+			else if k == 4 { t = 0.0075; s = 0.9; w = 0.15; f = 0.25; sp = 0.7; }
+			else if k == 5 { t = 0.03; s = 0.5; w = 0.35; f = 0.55; sp = 0.35; }
+			else if k == 6 { t = 0.017; s = 0.8; w = 0.2; f = 0.3; sp = 0.8; }
+			else { t = 0.009; s = 0.8; w = 0.2; f = 0.4; sp = 0.7; }
 			x.shading = 3;
 			x.normal_tex = gltf::TexRef { -1, 0 };
-			x.detail = lk_detail(lk_tex[k], lk_scale(asset, m, lk_cloth_tile(k)));
-			x.shade_b = float4 { lk_cloth_strength(k), 0.85, 0.0, 0.0 };
-			x.shade_a = lk_cloth_a(k);
+			x.detail = lk_texref(lk_tex[k], lk_scale(asset, m, t));
+			x.shade_b = float4 { s, 0.85, 0.0, 0.0 };
+			x.shade_a = float4 { w, f, sp, 0.0 };
 			if x.sheen.x < 0.001 && x.sheen.y < 0.001 && x.sheen.z < 0.001 {
 				x.sheen = float3 { 0.08 * x.base.x + 0.03, 0.08 * x.base.y + 0.03, 0.08 * x.base.z + 0.03 };
 				x.sheen_rough = 0.7;
