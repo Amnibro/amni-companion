@@ -1,0 +1,206 @@
+=== -38437c089e21496c
+import os;
+import math;
+import gfx;
+import gfx.linalg;
+import gfx.gltf;
+import gfx.shapes;
+import gfx.scene3d;
+import gfx.hair;
+import look;
+=== -547835d969ce326d
+fn num(s const byte[:]) real {
+	let v, ok = parse_flt(s);
+	v
+}
+=== -19c07e88faf80701
+fn tunes(s const byte[:], out f32[>..]&) {
+	for w in words(s) {
+		if w.len > 0 { out.push(num(w) as f32); }
+	}
+}
+fn tv(t const f32[:], i int, d f32) f32 {
+	if i < t.len { t[i] } else { d }
+}
+=== 3a1aa71b8ff6c83b
+fn mesh_node(asset int, name const byte[:]) int {
+	for i in gltf::assets[asset].nodes.count {
+		let n = gltf::assets[asset].nodes.first + i;
+		if gltf::nodes[n].mesh >= 0 {
+			if gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == name { return n; }
+		}
+	}
+	return -1;
+}
+=== 21e7af5d2fef6379
+fn mat_color(asset int, name const byte[:]) float3 {
+	for i in gltf::assets[asset].materials.count {
+		let m = gltf::assets[asset].materials.first + i;
+		if gltf::text_of(gltf::materials[m].name) == name {
+			let b = gltf::materials[m].base;
+			return float3 { b.x, b.y, b.z };
+		}
+	}
+	return float3 { 0.6, 0.45, 0.25 };
+}
+=== -29027759a7600914
+fn eye_pair(asset int) float3, float3 {
+	let n = mesh_node(asset, "eyes");
+	if n < 0 {
+		return float3 { 0.031, 1.51, 0.11 }, float3 { -0.031, 1.51, 0.11 };
+	}
+	let m = gltf::nodes[n].mesh;
+	var px f32 = 0.0;
+	var py f32 = 0.0;
+	var pz f32 = 0.0;
+	var np = 0;
+	var qx f32 = 0.0;
+	var qy f32 = 0.0;
+	var qz f32 = 0.0;
+	var nq = 0;
+	for i in gltf::meshes[m].prims.count {
+		let p = gltf::meshes[m].prims.first + i;
+		for j in gltf::prims[p].vcount {
+			let v = gltf::prims[p].vfirst + j;
+			let x = gltf::verts[v * gltf::VERTEX_FLOATS + gltf::AT_POS + 0];
+			let y = gltf::verts[v * gltf::VERTEX_FLOATS + gltf::AT_POS + 1];
+			let z = gltf::verts[v * gltf::VERTEX_FLOATS + gltf::AT_POS + 2];
+			if x > 0.0 {
+				px += x; py += y; pz += z; np += 1;
+			} else {
+				qx += x; qy += y; qz += z; nq += 1;
+			}
+		}
+	}
+	let cp = max(np, 1) as f32;
+	let cq = max(nq, 1) as f32;
+	return float3 { px / cp, py / cp, pz / cp }, float3 { qx / cq, qy / cq, qz / cq };
+}
+=== 3624bfcad8a80c56
+fn rect(pos float3, at float3, axis float3, w f32, h f32, rgb float3, sh bool) {
+	s3d::add_rect(pos, at, axis, w, h, rgb, 7.0, sh);
+}
+=== 7012d6c8bb9546d6
+fn main() {
+	let a = args();
+	let w = num(a[3]) as int;
+	let h = num(a[4]) as int;
+	let frames = num(a[5]) as int;
+	var t f32[>..] = [];
+	if a.len > 6 { tunes(a[6], t); }
+	if !gfx::open_headless(w, h) {
+		print("gpu: skipped (no device: ", gfx::error(), ")");
+		return;
+	}
+	let asset = gltf::load(a[1]);
+	if asset < 0 {
+		print("load failed: ", gltf::error());
+		return;
+	}
+	look_setup(asset);
+	for i in gltf::assets[asset].materials.count {
+		let m = gltf::assets[asset].materials.first + i;
+		let nm = gltf::text_of(gltf::materials[m].name);
+		if nm == "face" && tv(t, 13, 0.0) > 0.0 { gltf::materials[m].roughness = tv(t, 13, 0.0); }
+		if nm == "skin" && tv(t, 19, 0.0) > 0.0 { gltf::materials[m].roughness = tv(t, 19, 0.0); }
+	}
+	for i in gltf::assets[asset].materials.count {
+		let m = gltf::assets[asset].materials.first + i;
+		let nm = gltf::text_of(gltf::materials[m].name);
+		if nm == "skin" || nm == "face" {
+			if tv(t, 15, 0.0) > 0.0 { gltf::materials[m].shade_c.y = tv(t, 15, 0.0); }
+			if tv(t, 16, -1.0) >= 0.0 { gltf::materials[m].shade_c.z = tv(t, 16, -1.0); }
+			gltf::materials[m].shade_a.x *= tv(t, 18, 1.0);
+			gltf::materials[m].shade_a.y *= tv(t, 18, 1.0);
+			gltf::materials[m].shade_a.z *= tv(t, 18, 1.0);
+			let k = tv(t, 17, 0.0);
+			let b = gltf::materials[m].base;
+			let mean = (b.x + b.y + b.z) / 3.0;
+			gltf::materials[m].base.x = b.x + (mean - b.x) * k;
+			gltf::materials[m].base.y = b.y + (mean - b.y) * k;
+			gltf::materials[m].base.z = b.z + (mean - b.z) * k;
+		}
+		if nm == "eyes" && tv(t, 20, 0.0) > 0.0 { gltf::materials[m].roughness = tv(t, 20, 0.0); }
+	}
+	if tv(t, 21, 0.0) > 0.0 {
+		for i in gltf::assets[asset].nodes.count {
+			let n = gltf::assets[asset].nodes.first + i;
+			if gltf::nodes[n].mesh >= 0 {
+				if gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "eye_occ" { gltf::nodes[n].mesh = -1; }
+			}
+		}
+	}
+	let ep, en = eye_pair(asset);
+	let mid = (ep + en) * 0.5;
+	let ipd = linalg::length3(ep - en);
+	let fov = tv(t, 4, 0.3);
+	let th = linalg::f(tan((fov * 0.5) as real));
+	let d = ipd / (tv(t, 5, 0.241) * 2.0 * th * (w as f32) / (h as f32));
+	let fh = 2.0 * d * th;
+	let at = mid - float3 { 0.0, (0.5 - tv(t, 6, 0.408)) * fh, 0.0 };
+	print("portrait: eyes ", ep, en, " spacing ", ipd, " distance ", d);
+	let g = tv(t, 10, 0.55);
+	var bm = shapes::material(linalg::v3(g, g * 0.985, g * 1.03), 0.0, 0.95);
+	bm.double_sided = true;
+	let bs = shapes::sheet(7, mid + float3 { -2.5, -2.5, -1.4 }, float3 { 5.0, 0.0, 0.0 }, float3 { 0.0, 5.0, 0.0 }, bm);
+	s3d::place(s3d::add(bs), gfx::mat4_identity);
+	s3d::alpha_to_coverage = true;
+	s3d::init(w, h);
+	var gs int[>..] = [];
+	fn groom(name const byte[:]) {
+		let gi = hair::cards(asset, name, "head", tv(t, 8, 24.0) as int);
+		if gi >= 0 {
+			gs.push(gi);
+			hair::grooms[gi].look.color = mat_color(asset, name) * tv(t, 14, 1.0);
+			hair::grooms[gi].look.gain = tv(t, 11, 1.7);
+			hair::grooms[gi].look.frizz = tv(t, 9, 0.7);
+			hair::grooms[gi].look.ambient = float3 { 1.2, 1.2, 1.2 };
+			for i in gltf::assets[asset].nodes.count {
+				let n = gltf::assets[asset].nodes.first + i;
+				if gltf::nodes[n].mesh >= 0 {
+					if gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == name { gltf::nodes[n].mesh = -1; }
+				}
+			}
+		}
+	}
+	groom("hair");
+	groom("braid_hair");
+	print("portrait: grooms ", gs.len);
+	let item = s3d::add(asset);
+	s3d::place(item, gfx::mat4_identity);
+	for gi in gs { hair::follow(gi, item, -1); }
+	s3d::sun = s3d::Sun { to_sun: linalg::unit3(float3 { 0.5, 0.6, 0.6 }), rgb: float3 { 0.0, 0.0, 0.0 }, shadows: false, shadow_far: 10.0, map_size: 2048, .. };
+	rect(mid + float3 { 0.55, 0.45, 0.9 }, mid, float3 { 0.85, 0.0, -0.52 }, 0.9, 0.9, float3 { 10.0, 9.6, 9.0 } * tv(t, 0, 1.0), true);
+	rect(mid + float3 { -0.8, 0.1, 0.8 }, mid, float3 { 0.7, 0.0, 0.7 }, 1.0, 1.0, float3 { 0.9, 1.0, 1.1 } * tv(t, 1, 0.45), false);
+	rect(mid + float3 { -0.5, 0.35, -0.8 }, mid, float3 { 1.0, 0.0, 0.0 }, 0.3, 0.7, float3 { 4.0, 3.5, 2.9 } * tv(t, 12, 2.0), true);
+	s3d::sky = s3d::Sky { zenith: float3 { 0.5, 0.5, 0.52 }, horizon: float3 { 0.55, 0.55, 0.57 }, ground: float3 { 0.2, 0.19, 0.18 }, ambient: tv(t, 2, 0.8), draw: false };
+	s3d::look.curve = 1;
+	s3d::look.bloom = 0.03;
+	s3d::look.ssao = true;
+	s3d::ao_mode = 1;
+	s3d::look.ao_radius = 0.04;
+	s3d::look.ao_power = 1.2;
+	s3d::look.saturation = 0.95;
+	s3d::look.sharpen = 0.3;
+	s3d::look.exposure = tv(t, 3, 1.0);
+	s3d::sss_on = true;
+	s3d::temporal = 1;
+	s3d::view = s3d::Camera { eye: at + float3 { 0.0, 0.0, d }, target: at, up: float3 { 0.0, 1.0, 0.0 }, fov_y: fov, near: 0.05, far: 30.0 };
+	s3d::dof_aperture = tv(t, 7, 0.0003);
+	s3d::dof_focus = d;
+	let target = gfx::render_target(w, h, gfx::RGBA8);
+	for k in frames {
+		if gs.len > 0 {
+			if s3d::render_begin() {
+				hair::draw(0.0);
+				s3d::render_end(target);
+			}
+		} else {
+			s3d::render(target);
+		}
+		gfx::flush();
+	}
+	let saved = gfx::save_png(target, a[2]);
+	print("portrait: saved ", saved);
+	gfx::close();
+}
