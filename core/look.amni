@@ -592,18 +592,23 @@ fn lk_pick(name const byte[:]) int {
 	else if name == "shorts_lace" || name == "lace" { 6 }
 	else { -1 }
 }
-fn lk_texref(tex int, m float4) gltf::TexRef {
-	var d = default<gltf::TexRef>();
-	d.texture = tex;
-	d.m = m;
-	d
-}
 fn look_setup(asset int) {
 	if lk_tex.len == 0 {
-		let bumps f32[8] = [2.2, 2.4, 2.4, 2.0, 2.0, 1.1, 2.0, 2.4];
-		for k in 8 {
-			let n = if k == 0 { 512 } else { 128 };
-			lk_tex.push(lk_make_tile(k, n, bumps[k]));
+		for kind in 8 {
+			if kind == 0 {
+				lk_tex.push(lk_make_tile(0, 512, 2.2));
+			} else {
+				let bump f32 = match kind {
+					1 => 2.4,
+					2 => 2.4,
+					3 => 2.0,
+					4 => 2.0,
+					5 => 1.1,
+					6 => 2.0,
+					_ => 2.4,
+				};
+				lk_tex.push(lk_make_tile(kind, 128, bump));
+			}
 		}
 	}
 	lk_skin_geo(asset);
@@ -620,10 +625,14 @@ fn look_setup(asset int) {
 				x.shade_b = gltf::shade_preset(1, 1);
 				x.shade_c = gltf::shade_preset(1, 2);
 			}
-			x.detail = lk_texref(lk_tex[0], lk_scale(asset, m, 0.009));
+			var dt = gltf::TexRef { lk_tex[0], 0, .. };
+			dt.m = lk_scale(asset, m, 0.2);
+			x.detail = dt;
 			if name == "skin" { x.roughness = 0.45; }
 			if name == "face" { x.roughness = 0.4; }
-			x.shade_c.y = 0.45;
+			x.shade_c.y = 1.1;
+			x.shade_b.x = 0.0;
+			x.shade_b.y = 0.0;
 			x.shade_a.x = x.shade_a.x * 0.7;
 			x.shade_a.y = x.shade_a.y * 0.7;
 			x.shade_a.z = x.shade_a.z * 0.7;
@@ -646,21 +655,56 @@ fn look_setup(asset int) {
 			x.shade_c = float4 { r, e.y, e.z, e.w };
 			x.roughness = 1.0;
 		} else if k >= 1 {
-			var t f32 = 0.0;
-			var s f32 = 0.0;
-			var w f32 = 0.0;
-			var f f32 = 0.0;
-			var sp f32 = 0.0;
-			if k == 1 { t = 0.0125; s = 0.9; w = 0.25; f = 0.5; sp = 0.55; }
-			else if k == 2 { t = 0.022; s = 1.0; w = 0.25; f = 0.5; sp = 0.55; }
-			else if k == 3 { t = 0.009; s = 0.8; w = 0.2; f = 0.35; sp = 0.5; }
-			else if k == 4 { t = 0.0075; s = 0.9; w = 0.15; f = 0.25; sp = 0.7; }
-			else if k == 5 { t = 0.03; s = 0.5; w = 0.35; f = 0.55; sp = 0.35; }
-			else if k == 6 { t = 0.017; s = 0.8; w = 0.2; f = 0.3; sp = 0.8; }
-			else { t = 0.009; s = 0.8; w = 0.2; f = 0.4; sp = 0.7; }
+			let t f32 = match k {
+				1 => 0.0125,
+				2 => 0.022,
+				3 => 0.009,
+				4 => 0.0075,
+				5 => 0.03,
+				6 => 0.017,
+				_ => 0.009,
+			};
+			let s f32 = match k {
+				1 => 0.9,
+				2 => 1.0,
+				3 => 0.8,
+				4 => 0.9,
+				5 => 0.5,
+				6 => 0.8,
+				_ => 0.8,
+			};
+			let w f32 = match k {
+				1 => 0.25,
+				2 => 0.25,
+				3 => 0.2,
+				4 => 0.15,
+				5 => 0.35,
+				6 => 0.2,
+				_ => 0.2,
+			};
+			let f f32 = match k {
+				1 => 0.5,
+				2 => 0.5,
+				3 => 0.35,
+				4 => 0.25,
+				5 => 0.55,
+				6 => 0.3,
+				_ => 0.4,
+			};
+			let sp f32 = match k {
+				1 => 0.55,
+				2 => 0.55,
+				3 => 0.5,
+				4 => 0.7,
+				5 => 0.35,
+				6 => 0.8,
+				_ => 0.7,
+			};
 			x.shading = 3;
 			x.normal_tex = gltf::TexRef { -1, 0 };
-			x.detail = lk_texref(lk_tex[k], lk_scale(asset, m, t));
+			var dt = gltf::TexRef { lk_tex[k], 0, .. };
+			dt.m = lk_scale(asset, m, t);
+			x.detail = dt;
 			x.shade_b = float4 { s, 0.85, 0.0, 0.0 };
 			x.shade_a = float4 { w, f, sp, 0.0 };
 			if x.sheen.x < 0.001 && x.sheen.y < 0.001 && x.sheen.z < 0.001 {
