@@ -60,11 +60,12 @@ fn mel_of(c float3, bn f32) float2 {
 	}
 	float2 { e as f32, p as f32 }
 }
-=== -483fc92f3f08bc0c
+=== -7bcdaa0328a34f97
 var on = false;
 var hair_top f32 = 0.0;
 var hair_col = float3 { 0.58, 0.38, 0.14 };
 var hair_gain f32 = 1.0;
+var hair_sun = float3 { -1.0, 0.0, 0.0 };
 var guides = 0;
 var parts = 0;
 var cells = 0;
@@ -631,11 +632,11 @@ fn hair_style(o float4) {
 	if o.x >= 0.0 { hair_col = float3 { o.x, o.y, o.z }; }
 	hair_gain = max(o.w, 0.0);
 }
-=== -3cb3bbb4146c16c8
+=== -4f32e2cdd2bd7102
 fn hair_draw(model gfx::mat4, dt f32) {
 	if !on { return; }
-	fn len3(v float3) f32 {
-		sqrt((v.x * v.x + v.y * v.y + v.z * v.z) as real) as f32
+	fn len3(a float3) f32 {
+		sqrt((a.x * a.x + a.y * a.y + a.z * a.z) as real) as f32
 	}
 	let im = linalg::inverse(model);
 	var u = default<HairU>();
@@ -648,7 +649,8 @@ fn hair_draw(model gfx::mat4, dt f32) {
 	let t = gfx::mul(im, float4 { s3d::sun.to_sun.x, s3d::sun.to_sun.y, s3d::sun.to_sun.z, 0.0 });
 	let ld = linalg::unit3(float3 { t.x, t.y, t.z });
 	u.to_sun = float4 { ld.x, ld.y, ld.z, 0.0 };
-	u.sun_rgb = float4 { s3d::sun.rgb.x, s3d::sun.rgb.y, s3d::sun.rgb.z, 0.0 };
+	let sc = if hair_sun.x >= 0.0 { hair_sun } else { s3d::sun.rgb };
+	u.sun_rgb = float4 { sc.x, sc.y, sc.z, 0.0 };
 	u.hair = float4 { hair_col.x, hair_col.y, hair_col.z, 0.42 };
 	let m = mel_of(hair_col, 0.3);
 	let nl = min(s3d::lights.len, 4);
@@ -695,16 +697,14 @@ fn hair_draw(model gfx::mat4, dt f32) {
 	}
 	let reset = sim_reset || dt <= 0.0 || len3(float3 { model.c3.x - hm_prev.c3.x, model.c3.y - hm_prev.c3.y, model.c3.z - hm_prev.c3.z }) > 0.5;
 	if reset { hm_prev = model; }
-	var carry = gfx::mul(model, linalg::inverse(hm_prev));
-	let de = carry;
-	carry = gfx::mat4_identity;
-	let cs = clamp(((de.c0.x + de.c1.y + de.c2.z - 1.0) / 2.0) as real, -1.0, 1.0);
-	let ang = acos(cs) as f32;
+	var carry = gfx::mat4_identity;
+	let de = gfx::mul(model, linalg::inverse(hm_prev));
+	let cs real = ((de.c0.x as real) + (de.c1.y as real) + (de.c2.z as real) - 1.0) / 2.0;
+	let ang = acos(clamp(cs, -1.0, 1.0)) as f32;
 	let ax = float3 { de.c1.z - de.c2.y, de.c2.x - de.c0.z, de.c0.y - de.c1.x };
 	if !reset && ang > 0.2 {
 		let k = 1.0 - 0.2 / ang;
-		let axis = if len3(ax) > 0.001 { linalg::unit3(ax) } else { float3 { 0.0, 1.0, 0.0 } };
-		let qe = linalg::qaxis(axis, ang * k);
+		let qe = linalg::qaxis(if len3(ax) > 0.001 { linalg::unit3(ax) } else { float3 { 0.0, 1.0, 0.0 } }, ang * k);
 		let c = float3 { hm_prev.c3.x, hm_prev.c3.y, hm_prev.c3.z };
 		let mv = float3 { (model.c3.x - c.x) * k, (model.c3.y - c.y) * k, (model.c3.z - c.z) * k };
 		carry = gfx::mul(gfx::translate(c + mv), gfx::mul(linalg::qmatrix(qe), gfx::translate(float3 { -c.x, -c.y, -c.z })));
@@ -728,17 +728,17 @@ fn hair_draw(model gfx::mat4, dt f32) {
 	simv[11] = hm_prev.c1;
 	simv[12] = hm_prev.c2;
 	simv[13] = hm_prev.c3;
-	simv[15] = float4 { 0.012, 0.35, 0.08, 0.5 };
-	simv[16] = float4 { 0.5, 0.9, 0.0, 0.02 };
+	simv[15] = float4 { 0.1, 0.35, 0.08, 0.5 };
+	simv[16] = float4 { 0.25, 0.9, 0.0, 0.02 };
 	simv[17] = float4 { 0.007, hair_top - 0.07, hair_top - 0.02, 0.0 };
 	for p in parts {
 		let o = 20 + 12 * p;
 		let mp = gfx::mul(motion::world[part_node[p]], part_ib[p]);
-		let inv = linalg::inverse(mp);
-		simv[o + 3] = inv.c0;
-		simv[o + 4] = inv.c1;
-		simv[o + 5] = inv.c2;
-		simv[o + 6] = inv.c3;
+		let imp = linalg::inverse(mp);
+		simv[o + 3] = imp.c0;
+		simv[o + 4] = imp.c1;
+		simv[o + 5] = imp.c2;
+		simv[o + 6] = imp.c3;
 		simv[o + 7] = mp.c0;
 		simv[o + 8] = mp.c1;
 		simv[o + 9] = mp.c2;
@@ -768,30 +768,26 @@ fn hair_draw(model gfx::mat4, dt f32) {
 		var raw byte[>..] = [];
 		raw.resize(guides * 16, 0);
 		gfx::read_buffer(statb, 0, raw[..]);
-		var s0 real = 0.0;
-		var s1 real = 0.0;
-		var s2 real = 0.0;
-		var s3 real = 0.0;
-		var mx real = 0.0;
-		var s4 real = 0.0;
+		var s0 = 0;
+		var s1 = 0;
+		var s2 = 0;
+		var mx = 0;
+		var s4 = 0;
 		for g in guides {
 			let at = g * 16;
-			let a0 = binary::gather(raw, at, 4) as int;
-			let a1 = binary::gather(raw, at + 4, 4) as int;
-			let a2 = binary::gather(raw, at + 8, 4) as int;
-			let a3 = binary::gather(raw, at + 12, 4) as int;
-			s0 += a0 as real;
-			s1 += a1 as real;
-			s2 += a2 as real;
-			if (a2 as real) > mx { mx = a2 as real; }
-			s4 += (a3 - 1000000000) as real;
+			s0 += binary::gather(raw, at, 4) as int;
+			s1 += binary::gather(raw, at + 4, 4) as int;
+			let d = binary::gather(raw, at + 8, 4) as int;
+			s2 += d;
+			if d > mx { mx = d; }
+			s4 += binary::gather(raw, at + 12, 4) as int - 1000000000;
 		}
-		let ng = max(guides, 1) as real;
+		let gn = max(guides, 1) as f32;
 		probe_v[0] = s0 as f32;
 		probe_v[1] = s1 as f32;
-		probe_v[2] = (s2 / ng / 1000.0) as f32;
-		probe_v[3] = (mx / 1000.0) as f32;
-		probe_v[4] = (s4 / ng / 1000.0) as f32;
+		probe_v[2] = (s2 as f32) / gn / 1000.0;
+		probe_v[3] = (mx as f32) / 1000.0;
+		probe_v[4] = (s4 as f32) / gn / 1000.0;
 		probe_v[5] += 1.0;
 		probe_v[6] = guides as f32;
 		probe_ask = false;

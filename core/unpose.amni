@@ -1,0 +1,262 @@
+import os;
+import math;
+import gfx.linalg;
+import gfx.gltf;
+import bake;
+fn up_under(n int, a int) bool {
+	var k = n;
+	while k >= 0 { if k == a { return true; } k = gltf::nodes[k].parent; }
+	false
+}
+fn up_node(asset int, name const byte[:]) int {
+	for i in gltf::assets[asset].nodes.count { if gltf::text_of(gltf::nodes[gltf::assets[asset].nodes.first + i].name) == name { return gltf::assets[asset].nodes.first + i; } }
+	-1
+}
+fn up_mesh(asset int, name const byte[:]) int {
+	for i in gltf::assets[asset].meshes.count { if gltf::text_of(gltf::meshes[gltf::assets[asset].meshes.first + i].name) == name { return gltf::assets[asset].meshes.first + i; } }
+	-1
+}
+fn up_vp(v int, k int) float3 {
+	let o = v * gltf::VERTEX_FLOATS + k;
+	float3 { gltf::verts[o], gltf::verts[o + 1], gltf::verts[o + 2] }
+}
+fn up_set(v int, k int, p float3) {
+	let o = v * gltf::VERTEX_FLOATS + k;
+	gltf::verts[o] = p.x;
+	gltf::verts[o + 1] = p.y;
+	gltf::verts[o + 2] = p.z;
+}
+fn up_fade(y f32, hi f32, lo f32) f32 {
+	let s = clamp((hi - y) / max(hi - lo, 0.0001), 0.0, 1.0);
+	s * s * (3.0 - 2.0 * s)
+}
+fn up_same(ma int, mb int) bool {
+	if mb < 0 || gltf::meshes[ma].prims.count != gltf::meshes[mb].prims.count { return false; }
+	for j in gltf::meshes[ma].prims.count { if gltf::prims[gltf::meshes[ma].prims.first + j].vcount != gltf::prims[gltf::meshes[mb].prims.first + j].vcount { return false; } }
+	true
+}
+fn unpose_arms(asset int, dl f32, dr f32) int {
+	if gltf::assets[asset].skins.count < 1 { return 0; }
+	let sk = gltf::skins[gltf::assets[asset].skins.first];
+	var pv float3[>..] = [];
+	var an int[>..] = [];
+	for side in 2 {
+		let a = up_node(asset, if side == 0 { "upperarm_l" } else { "upperarm_r" });
+		an.push(a);
+		var q = float3 { 0.0, 0.0, 0.0 };
+		for j in sk.joints.count { if gltf::ints[sk.joints.first + j] == a { let bw = linalg::inverse(gltf::matrices[sk.inverse_binds.first + j]); q = float3 { bw.c3.x, bw.c3.y, bw.c3.z }; } }
+		pv.push(q);
+	}
+	if an[0] < 0 || an[1] < 0 { return 0; }
+	let cx = (pv[0].x + pv[1].x) * 0.5;
+	var moved = 0;
+	for rs in 2 {
+		let side = 1 - rs;
+		let deg = if side == 0 { dl } else { dr };
+		if deg == 0.0 { continue; }
+		let ang = deg * 0.0174533 * (if pv[side].x > cx { -1.0 } else { 1.0 });
+		let c = linalg::f(cos(ang as real));
+		let sn = linalg::f(sin(ang as real));
+		var mark bool[>..] = [];
+		for j in sk.joints.count { mark.push(up_under(gltf::ints[sk.joints.first + j], an[side])); }
+		for i in gltf::assets[asset].nodes.count {
+			let n = gltf::assets[asset].nodes.first + i;
+			if gltf::nodes[n].mesh < 0 || gltf::nodes[n].skin < 0 { continue; }
+			let me = gltf::nodes[n].mesh;
+			for pp in gltf::meshes[me].prims.first..gltf::meshes[me].prims.first + gltf::meshes[me].prims.count {
+				let pm = gltf::prims[pp];
+				for v in pm.vfirst..pm.vfirst + pm.vcount {
+					let o = v * gltf::VERTEX_FLOATS;
+					var ws f32 = 0.0;
+					for k in 4 { let jj = gltf::verts[o + gltf::AT_JOINT + k] as int; if jj >= 0 && jj < mark.len && mark[jj] { ws += gltf::verts[o + gltf::AT_WEIGHT + k]; } }
+					if ws <= 0.0 { continue; }
+					moved += 1;
+					let ma = 1.0 - ws + ws * c;
+					let mb = ws * sn;
+					let dt = 1.0 / (ma * ma + mb * mb);
+					let qx = gltf::verts[o + gltf::AT_POS] - pv[side].x;
+					let qy = gltf::verts[o + gltf::AT_POS + 1] - pv[side].y;
+					gltf::verts[o + gltf::AT_POS] = pv[side].x + (ma * qx + mb * qy) * dt;
+					gltf::verts[o + gltf::AT_POS + 1] = pv[side].y + (ma * qy - mb * qx) * dt;
+					let nx = gltf::verts[o + gltf::AT_NRM];
+					let ny = gltf::verts[o + gltf::AT_NRM + 1];
+					up_set(v, gltf::AT_NRM, linalg::unit3(float3 { (ma * nx + mb * ny) * dt, (ma * ny - mb * nx) * dt, gltf::verts[o + gltf::AT_NRM + 2] }));
+				}
+			}
+		}
+	}
+	moved
+}
+fn rebody(asset int, src int, hi f32, lo f32) int {
+	let sa = up_mesh(asset, "skin");
+	let sb = up_mesh(src, "skin");
+	if sa < 0 || !up_same(sa, sb) { return 0; }
+	var sp float3[>..] = [];
+	var sd float3[>..] = [];
+	for j in gltf::meshes[sa].prims.count {
+		let pa = gltf::prims[gltf::meshes[sa].prims.first + j];
+		let pb = gltf::prims[gltf::meshes[sb].prims.first + j];
+		for v in pa.vcount {
+			let q = up_vp(pb.vfirst + v, gltf::AT_POS);
+			let p = up_vp(pa.vfirst + v, gltf::AT_POS);
+			sp.push(p);
+			sd.push((q - p) * up_fade(p.y, hi, lo));
+		}
+	}
+	var moved = 0;
+	for i in gltf::assets[asset].meshes.count {
+		let ma = gltf::assets[asset].meshes.first + i;
+		let mb = up_mesh(src, gltf::text_of(gltf::meshes[ma].name));
+		let same = up_same(ma, mb);
+		for j in gltf::meshes[ma].prims.count {
+			let pa = gltf::prims[gltf::meshes[ma].prims.first + j];
+			for v in pa.vcount {
+				let p = up_vp(pa.vfirst + v, gltf::AT_POS);
+				if same {
+					let pb = gltf::prims[gltf::meshes[mb].prims.first + j];
+					let q = up_vp(pb.vfirst + v, gltf::AT_POS);
+					let f = up_fade(p.y, hi, lo);
+					if f <= 0.0 { continue; }
+					up_set(pa.vfirst + v, gltf::AT_POS, p + (q - p) * f);
+					let n = up_vp(pa.vfirst + v, gltf::AT_NRM);
+					up_set(pa.vfirst + v, gltf::AT_NRM, linalg::unit3(n + (up_vp(pb.vfirst + v, gltf::AT_NRM) - n) * f));
+					moved += 1;
+				} else {
+					if p.y > hi + 0.05 { continue; }
+					var wx real = 0.0;
+					var wy real = 0.0;
+					var wz real = 0.0;
+					var wt real = 0.0;
+					for k in sp.len {
+						let e = sp[k] - p;
+						let d2 = (e.x * e.x + e.y * e.y + e.z * e.z + 0.000001) as real;
+						let w = 1.0 / (d2 * d2 * d2 * d2);
+						wx += w * (sd[k].x as real);
+						wy += w * (sd[k].y as real);
+						wz += w * (sd[k].z as real);
+						wt += w;
+					}
+					up_set(pa.vfirst + v, gltf::AT_POS, p + float3 { linalg::f(wx / wt), linalg::f(wy / wt), linalg::f(wz / wt) });
+					moved += 1;
+				}
+			}
+		}
+	}
+	moved
+}
+fn up_num(s const byte[:]) f32 {
+	let v, ok = parse_flt(s);
+	v as f32
+}
+fn up_image(asset int, name const byte[:]) int {
+	for i in gltf::assets[asset].materials.count {
+		let m = gltf::materials[gltf::assets[asset].materials.first + i];
+		if gltf::text_of(m.name) == name && m.base_tex.texture >= 0 { return gltf::textures[m.base_tex.texture].image as int; }
+	}
+	-1
+}
+fn up_box(a f32[:], t f32[:], w int, h int, r int) {
+	for y in h {
+		var s real = 0.0;
+		var n = 0;
+		for x in min(r, w) { s += a[y * w + x] as real; n += 1; }
+		for x in w {
+			if x + r < w { s += a[y * w + x + r] as real; n += 1; }
+			if x - r - 1 >= 0 { s -= a[y * w + x - r - 1] as real; n -= 1; }
+			t[y * w + x] = (s / (n as real)) as f32;
+		}
+	}
+	for x in w {
+		var s real = 0.0;
+		var n = 0;
+		for y in min(r, h) { s += t[y * w + x] as real; n += 1; }
+		for y in h {
+			if y + r < h { s += t[(y + r) * w + x] as real; n += 1; }
+			if y - r - 1 >= 0 { s -= t[(y - r - 1) * w + x] as real; n -= 1; }
+			a[y * w + x] = (s / (n as real)) as f32;
+		}
+	}
+}
+fn retone(asset int, src int, name const byte[:]) int {
+	let ia = up_image(asset, name);
+	let ib = up_image(src, name);
+	if ia < 0 || ib < 0 || gltf::images[ia].width != gltf::images[ib].width || gltf::images[ia].height != gltf::images[ib].height { return 0; }
+	let w = gltf::images[ia].width;
+	let h = gltf::images[ia].height;
+	let pa = gltf::images[ia].pixels.first;
+	let pb = gltf::images[ib].pixels.first;
+	let n = w * h;
+	var m f32[>..] = [];
+	var t f32[>..] = [];
+	var e f32[>..] = [];
+	var r f32[>..] = [];
+	m.resize(n, 0.0);
+	t.resize(n, 0.0);
+	e.resize(n, 0.0);
+	r.resize(n * 3, 0.0);
+	for i in n {
+		var d = 0;
+		for c in 3 {
+			let dd = gltf::pixels[pa + i * 4 + c] as int - gltf::pixels[pb + i * 4 + c] as int;
+			d = max(d, if dd < 0 { -dd } else { dd });
+		}
+		m[i] = if d > 14 { 1.0 } else { 0.0 };
+	}
+	up_box(m, t, w, h, 4);
+	var sa real[3] = [0.0, 0.0, 0.0];
+	var sb real[3] = [0.0, 0.0, 0.0];
+	var cnt = 0;
+	for i in n {
+		m[i] = if m[i] > 0.5 { 1.0 } else { 0.0 };
+		e[i] = m[i];
+		if m[i] > 0.5 {
+			cnt += 1;
+			for c in 3 {
+				let av = gltf::pixels[pa + i * 4 + c] as f32;
+				let sv = max(gltf::pixels[pb + i * 4 + c] as f32, 7.0);
+				r[c * n + i] = av / sv;
+				sa[c] += av as real;
+				sb[c] += sv as real;
+			}
+		}
+	}
+	if cnt * 200 < n { return 0; }
+	let rad = max(w / 40, 8);
+	for k in 3 {
+		up_box(e, t, w, h, rad);
+		for c in 3 { up_box(r[c * n..c * n + n], t, w, h, rad); }
+	}
+	for k in 2 { up_box(m, t, w, h, 7); }
+	var done = 0;
+	for i in n {
+		let u = up_fade(m[i], 0.65, 0.35);
+		if u > 0.0 {
+			let wl = clamp(e[i] / 0.08, 0.0, 1.0);
+			for c in 3 {
+				let g = (sa[c] / sb[c]) as f32;
+				let f = g + (r[c * n + i] / max(e[i], 0.0001) - g) * wl;
+				let av = gltf::pixels[pa + i * 4 + c] as f32;
+				let sv = gltf::pixels[pb + i * 4 + c] as f32;
+				gltf::pixels[pa + i * 4 + c] = clamp(av + (sv * f - av) * u + 0.5, 0.0, 255.0) as int as byte;
+			}
+			done += 1;
+		}
+	}
+	if bk_changed.len < gltf::images.len { bk_changed.resize(gltf::images.len, 0); }
+	bk_changed[ia] = 1;
+	print("unpose: ", name, " tone ", (sa[0] / sb[0]) as f32, " ", (sa[1] / sb[1]) as f32, " ", (sa[2] / sb[2]) as f32, " painted ", cnt, " of ", n);
+	done
+}
+fn main() {
+	let a = args();
+	if a.len < 8 { print("usage: unpose <baked.glb> <source.glb> <out.glb> <left degrees> <right degrees> <fade top y> <fade bottom y>"); return; }
+	let asset = gltf::load(a[1]);
+	if asset < 0 { print("unpose: ", gltf::error()); return; }
+	let src = gltf::load(a[2]);
+	if src < 0 { print("unpose: ", gltf::error()); return; }
+	let arms = unpose_arms(asset, up_num(a[4]), up_num(a[5]));
+	let body = rebody(asset, src, up_num(a[6]), up_num(a[7]));
+	let tone = retone(asset, src, "skin");
+	bk_shape = true;
+	print("unpose: arms ", arms, " vertices, body ", body, " vertices, tone ", tone, " texels, saved ", bake_glb(asset, a[1], a[3], ""));
+}
