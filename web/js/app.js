@@ -9,11 +9,16 @@ import {Senses} from './senses.js'
 import * as store from './store.js'
 import {arSupported,startAR} from './xr.js'
 const VERSION='1.2.0',$=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],BASE=new URL('../',import.meta.url),now=()=>performance.now()
-const STOCK={holo:{name:'Holo',file:'models/holo.glb',img:'models/holo.webp',persona:'holo',blurb:'Bubbly punk-pop holo buddy'},dex:{name:'Dex',file:'models/dex.glb',img:'models/dex.webp',persona:'dex',blurb:'Calm engineer, dry wit'},mannequin:{name:'Mannequin',cname:'Amni',file:'anim/AnimationLibrary_Godot_Standard.gltf',img:'models/mannequin.webp',persona:'neutral',blurb:'Plain and simple'}}
+const STOCK={holo:{name:'Holo',file:'models/holo.glb',img:'models/holo.webp',persona:'holo',blurb:'Bubbly punk-pop holo buddy',look:{liner:1,lids:1,clean:1,nose:1}},dex:{name:'Dex',file:'models/dex.glb',img:'models/dex.webp',persona:'dex',blurb:'Calm engineer, dry wit'},mannequin:{name:'Mannequin',cname:'Amni',file:'anim/AnimationLibrary_Godot_Standard.gltf',img:'models/mannequin.webp',persona:'neutral',blurb:'Plain and simple'}}
 const COOL={wave:7000,clap:7000,hands_up:7000,thumbs_up:7000,thumbs_down:7000,peace:7000,love:7000,fist:7000,pointing_up:7000,point:7000,wink:10000,nod:14000,head_shake:14000,object:4000},reacted={}
 let HE=!!navigator.gpu
 let hm=null,S=store.load(),core,lib,av=null,avMeta={name:'',persona:'neutral'},senses=null,listener=null,xr=null,mode='room',busy=false,talking=false,lastReact=0,home=new THREE.Vector3(),go=null,roam=0,lookOff=null,history=S.remember?S.history||[]:[],ctrl=null,roomView=null,greeted=false
 const save=()=>{S.history=history;store.save(S)}
+const LOOK0={liner:0,thick:1,wing:1,lids:0,clean:0,nose:0,extra:''},LK=['liner','thick','wing','lids','clean','nose'],lookOf=id=>({...LOOK0,...STOCK[id.replace('stock:','')]?.look,...S.looks?.[id]}),lookText=l=>[l.clean>0&&`clean ${l.clean} 12 0.85`,l.lids>0&&`lids ${l.lids} ${l.lids} 25 1`,l.nose>0&&`nose ${l.nose} 25 1`,l.liner>0&&`liner ${l.liner} ${(.05*l.thick).toFixed(3)} ${(.185*l.thick).toFixed(3)} ${(.3*l.wing).toFixed(3)} 22 0.075 18`,l.extra].filter(Boolean).join('\n')
+const meshNames=b=>{try{const u=new Uint8Array(b),d=new DataView(u.buffer,u.byteOffset);return d.getUint32(0,true)===0x46546C67?[...new Set(JSON.parse(new TextDecoder().decode(u.subarray(20,20+d.getUint32(12,true)))).meshes?.map(m=>m.name).filter(Boolean))]:[]}catch{return[]}}
+let parts=[]
+function renderLook(){const l=lookOf(S.model_id);$('#look').hidden=!HE;for(const k of LK)$('#lk-'+k).value=l[k];$('#lk-text').value=l.extra;$('#lk-parts').textContent=parts.join(', ')||'none found'}
+function setLook(){S.looks={...S.looks,[S.model_id]:{...Object.fromEntries(LK.map(k=>[k,+$('#lk-'+k).value])),extra:$('#lk-text').value.trim()}};save()}
 const canvas=$('#stage');let renderer=null
 const loop=()=>requestAnimationFrame(function f(t){tick(t);requestAnimationFrame(f)})
 const scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera(35,1,.05,100),clock=new THREE.Clock();camera.position.set(0,1.27,4.7)
@@ -92,7 +97,7 @@ let yaw=0;function tick(t,frame){
 }
 async function modelBytes(id){if(id.startsWith('user:')){const m=await store.models.get(id);if(!m)throw new Error('That model is no longer saved here.');avMeta={name:m.name.replace(/\.(glb|vrm)$/i,''),persona:m.persona||'neutral'};return m.blob.arrayBuffer()}const k=id.replace('stock:',''),s=STOCK[k]||STOCK.holo;avMeta={name:s.cname||s.name,persona:s.persona};if(k==='mannequin')return new URL(s.file,BASE).href;const r=await fetch(new URL(s.file,BASE));if(!r.ok)throw new Error(`${s.name} isn't available yet.`);return r.arrayBuffer()}
 async function useModel(id,quiet){
-  status('Loading model…');try{const src=await modelBytes(id),hb=typeof src==='string'?await(await import('./heview.js')).glbOf(src):src.slice(0),next=await loadAvatar(core,src,lib);av?.dispose();hm?.dispose();hm=null;av=next;{const st=STOCK[id.replace('stock:','')],get=async u=>{const r=u&&await fetch(new URL(u,BASE)).catch(()=>null);return r?.ok?new Uint8Array(await r.arrayBuffer()):null};hm=await(await import('./heview.js')).heMirror(av,new Uint8Array(hb),await get(st?.hair),await get(st?.cloth))}scene.add(av.root);av.root.position.copy(home);av.root.scale.setScalar(S.scale);yaw=Math.atan2(camera.position.x,camera.position.z);S.model_id=id;save();$('#who').textContent=cname();renderModels();$('#rig').textContent=`Body parts matched: ${av.f.count} of 22.${av.morphs.open?' Talking mouth found.':''}${av.morphs.blink?' Blinks.':''}`;status('');quiet||respond(core.reply(context(),'who are you'),false)}
+  status('Loading model…');try{const src=await modelBytes(id),hb=typeof src==='string'?await(await import('./heview.js')).glbOf(src):src.slice(0),_p=(parts=meshNames(hb)),next=await loadAvatar(core,src,lib);av?.dispose();hm?.dispose();hm=null;av=next;{const st=STOCK[id.replace('stock:','')],get=async u=>{const r=u&&await fetch(new URL(u,BASE)).catch(()=>null);return r?.ok?new Uint8Array(await r.arrayBuffer()):null};hm=await(await import('./heview.js')).heMirror(av,new Uint8Array(hb),await get(st?.hair),await get(st?.cloth),new TextEncoder().encode(lookText(lookOf(id))))}scene.add(av.root);av.root.position.copy(home);av.root.scale.setScalar(S.scale);yaw=Math.atan2(camera.position.x,camera.position.z);S.model_id=id;save();$('#who').textContent=cname();renderModels();$('#rig').textContent=`Body parts matched: ${av.f.count} of 22.${av.morphs.open?' Talking mouth found.':''}${av.morphs.blink?' Blinks.':''}`;status('');quiet||respond(core.reply(context(),'who are you'),false)}
   catch(e){status('');toast(e.message,8000);if(!av&&id!=='stock:mannequin')return useModel(id==='stock:holo'?'stock:mannequin':'stock:holo',true)}
 }
 async function addFile(f){
@@ -100,6 +105,7 @@ async function addFile(f){
   status('Checking your model…');const buf=await f.arrayBuffer();try{const test=await loadAvatar(core,buf.slice(0),lib);test.dispose();const id=await store.models.put(f.name,buf);await useModel(id)}catch(e){status('');toast(e.message,9000)}
 }
 async function renderModels(){
+  renderLook()
   $('#stock').innerHTML='';for(const[k,s]of Object.entries(STOCK)){const b=document.createElement('button');b.className='card'+(S.model_id==='stock:'+k?' on':'');b.innerHTML=`<img alt="" src="${s.img}" onerror="this.outerHTML='<div class=ph></div>'"><b>${s.name}</b><br><small>${s.blurb}</small>`;b.onclick=()=>useModel('stock:'+k);$('#stock').append(b)}
   const mine=await store.models.list(),l=$('#mine');l.innerHTML=mine.length?'':'<p class="hint">None yet.</p>';for(const m of mine){const d=document.createElement('div');d.className='item'+(S.model_id===m.id?' on':'');d.innerHTML=`<span></span><small>${(m.size/1048576).toFixed(1)} MB</small><button class="ghost" aria-label="Delete">Delete</button>`;d.querySelector('span').textContent=m.name;d.querySelector('span').onclick=()=>useModel(m.id);d.querySelector('button').onclick=async()=>{await store.models.del(m.id);S.model_id===m.id?useModel('stock:holo'):renderModels()};l.append(d)}
 }
@@ -111,6 +117,7 @@ function bindSettings(){
   $('#personality').value=S.personality;$('#personality').oninput=e=>{S.personality=e.target.value;save()}
   $('#remember').checked=S.remember;$('#remember').onchange=e=>{S.remember=e.target.checked;save()};$('#forget').onclick=()=>{history=[];save();$('#log').innerHTML='';toast('Conversation cleared.')}
   $('#testBrain').onclick=async()=>{if(S.provider==='offline')return toast('The offline brain is always ready.');status('Testing…');try{const r=await ask({...S,key:S.keys[S.provider]||''},context(),[{role:'user',content:'Say hello in five words or fewer.'}]);status('');toast('Connected: '+core.tags(r).clean,7000)}catch(e){status('');toast('Failed: '+e.message,9000)}}
+  for(const k of LK)$('#lk-'+k).oninput=setLook;$('#lk-text').onchange=setLook;$('#lk-apply').onclick=()=>{setLook();useModel(S.model_id,true)};$('#lk-reset').onclick=()=>{const{[S.model_id]:_,...o}=S.looks||{};S.looks=o;save();renderLook();useModel(S.model_id,true)}
   $('#scale').value=S.scale;$('#scale').oninput=e=>{S.scale=+e.target.value;av?.root.scale.setScalar(S.scale);save()}
   $('#cname').value=S.cname;$('#cname').oninput=e=>{S.cname=e.target.value.trim();$('#who').textContent=cname();save()}
   $('#persona').value=S.persona;$('#persona').onchange=e=>{S.persona=e.target.value;save()}

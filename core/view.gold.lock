@@ -1,4 +1,4 @@
-=== 653120bade7d54c8
+=== -233530e384dfb962
 import os;
 import web;
 import gfx;
@@ -13,6 +13,7 @@ import mix;
 import cloth;
 import clips;
 import look;
+import feature;
 === -7b2221d4bed818f8
 var P f32[10240];
 var C f32[16];
@@ -44,7 +45,7 @@ var last_t = -1.0;
 extern fn hv_f32(id i32, xs f32[:]);
 extern fn hv_i32(id i32, xs i32[:]);
 extern fn hv_bytes(id i32, xs byte[:]);
-=== -2435cf53bf277d17
+=== 03f714d9d5a83528
 fn main() {
 	hv_f32(0, P[..]);
 	hv_f32(1, C[..]);
@@ -60,7 +61,6 @@ fn main() {
 	let a = args();
 	var scratch byte[>..] = [];
 	if read_file("/m/lib.gltf", scratch) {
-		scratch.clear();
 		clips::clips_lib("/m/lib.gltf");
 	}
 	asset = gltf::load(a[1]);
@@ -68,18 +68,17 @@ fn main() {
 		print("view: ", gltf::error());
 		return;
 	}
-	var scratch2 byte[>..] = [];
-	if read_file("/m/lib.gltf", scratch2) {
-		scratch2.clear();
+	scratch.clear();
+	if read_file("/m/lib.gltf", scratch) {
 		nlib = clips::clips_load("/m/lib.gltf", asset);
 	}
 	cloth = cloth_setup("/m/avatar.cloth", asset);
 	no_skirt = cloth > 0;
 	look_setup(asset);
+	feature_setup("/m/avatar.look", asset);
 	if a.len > 2 || hair_find_cards(asset) {
 		let first = gltf::assets[asset].nodes.first;
-		let cnt = gltf::assets[asset].nodes.count;
-		for n in first..first + cnt {
+		for n in first..first + gltf::assets[asset].nodes.count {
 			if gltf::nodes[n].mesh >= 0 && gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "hair" {
 				gltf::nodes[n].mesh = -1;
 			}
@@ -91,17 +90,14 @@ fn main() {
 			rest_inv = linalg::inverse(motion::world[head]);
 		}
 	}
-	{
-		let first = gltf::assets[asset].nodes.first;
-		let cnt = gltf::assets[asset].nodes.count;
-		for n in first..first + cnt {
-			if gltf::nodes[n].mesh >= 0 && gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "teeth" {
-				teeth_mat = gltf::prims[gltf::meshes[gltf::nodes[n].mesh].prims.first].material;
-				if teeth_mat >= 0 {
-					teeth_base = gltf::materials[teeth_mat].base;
-				}
-				break;
+	let tfirst = gltf::assets[asset].nodes.first;
+	for n in tfirst..tfirst + gltf::assets[asset].nodes.count {
+		if gltf::nodes[n].mesh >= 0 && gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "teeth" {
+			teeth_mat = gltf::prims[gltf::meshes[gltf::nodes[n].mesh].prims.first].material;
+			if teeth_mat >= 0 {
+				teeth_base = gltf::materials[teeth_mat].base;
 			}
+			break;
 		}
 	}
 	if !gfx::open("amni companion", 640, 800) {

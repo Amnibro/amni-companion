@@ -41,6 +41,17 @@
 <label class="btn primary file"><input id="file" type="file" accept=".glb,.vrm,model/gltf-binary" hidden>Add a model</label>
 <p id="rig" class="hint"></p>
 <label class="row">Size <input id="scale" type="range" min="0.2" max="1.7" step="0.01"></label>
+<div id="look" hidden><h3>Look</h3>
+<p class="hint">Tune this model's face and clothes. Eyes and nose are found automatically, so this works on your own models too.</p>
+<label class="row">Eyeliner <input id="lk-liner" type="range" min="0" max="1" step="0.05"></label>
+<label class="row">Liner thickness <input id="lk-thick" type="range" min="0.3" max="2" step="0.05"></label>
+<label class="row">Liner wing <input id="lk-wing" type="range" min="0" max="2" step="0.05"></label>
+<label class="row">Smooth eyelids <input id="lk-lids" type="range" min="0" max="1" step="0.05"></label>
+<label class="row">Clean lid shading <input id="lk-clean" type="range" min="0" max="1" step="0.05"></label>
+<label class="row">Smooth nose <input id="lk-nose" type="range" min="0" max="1" step="0.05"></label>
+<label class="row col">Parts <textarea id="lk-text" rows="4" spellcheck="false" placeholder="hide choker&#10;tint shirt 0.7 0.8 1&#10;smooth skirt 20"></textarea></label>
+<p class="hint">One change per line: <code>hide part</code>, <code>tint part r g b</code> (1 keeps the color), <code>smooth part passes</code> (rounds jagged clothing edges). Parts in this model: <span id="lk-parts"></span></p>
+<button class="btn primary" id="lk-apply">Apply look</button> <button class="ghost" id="lk-reset">Reset look</button></div>
 <label class="row">Companion name <input id="cname" placeholder="Uses the model's name"></label>
 <label class="row">Personality <select id="persona"><option value="auto">Match the model</option><option value="holo">Holo: bubbly and playful</option><option value="dex">Dex: calm engineer</option><option value="neutral">Friendly and neutral</option></select></label>
 </section>

@@ -1,7 +1,7 @@
 const td = new TextDecoder(), te = new TextEncoder(), N = Number;
 export async function start(o = {}) {
   const url = o.wasm || document.querySelector('script[data-wasm]')?.dataset.wasm || 'app.wasm';
-  let ex = null, mem = null, busy = 0, cur = null, frames = false, raf = 0, dead = false, gl = null, list = [], obuf = '', ebuf = '';
+  let closed = false, ex = null, mem = null, busy = 0, cur = null, frames = false, raf = 0, dead = false, gl = null, list = [], obuf = '', ebuf = '';
   const q = [], H = [null, document, window, document.body, document.documentElement], hix = new Map(H.map((v, i) => [v, i])), free = [], fetches = new Map(), jsres = new Map(), timers = new Map(), holes = [];
   hix.delete(null);
   let nid = 1, nfd = 3, G = null, jspi = false, px = {};
@@ -14,13 +14,13 @@ export async function start(o = {}) {
   const wst = (p, n) => { u8().fill(0, p, p + 144); dv().setUint32(p + 24, 0o100644, true); dv().setBigInt64(p + 48, BigInt(n), true); };
   const put = (r, v) => { const b = typeof v === 'string' ? te.encode(v) : v, p = ex.he_grow(r, b.length); u8().set(b, p); return b.length; };
   const out = (s, err) => { let b = (err ? ebuf : obuf) + s, i; while ((i = b.indexOf('\n')) >= 0) { (err ? console.error : console.log)(b.slice(0, i)); b = b.slice(i + 1); } err ? ebuf = b : obuf = b; };
-  const fail = e => { if (e && e.helium_exit !== undefined) { dead = true; frames = false; return; } dead = true; frames = false; console.error('helium trapped:', e); o.onerror?.(e); };
+  const fail = e => { if (closed) return; if (e && e.helium_exit !== undefined) { dead = true; frames = false; return; } dead = true; frames = false; console.error('helium trapped:', e); o.onerror?.(e); };
   const run = (f, a) => { if (dead || !ex[f]) return; busy++; let r; try { r = (px[f] || ex[f])(...a); } catch (e) { busy--; fail(e); return; } if (r instanceof Promise) return r.then(v => v, fail).finally(() => { busy--; drain(); }); busy--; return r; };
   const drain = () => { while (!busy && q.length && !dead) { const [f, a, c] = q.shift(); cur = c; run(f, a); cur = null; } };
   const fire = (tag, kind, c) => { q.push(['he_event', [tag, kind], c]); drain(); };
   const evc = () => cur || {};
   const ev = () => evc().e || {};
-  const loop = t => { raf = 0; if (!frames || dead) return; if (!busy) { G?.raf(1); run('he_frame', [t]); G?.raf(0); drain(); } if (frames) raf = requestAnimationFrame(loop); };
+  const loop = t => { raf = 0; if (!frames || dead) return; if (!busy) { G?.raf(1); run('he_frame', [t]); G?.raf(0); drain(); } if (frames) raf = (o.raf || requestAnimationFrame)(loop); };
   const now = () => performance.now();
   const unmap = (p, l) => { l = Math.ceil(l / 65536) * 65536; if (p % 65536 === 0 && l > 0) holes.push([p, l]); };
   const mmap = len => { len = Math.ceil(len / 65536) * 65536; const k = holes.findIndex(h => h[1] >= len); if (k >= 0) { const [a, l] = holes[k]; if (l === len) holes.splice(k, 1); else holes[k] = [a + len, l - len]; u8().fill(0, a, a + len); return a; } try { return mem.grow(len / 65536) * 65536; } catch { return -12; } };
@@ -32,6 +32,7 @@ export async function start(o = {}) {
       case 3: { const f = fds.get(N(a)); if (!f) return -9n; if (f.w) { const t = new Uint8Array(f.w.reduce((k, x) => k + x.length, 0)); let k = 0; for (const x of f.w) { t.set(x, k); k += x.length; } files.set(f.p, t); o.onsave?.(f.p); } fds.delete(N(a)); return 0n; }
       case 4: { const p = cz(N(a)); if (!files.has(p)) return -2n; wst(N(b), fb(files.get(p)).length); return 0n; }
       case 5: { const f = fds.get(N(a)); if (!f) return -9n; wst(N(b), f.b ? f.b.length : 0); return 0n; }
+      case 8: { const f = fds.get(N(a)); if (!f?.b) return -9n; f.o = Math.max(0, Math.min(N(b), f.b.length)); return BigInt(f.o); }
       case 87: return files.delete(cz(N(a))) ? 0n : -2n;
       case 9: return BigInt(mmap(N(b)));
       case 11: unmap(N(a), N(b)); return 0n;
@@ -71,7 +72,7 @@ export async function start(o = {}) {
     sys,
     he_log: (p, n) => console.log(S(p, n)), he_warn: (p, n) => console.warn(S(p, n)), he_error: (p, n) => console.error(S(p, n)),
     he_now: now, he_epoch_ms: () => Date.now(),
-    he_frames: on => { frames = !!on; if (frames && !raf) raf = requestAnimationFrame(loop); },
+    he_frames: on => { frames = !!on; if (frames && !raf) raf = (o.raf || requestAnimationFrame)(loop); },
     he_timer: (ms, tag) => { const id = nid++; timers.set(id, setTimeout(() => { timers.delete(id); fire(tag, 2, { id }); }, ms)); return id; },
     he_clear_timer: id => { clearTimeout(timers.get(id)); timers.delete(id); },
     he_win_w: () => innerWidth, he_win_h: () => innerHeight, he_dpr: () => devicePixelRatio || 1, he_device_memory: () => navigator.deviceMemory || 0,
@@ -147,7 +148,7 @@ export async function start(o = {}) {
   const res = await fetch(url), bytes = await res.arrayBuffer(), mod = await WebAssembly.compile(bytes);
   const meta = new Uint8Array(WebAssembly.Module.customSections(mod, 'he.mem')[0] || new ArrayBuffer(5)), pages = meta[0] | meta[1] << 8 | meta[2] << 16 | meta[3] << 24;
   mem = new WebAssembly.Memory({ initial: pages, maximum: 65536, shared: meta[4] === 1 });
-  if (WebAssembly.Module.imports(mod).some(i => i.name === 'SDL_CreateGPUDevice')) { G = sdlgpu({ u8, dv, mmap, munmap: unmap, files, canvas: () => o.canvas || document.querySelector('canvas[data-helium]'), canWait: () => jspi, saved: o.onsave }); jspi = !!WebAssembly.Suspending && o.jspi !== false; await G.init(); for (const [k, f] of Object.entries(G.env)) env[k] = jspi && G.waiting.includes(k) ? new WebAssembly.Suspending(f) : f; }
+  if (WebAssembly.Module.imports(mod).some(i => i.name === 'SDL_CreateGPUDevice')) { G = sdlgpu({ u8, dv, mmap, munmap: unmap, files, canvas: () => o.canvas || document.querySelector('canvas[data-helium]'), canWait: () => jspi, saved: o.onsave, input: o.input }); jspi = !!WebAssembly.Suspending && o.jspi !== false; await G.init(); for (const [k, f] of Object.entries(G.env)) env[k] = jspi && G.waiting.includes(k) ? new WebAssembly.Suspending(f) : f; }
   const imports = { env: new Proxy({ ...env, ...(o.imports || {}), memory: mem }, { get: (t, n) => t[n] || ((...a) => { console.warn('helium: missing import', n, a); return 0; }) }) };
   ex = (await WebAssembly.instantiate(mod, imports)).exports;
   if (jspi) for (const k of ['he_start', 'he_frame', 'he_event']) if (ex[k]) px[k] = WebAssembly.promising(ex[k]);
@@ -156,7 +157,7 @@ export async function start(o = {}) {
   pw(argv.length); strs.forEach((b, i) => { if (i === argv.length) pw(0); u8().set(b, sq); pw(sq); sq += b.length; }); if (!envs.length) pw(0); pw(0);
   const done = Promise.resolve(run('he_start', [BigInt(base)]));
   drain();
-  return { exports: ex, handle: nh, get: i => H[i], fire, call: (f, ...a) => { const r = busy ? undefined : run(f, a); drain(); return r; }, files, done, mem: () => mem, gpu: () => G?.stats() };
+  return { exports: ex, handle: nh, get: i => H[i], fire, call: (f, ...a) => { const r = busy ? undefined : run(f, a); drain(); return r; }, files, done, mem: () => mem, gpu: () => G?.stats(), alive: () => !dead, close: () => { closed = dead = true; frames = false; raf = 0; G?.close(); } };
 }
 function sdlgpu(R) {
   const N = Number, td = new TextDecoder(), te = new TextEncoder(), O = new Map(), u8 = R.u8, dv = R.dv, RING = 1 << 20, files = R.files;
@@ -170,10 +171,11 @@ function sdlgpu(R) {
   const cstr = (k, s, cap = 1024) => { const b = te.encode(s).subarray(0, cap - 1), p = page() + k; u8().set(b, p); u8()[p + b.length] = 0; return BigInt(p); };
   const fail = (m, r = 0n) => { err = m; return r; };
   const al = (n, a) => Math.ceil(n / a) * a;
-  const F = {}; '2 r8unorm 1,3 rg8unorm 2,4 rgba8unorm 4,8 rgb10a2unorm 4,12 bgra8unorm 4,21 r8snorm 1,22 rg8snorm 2,23 rgba8snorm 4,27 r16float 2,28 rg16float 4,29 rgba16float 8,30 r32float 4,31 rg32float 8,32 rgba32float 16,33 rg11b10ufloat 4,34 r8uint 1,35 rg8uint 2,36 rgba8uint 4,37 r16uint 2,38 rg16uint 4,39 rgba16uint 8,40 r32uint 4,41 rg32uint 8,42 rgba32uint 16,43 r8sint 1,44 rg8sint 2,45 rgba8sint 4,46 r16sint 2,47 rg16sint 4,48 rgba16sint 8,49 r32sint 4,50 rg32sint 8,51 rgba32sint 16,52 rgba8unorm-srgb 4,53 bgra8unorm-srgb 4,58 depth16unorm 2,59 depth24plus 4,60 depth32float 4,61 depth24plus-stencil8 4,62 depth32float-stencil8 8'.split(',').forEach(s => { const [k, f, b] = s.split(' '); F[k] = [f, +b]; });
+  const F = {}; '2 r8unorm 1,3 rg8unorm 2,4 rgba8unorm 4,8 rgb10a2unorm 4,12 bgra8unorm 4,13 bc1-rgba-unorm 8,15 bc3-rgba-unorm 16,16 bc4-r-unorm 8,17 bc5-rg-unorm 16,18 bc7-rgba-unorm 16,54 bc1-rgba-unorm-srgb 8,56 bc3-rgba-unorm-srgb 16,57 bc7-rgba-unorm-srgb 16,21 r8snorm 1,22 rg8snorm 2,23 rgba8snorm 4,27 r16float 2,28 rg16float 4,29 rgba16float 8,30 r32float 4,31 rg32float 8,32 rgba32float 16,33 rg11b10ufloat 4,34 r8uint 1,35 rg8uint 2,36 rgba8uint 4,37 r16uint 2,38 rg16uint 4,39 rgba16uint 8,40 r32uint 4,41 rg32uint 8,42 rgba32uint 16,43 r8sint 1,44 rg8sint 2,45 rgba8sint 4,46 r16sint 2,47 rg16sint 4,48 rgba16sint 8,49 r32sint 4,50 rg32sint 8,51 rgba32sint 16,52 rgba8unorm-srgb 4,53 bgra8unorm-srgb 4,58 depth16unorm 2,59 depth24plus 4,60 depth32float 4,61 depth24plus-stencil8 4,62 depth32float-stencil8 8'.split(',').forEach(s => { const [k, f, b] = s.split(' '); F[k] = [f, +b]; });
   const VF = [, 'sint32', 'sint32x2', 'sint32x3', 'sint32x4', 'uint32', 'uint32x2', 'uint32x3', 'uint32x4', 'float32', 'float32x2', 'float32x3', 'float32x4', 'sint8x2', 'sint8x4', 'uint8x2', 'uint8x4', 'snorm8x2', 'snorm8x4', 'unorm8x2', 'unorm8x4', 'sint16x2', 'sint16x4', 'uint16x2', 'uint16x4', 'snorm16x2', 'snorm16x4', 'unorm16x2', 'unorm16x4', 'float16x2', 'float16x4'];
   const CMP = [, 'never', 'less', 'equal', 'less-equal', 'greater', 'not-equal', 'greater-equal', 'always'], BF = [, 'zero', 'one', 'src', 'one-minus-src', 'dst', 'one-minus-dst', 'src-alpha', 'one-minus-src-alpha', 'dst-alpha', 'one-minus-dst-alpha', 'constant', 'one-minus-constant', 'src-alpha-saturated'], BO = [, 'add', 'subtract', 'reverse-subtract', 'min', 'max'];
-  const TOPO = ['triangle-list', 'triangle-strip', 'line-list', 'line-strip', 'point-list'], DIM = ['2d', 'cube', '3d', '2d-array'], SFMT = { 1: 'rgba32float', 2: 'rgba16float', 3: 'r32float', 4: 'rgba8unorm', 6: 'rg32float', 7: 'rg16float', 9: 'r16float', 32: 'rgba8uint', 33: 'r32uint' };
+  const dead = []; let live = 0;
+  const TOPO = ['triangle-list', 'triangle-strip', 'line-list', 'line-strip', 'point-list'], DIM = ['2d', 'cube', '3d', '2d-array', 'cube-array'], SFMT = { 1: 'rgba32float', 2: 'rgba16float', 3: 'r32float', 4: 'rgba8unorm', 6: 'rg32float', 7: 'rg16float', 9: 'r16float', 32: 'rgba8uint', 33: 'r32uint' };
   const MS = n => n > 0 ? 4 : 1;
   const SC = ',,,,A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z,1,2,3,4,5,6,7,8,9,0,Return,Escape,Backspace,Tab,Space,-,=,[,],\\,#,;,\',`,{,.,/,CapsLock,F1,F2,F3,F4,F5,F6,F7,F8,F9,F10,F11,F12,PrintScreen,ScrollLock,Pause,Insert,Home,PageUp,Delete,End,PageDown,Right,Left,Down,Up,Numlock,Keypad /,Keypad *,Keypad -,Keypad +,Keypad Enter,Keypad 1,Keypad 2,Keypad 3,Keypad 4,Keypad 5,Keypad 6,Keypad 7,Keypad 8,Keypad 9,Keypad 0,Keypad .,NonUSBackslash,Application,Power,Keypad =,F13,F14,F15,F16,F17,F18,F19,F20,F21,F22,F23,F24'.split(',').map(s => s === '{' ? ',' : s);
   const SCX = { 224: 'Left Ctrl', 225: 'Left Shift', 226: 'Left Alt', 227: 'Left GUI', 228: 'Right Ctrl', 229: 'Right Shift', 230: 'Right Alt', 231: 'Right GUI' }; Object.entries(SCX).forEach(([k, v]) => SC[k] = v);
@@ -190,7 +192,7 @@ function sdlgpu(R) {
     const hd = new Uint8Array(13), q = new DataView(hd.buffer); q.setUint32(0, w); q.setUint32(4, h); hd.set([8, 6, 0, 0, 0], 8);
     const parts = [new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), ch('IHDR', hd), ch('IDAT', z), ch('IEND', new Uint8Array(0))], out = new Uint8Array(parts.reduce((k, p) => k + p.length, 0)); let k = 0; for (const p of parts) { out.set(p, k); k += p.length; } return out;
   };
-  const view = (t, dim, mip = 0, nm = t.mips, lay = 0, nl = dim === '2d-array' ? t.layers : dim === 'cube' ? 6 : 1) => { const k = `${dim} ${mip} ${nm} ${lay} ${nl}`; let v = t.views.get(k); if (!v) t.views.set(k, v = t.g.createView({ dimension: dim, baseMipLevel: mip, mipLevelCount: nm, baseArrayLayer: dim === '3d' ? 0 : lay, arrayLayerCount: dim === '3d' ? 1 : nl, aspect: t.f.startsWith('depth') ? 'depth-only' : 'all' })); return v; };
+  const view = (t, dim, mip = 0, nm = t.mips, lay = 0, nl = dim === '2d-array' || dim === 'cube-array' ? t.layers : dim === 'cube' ? 6 : 1) => { const k = `${dim} ${mip} ${nm} ${lay} ${nl}`; let v = t.views.get(k); if (!v) t.views.set(k, v = t.g.createView({ dimension: dim, baseMipLevel: mip, mipLevelCount: nm, baseArrayLayer: dim === '3d' ? 0 : lay, arrayLayerCount: dim === '3d' ? 1 : nl, aspect: t.f.startsWith('depth') ? 'depth-only' : 'all' })); return v; };
   const att = (t, mip, lay) => t.d3 ? view(t, '3d', mip, 1) : view(t, '2d', mip, 1, lay, 1);
   const chunk = () => ring.pop() || { g: dev.createBuffer({ size: RING, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }), cpu: new Uint8Array(RING), id: nid++, used: 0 };
   const cmd = () => ({ enc: dev.createCommandEncoder(), ub: [], cur: null, off: 0, push: [[], [], []], st: [], downs: [] });
@@ -198,7 +200,7 @@ function sdlgpu(R) {
   const submit = c => {
     if (!dev || !c) return Promise.resolve();
     for (const k of c.ub) dev.queue.writeBuffer(k.g, 0, k.cpu, 0, al(k.used, 4));
-    dev.queue.submit([c.enc.finish()]); ring.push(...c.ub); for (const b of c.st) b.destroy();
+    dev.queue.submit([c.enc.finish()]); ring.push(...c.ub); for (const b of c.st) b.destroy(); if (--live <= 0) { live = 0; for (const b of dead.splice(0)) b.destroy(); }
     for (const d of c.downs) d.p = d.buf.mapAsync(GPUMapMode.READ).then(() => { d.ok = 1; }, e => { d.ok = 2; err = String(e); });
     const p = Promise.all([dev.queue.onSubmittedWorkDone(), ...c.downs.map(d => d.p)]); waits.push(p); p.then(() => waits.splice(waits.indexOf(p), 1)); return p;
   };
@@ -209,7 +211,7 @@ function sdlgpu(R) {
     for (let k = 0; k < s.n[5]; k++, o += 4) s.usz.push(u32(o));
     o += 2 * b[7]; for (let k = u16(64); k > 0; k--, o += 4) s.binds.push({ group: b[o], binding: b[o + 1], kind: b[o + 2], info: b[o + 3] });
     for (const [, gr, bi, d] of s.wgsl.matchAll(/@group\((\d+)\)\s*@binding\((\d+)\)\s*var\s*\w+\s*:\s*texture_storage_(2d_array|2d|3d)/g)) s.dims[gr + ' ' + bi] = d.replace('_', '-');
-    s.nofilt = new Set([...s.wgsl.matchAll(/@group\((\d+)\)\s*@binding\((\d+)\)\s*var\s+(\w+)\s*:\s*texture_(?:2d|2d_array|3d|cube|cube_array)<f32>/g)].filter(([, , , v]) => !new RegExp(`texture(Sample\\w*|Gather\\w*)\\(\\s*(\\d+\\s*,\\s*)?${v}\\b`).test(s.wgsl)).map(([, gr, bi]) => gr + ' ' + bi));
+    s.nofilt = new Set([...s.wgsl.matchAll(/@group\((\d+)\)\s*@binding\((\d+)\)\s*var\s+(\w+)\s*:\s*texture_(?:2d|2d_array|3d|cube|cube_array)<f32>/g)].filter(([, , , v]) => !new RegExp(`\\b${v}\\s*,\\s*(${[...s.wgsl.matchAll(/(\w+)\s*:\s*sampler\b/g)].map(x => x[1]).join('|') || '\\B\\b'})\\b`).test(s.wgsl)).map(([, gr, bi]) => gr + ' ' + bi));
     return s;
   };
   const role = (b, sh, comp) => {
@@ -278,7 +280,7 @@ function sdlgpu(R) {
       [window, 'focus', () => ev(526)], [window, 'blur', () => ev(527)], [document, 'paste', e => { clip = e.clipboardData?.getData('text') ?? clip; }],
       [window, 'keydown', e => { if (!mine(e)) return; const sc = scOf(e.code); if (sc) { e.preventDefault(); key(768, sc, e); } if (textOn && e.key.length === 1 && !e.ctrlKey && !e.metaKey) { const p = page() + 8192 + (tring++ & 31) * 256, b = te.encode(e.key).subarray(0, 255); u8().set(b, p); u8()[p + b.length] = 0; ev(771).setBigUint64(24, BigInt(p), true); } }],
       [window, 'keyup', e => { if (!mine(e)) return; const sc = scOf(e.code); if (sc) { e.preventDefault(); key(769, sc, e); } }]];
-    for (const [t, k, f] of L) t.addEventListener(k, f, { passive: k !== 'wheel' && k !== 'keydown' && k !== 'keyup' && k !== 'contextmenu' });
+    if (R.input !== false) for (const [t, k, f] of L) t.addEventListener(k, f, { passive: k !== 'wheel' && k !== 'keydown' && k !== 'keyup' && k !== 'contextmenu' });
     W.off = () => { for (const [t, k, f] of L) t.removeEventListener(k, f); };
   };
   const key = (t, sc, e) => { const q = ev(t); q.setUint32(24, sc, true); q.setUint32(28, keyOf(sc), true); q.setUint16(32, (e.shiftKey ? 1 : 0) | (e.ctrlKey ? 0x40 : 0) | (e.altKey ? 0x100 : 0) | (e.metaKey ? 0x400 : 0), true); q.setUint8(36, t === 768 ? 1 : 0); q.setUint8(37, e.repeat ? 1 : 0); };
@@ -288,28 +290,28 @@ function sdlgpu(R) {
     SDL_InitSubSystem: () => 1, SDL_QuitSubSystem: () => {}, SDL_SetHint: () => 1, SDL_ResetHint: () => 1, SDL_GetError: () => cstr(0, err), SDL_free: () => {},
     SDL_CreateGPUDevice: () => dev ? nh({ dev }) : fail('no WebGPU device: ' + (err || (navigator.gpu ? 'no adapter' : 'this browser has no WebGPU'))),
     SDL_GetGPUShaderFormats: () => 64, SDL_GetGPUDeviceDriver: () => cstr(1024, 'webgpu'), SDL_DestroyGPUDevice: h => del(h),
-    SDL_GPUTextureSupportsFormat: (d, f, t, u) => F[f] && (!(u & 120) || /^(rgba8(unorm|snorm|uint|sint)|(rgba16|rgba32|r32|rg32)(float|uint|sint))$/.test(F[f][0])) && (!(u & 4) || F[f][0].startsWith('depth')) ? 1 : 0,
+    SDL_GPUTextureSupportsFormat: (d, f, t, u) => F[f] && (!F[f][0].startsWith('bc') || u === 1 && dev.features.has('texture-compression-bc')) && (!(u & 120) || /^(rgba8(unorm|snorm|uint|sint)|(rgba16|rgba32|r32|rg32)(float|uint|sint))$/.test(F[f][0])) && (!(u & 4) || F[f][0].startsWith('depth')) ? 1 : 0,
     SDL_GPUTextureFormatTexelBlockSize: f => F[f]?.[1] || 0,
     SDL_CreateGPUTexture: (d, p) => tex(r32(p, 8), s32(p, 4), s32(p, 0), r32(p, 12), r32(p, 16), r32(p, 20), r32(p, 24), s32(p, 28)),
-    SDL_ReleaseGPUTexture: (d, h) => { const t = g(h); if (t && !t.sw) { t.g.destroy(); del(h); } },
+    SDL_ReleaseGPUTexture: (d, h) => { const t = g(h); if (t && !t.sw) { dead.push(t.g); del(h); } },
     SDL_CreateGPUSampler: (d, p) => { const fl = ['nearest', 'linear'], A = ['repeat', 'mirror-repeat', 'clamp-to-edge'], mi = s32(p, 0), ma = s32(p, 4), mm = s32(p, 8), an = u8()[N(p) + 44] && mi && ma && mm ? Math.min(16, Math.max(1, Math.floor(rf(p, 28)))) : 1; return nh({ g: dev.createSampler({ minFilter: fl[mi], magFilter: fl[ma], mipmapFilter: fl[mm], addressModeU: A[s32(p, 12)], addressModeV: A[s32(p, 16)], addressModeW: A[s32(p, 20)], lodMinClamp: rf(p, 36), lodMaxClamp: rf(p, 40), compare: u8()[N(p) + 45] ? CMP[s32(p, 32)] : undefined, maxAnisotropy: an }), id: nid++ }); },
     SDL_ReleaseGPUSampler: (d, h) => del(h),
     SDL_CreateGPUBuffer: (d, p) => { const u = r32(p, 0), B = GPUBufferUsage; return nh({ g: dev.createBuffer({ size: al(r32(p, 4), 4), usage: (u & 1 ? B.VERTEX : 0) | (u & 2 ? B.INDEX : 0) | (u & 4 ? B.INDIRECT : 0) | (u & 56 ? B.STORAGE : 0) | B.COPY_SRC | B.COPY_DST }), id: nid++ }); },
-    SDL_ReleaseGPUBuffer: (d, h) => { g(h)?.g.destroy(); del(h); },
+    SDL_ReleaseGPUBuffer: (d, h) => { const t = g(h); if (t) dead.push(t.g); del(h); },
     SDL_CreateGPUTransferBuffer: (d, p) => { const n = r32(p, 4), a = R.mmap(n); return a < 0 ? fail('out of memory for a transfer buffer') : nh({ up: r32(p, 0) === 0, n, ptr: a, downs: [] }); },
     SDL_ReleaseGPUTransferBuffer: (d, h) => { const t = g(h); if (!t) return; R.munmap(t.ptr, t.n); for (const x of t.downs) x.buf.destroy(); O.delete(N(h)); },
     SDL_MapGPUTransferBuffer: (d, h) => { const t = g(h); if (!t) return 0n; t.downs = t.downs.filter(x => { if (x.ok !== 1) return true; const m = new Uint8Array(x.buf.getMappedRange()), o = u8(); for (let r = 0; r < x.rows; r++) o.set(m.subarray(r * x.ar, r * x.ar + x.row), t.ptr + x.off + r * x.prow); x.buf.unmap(); x.buf.destroy(); return false; }); return BigInt(t.ptr); },
     SDL_UnmapGPUTransferBuffer: () => {},
-    SDL_AcquireGPUCommandBuffer: () => dev ? nh(cmd()) : fail('gfx: no device'),
+    SDL_AcquireGPUCommandBuffer: () => { if (!dev) return fail('gfx: no device'); live++; return nh(cmd()); },
     SDL_SubmitGPUCommandBuffer: c => { submit(g(c)); O.delete(N(c)); return 1; },
     SDL_SubmitGPUCommandBufferAndAcquireFence: c => { const f = { done: false }; f.p = submit(g(c)).then(() => { f.done = true; }); O.delete(N(c)); return nh(f); },
-    SDL_CancelGPUCommandBuffer: c => { const C = g(c); if (C) { for (const b of C.st) b.destroy(); ring.push(...C.ub); } O.delete(N(c)); return 1; },
+    SDL_CancelGPUCommandBuffer: c => { const C = g(c); if (C) { for (const b of C.st) b.destroy(); ring.push(...C.ub); live = Math.max(0, live - 1); } O.delete(N(c)); return 1; },
     SDL_WaitForGPUFences: (d, all, p, n) => { const fs = []; for (let i = 0; i < n; i++) { const f = g(r64(p, 8 * i)); if (f && !f.done) fs.push(f.p); } return fs.length && R.canWait() ? (all ? Promise.all(fs) : Promise.race(fs)).then(() => 1) : 1; },
     SDL_ReleaseGPUFence: (d, f) => { O.delete(N(f)); }, SDL_WaitForGPUIdle: () => R.canWait() && dev ? Promise.all([dev.queue.onSubmittedWorkDone(), ...waits]).then(() => 1) : 1,
     SDL_BeginGPUCopyPass: c => nh({ c: g(c) }), SDL_EndGPUCopyPass: p => { O.delete(N(p)); },
     SDL_UploadToGPUBuffer: (cp, s, d) => { const c = g(cp).c, t = g(r64(s, 0)), b = g(r64(d, 0)), n = r32(d, 12), [sb, m] = stage(c, n); m.set(u8().subarray(t.ptr + r32(s, 8), t.ptr + r32(s, 8) + n)); sb.unmap(); c.enc.copyBufferToBuffer(sb, 0, b.g, r32(d, 8), al(n, 4)); },
     SDL_DownloadFromGPUBuffer: (cp, s, d) => { const c = g(cp).c, b = g(r64(s, 0)), t = g(r64(d, 0)), n = r32(s, 12), rb = dev.createBuffer({ size: al(n, 4), usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }); c.enc.copyBufferToBuffer(b.g, r32(s, 8), rb, 0, al(n, 4)); const x = { buf: rb, off: r32(d, 8), row: n, ar: 0, rows: 1, prow: 0 }; t.downs.push(x); c.downs.push(x); },
-    SDL_UploadToGPUTexture: (cp, s, d) => { const c = g(cp).c, t = g(r64(s, 0)), x = g(r64(d, 0)), w = r32(d, 28), h = r32(d, 32), dp = r32(d, 36), row = w * x.bs, ar = al(row, 256), prow = (r32(s, 12) || w) * x.bs, rows = h * dp, src = t.ptr + r32(s, 8), [sb, m] = stage(c, ar * rows), o = u8(); for (let r = 0; r < rows; r++) m.set(o.subarray(src + r * prow, src + r * prow + row), r * ar); sb.unmap(); c.enc.copyBufferToTexture({ buffer: sb, bytesPerRow: ar, rowsPerImage: h }, { texture: x.g, mipLevel: r32(d, 8), origin: [r32(d, 16), r32(d, 20), x.d3 ? r32(d, 24) : r32(d, 12)] }, [w, h, dp]); },
+    SDL_UploadToGPUTexture: (cp, s, d) => { const c = g(cp).c, t = g(r64(s, 0)), x = g(r64(d, 0)), k = x.f.startsWith('bc') ? 4 : 1, w = Math.ceil(r32(d, 28) / k), h = Math.ceil(r32(d, 32) / k), dp = r32(d, 36), row = w * x.bs, ar = al(row, 256), prow = (k > 1 ? w : r32(s, 12) || w) * x.bs, rows = h * dp, src = t.ptr + r32(s, 8), [sb, m] = stage(c, ar * rows), o = u8(); for (let r = 0; r < rows; r++) m.set(o.subarray(src + r * prow, src + r * prow + row), r * ar); sb.unmap(); c.enc.copyBufferToTexture({ buffer: sb, bytesPerRow: ar, rowsPerImage: h }, { texture: x.g, mipLevel: r32(d, 8), origin: [r32(d, 16), r32(d, 20), x.d3 ? r32(d, 24) : r32(d, 12)] }, [w * k, h * k, dp]); },
     SDL_DownloadFromGPUTexture: (cp, s, d) => { const c = g(cp).c, x = g(r64(s, 0)), t = g(r64(d, 0)), w = r32(s, 28), h = r32(s, 32), dp = r32(s, 36), row = w * x.bs, ar = al(row, 256), rb = dev.createBuffer({ size: ar * h * dp, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }); c.enc.copyTextureToBuffer({ texture: x.g, mipLevel: r32(s, 8), origin: [r32(s, 16), r32(s, 20), x.d3 ? r32(s, 24) : r32(s, 12)] }, { buffer: rb, bytesPerRow: ar, rowsPerImage: h }, [w, h, dp]); const q = { buf: rb, off: r32(d, 8), row, ar, rows: h * dp, prow: (r32(d, 12) || w) * x.bs }; t.downs.push(q); c.downs.push(q); },
     SDL_CreateGPUShader: (d, p) => { if (r32(p, 24) !== 64) return fail('gfx on the web takes WGSL shaders (format 64)'); const s = blob(r64(p, 8), r64(p, 0)); if (!s) return fail('not a version 2 shader blob'); if (!s.wgsl) return fail('this shader has no WGSL (hc --wgsl on it names the reason)'); s.mod = dev.createShaderModule({ code: s.wgsl }); return nh(s); },
     SDL_ReleaseGPUShader: (d, h) => { O.delete(N(h)); },
@@ -320,7 +322,7 @@ function sdlgpu(R) {
       for (let i = 0; i < r32(p, 144); i++) { const c = r64(p, 136) + 36 * i, eb = m[c + 29]; tg.push({ format: F[s32(c, 0)][0], writeMask: m[c + 30] ? m[c + 28] : 15, blend: eb ? { color: { srcFactor: BF[s32(c, 4)], dstFactor: BF[s32(c, 8)], operation: BO[s32(c, 12)] }, alpha: { srcFactor: BF[s32(c, 16)], dstFactor: BF[s32(c, 20)], operation: BO[s32(c, 24)] } } : undefined }); }
       for (let i = 0; i < bufs.length; i++) bufs[i] ||= null;
       const prim = s32(p, 48), ds = m[q + 152] ? { format: F[s32(p, 148)][0], depthWriteEnabled: !!m[q + 131], depthCompare: m[q + 130] ? CMP[s32(p, 92)] : 'always', depthBias: m[q + 76] ? Math.round(rf(p, 64)) : 0, depthBiasSlopeScale: m[q + 76] ? rf(p, 72) : 0, depthBiasClamp: m[q + 76] ? rf(p, 68) : 0 } : undefined;
-      return nh({ g: dev.createRenderPipeline({ layout: L.pl, vertex: { module: vs.mod, entryPoint: 'main', buffers: bufs }, fragment: { module: fs.mod, entryPoint: 'main', targets: tg }, primitive: { topology: TOPO[prim], cullMode: ['none', 'front', 'back'][s32(p, 56)], frontFace: s32(p, 60) ? 'cw' : 'ccw', stripIndexFormat: prim === 1 || prim === 3 ? 'uint32' : undefined }, depthStencil: ds, multisample: { count: MS(s32(p, 80)) } }), gs: L.gs });
+      return nh({ g: dev.createRenderPipeline({ layout: L.pl, vertex: { module: vs.mod, entryPoint: 'main', buffers: bufs }, fragment: { module: fs.mod, entryPoint: 'main', targets: tg }, primitive: { topology: TOPO[prim], cullMode: ['none', 'front', 'back'][s32(p, 56)], frontFace: s32(p, 60) ? 'cw' : 'ccw', stripIndexFormat: prim === 1 || prim === 3 ? 'uint32' : undefined }, depthStencil: ds, multisample: { count: MS(s32(p, 80)), alphaToCoverageEnabled: !!m[q + 89] && MS(s32(p, 80)) > 1 } }), gs: L.gs });
     },
     SDL_ReleaseGPUGraphicsPipeline: (d, h) => del(h),
     SDL_CreateGPUComputePipeline: (d, p) => { if (r32(p, 24) !== 64) return fail('gfx on the web takes WGSL shaders (format 64)'); const s = blob(r64(p, 8), r64(p, 0)); if (!s || !s.wgsl) return fail('a compute shader with no WGSL'); const L = layout([s]); return nh({ g: dev.createComputePipeline({ layout: L.pl, compute: { module: dev.createShaderModule({ code: s.wgsl }), entryPoint: 'main' } }), gs: L.gs }); },
@@ -345,6 +347,7 @@ function sdlgpu(R) {
     SDL_BindGPUVertexStorageBuffers: (p, s, b, n) => bset(p, 0, 'sbuf', s, b, n), SDL_BindGPUFragmentStorageBuffers: (p, s, b, n) => bset(p, 1, 'sbuf', s, b, n), SDL_BindGPUComputeStorageBuffers: (p, s, b, n) => bset(p, 2, 'sbuf', s, b, n),
     SDL_DrawGPUPrimitives: (p, nv, ni, fv, fi) => { const pa = g(p); if (bind(pa)) pa.e.draw(nv, ni, fv, fi); },
     SDL_DrawGPUIndexedPrimitives: (p, nx, ni, fx, vo, fi) => { const pa = g(p); if (bind(pa)) pa.e.drawIndexed(nx, ni, fx, vo, fi); },
+    SDL_DrawGPUIndexedPrimitivesIndirect: (p, b, o, n) => { const pa = g(p), t = g(b); if (t && bind(pa)) for (let i = 0; i < n; i++) pa.e.drawIndexedIndirect(t.g, o + i * 20); },
     SDL_DispatchGPUCompute: (p, x, y, z) => { const pa = g(p); if (bind(pa)) pa.e.dispatchWorkgroups(x, y, z); },
     SDL_PushGPUVertexUniformData: (c, s, p, n) => upush(c, 0, s, p, n), SDL_PushGPUFragmentUniformData: (c, s, p, n) => upush(c, 1, s, p, n), SDL_PushGPUComputeUniformData: (c, s, p, n) => upush(c, 2, s, p, n),
     SDL_BlitGPUTexture: (c, b) => { const s = g(r64(b, 0)), d = g(r64(b, 32)); blit(g(c), s, r32(b, 8), r32(b, 12), r32(b, 16), r32(b, 20), r32(b, 24), r32(b, 28), d, r32(b, 40), r32(b, 44), r32(b, 48), r32(b, 52), r32(b, 56), r32(b, 60), s32(b, 88) === 1, s32(b, 84), s32(b, 64), [rf(b, 68), rf(b, 72), rf(b, 76), rf(b, 80)]); },
@@ -382,8 +385,8 @@ function sdlgpu(R) {
   return {
     env,
     waiting: ['SDL_WaitForGPUFences', 'SDL_WaitForGPUIdle', 'SDL_WaitAndAcquireGPUSwapchainTexture'],
-    init: async () => { try { const ad = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' }); if (!ad) return; const L = {}; for (const k in ad.limits) if (typeof ad.limits[k] === 'number') L[k] = ad.limits[k]; dev = await ad.requestDevice({ requiredFeatures: ['float32-filterable', 'float32-blendable', 'rg11b10ufloat-renderable', 'depth32float-stencil8'].filter(f => ad.features.has(f)), requiredLimits: L }); info = ad.info; dev.onuncapturederror = e => { nfail++; if (nfail <= 7) console.error('webgpu:', e.error.message); }; } catch (e) { err = String(e && e.message || e); } },
-    raf: on => { raf = on; }, stats: () => ({ errors: nfail, gpu: info ? `${info.vendor} ${info.architecture} ${info.description}`.trim() : '' }), idle: () => dev ? dev.queue.onSubmittedWorkDone() : Promise.resolve()
+    init: async () => { try { const ad = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' }); if (!ad) return; const L = {}; for (const k in ad.limits) if (typeof ad.limits[k] === 'number') L[k] = ad.limits[k]; dev = await ad.requestDevice({ requiredFeatures: ['texture-compression-bc', 'float32-filterable', 'float32-blendable', 'rg11b10ufloat-renderable', 'depth32float-stencil8'].filter(f => ad.features.has(f)), requiredLimits: L }); info = ad.info; dev.onuncapturederror = e => { nfail++; if (nfail <= 7) console.error('webgpu:', e.error.message); }; } catch (e) { err = String(e && e.message || e); } },
+    raf: on => { raf = on; }, close: () => { for (const o of O.values()) o?.off?.(); dev?.destroy(); dev = null; }, stats: () => ({ errors: nfail, gpu: info ? `${info.vendor} ${info.architecture} ${info.description}`.trim() : '' }), idle: () => dev ? dev.queue.onSubmittedWorkDone() : Promise.resolve()
   };
   function bset(p, st, k, s, b, n) { const S = g(p).st[st]; for (let i = 0; i < n; i++) S[k][s + i] = k === 'smp' ? { t: g(r64(b, 16 * i)), s: g(r64(b, 16 * i + 8)) } : g(r64(b, 8 * i)); }
   function upush(c, st, slot, p, n) { const C = g(c); if (!C.cur || C.off + n > RING) { C.cur = chunk(); C.cur.used = 0; C.ub.push(C.cur); C.off = 0; } C.cur.cpu.set(u8().subarray(N(p), N(p) + n), C.off); C.push[st][slot] = { k: C.cur, off: C.off }; C.cur.used = C.off + n; C.off = al(C.off + n, 256); }
