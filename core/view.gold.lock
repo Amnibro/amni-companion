@@ -45,7 +45,7 @@ var last_t = -1.0;
 extern fn hv_f32(id i32, xs f32[:]);
 extern fn hv_i32(id i32, xs i32[:]);
 extern fn hv_bytes(id i32, xs byte[:]);
-=== 03f714d9d5a83528
+=== 64e4cab36523c289
 fn main() {
 	hv_f32(0, P[..]);
 	hv_f32(1, C[..]);
@@ -154,12 +154,13 @@ fn main() {
 	}
 	if on {
 		hair_body(asset);
-	}
-	if bones > 0 {
-		motion::rest(asset);
-		motion::update(asset, gfx::mat4_identity);
-		for i in bones {
-			bone_rest.push(linalg::inverse(motion::world[gltf::assets[asset].nodes.first + hair_bone(i)]));
+		hair_style(fe_hair);
+		if bones > 0 {
+			motion::rest(asset);
+			motion::update(asset, gfx::mat4_identity);
+			for i in bones {
+				bone_rest.push(linalg::inverse(motion::world[gltf::assets[asset].nodes.first + hair_bone(i)]));
+			}
 		}
 	}
 	web::frames(true);

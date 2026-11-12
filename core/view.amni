@@ -150,12 +150,13 @@ fn main() {
 	}
 	if on {
 		hair_body(asset);
-	}
-	if bones > 0 {
-		motion::rest(asset);
-		motion::update(asset, gfx::mat4_identity);
-		for i in bones {
-			bone_rest.push(linalg::inverse(motion::world[gltf::assets[asset].nodes.first + hair_bone(i)]));
+		hair_style(fe_hair);
+		if bones > 0 {
+			motion::rest(asset);
+			motion::update(asset, gfx::mat4_identity);
+			for i in bones {
+				bone_rest.push(linalg::inverse(motion::world[gltf::assets[asset].nodes.first + hair_bone(i)]));
+			}
 		}
 	}
 	web::frames(true);

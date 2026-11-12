@@ -1,0 +1,906 @@
+=== -2bfc8a03689cba1a
+import os;
+import json;
+import gfx;
+import gfx.gltf;
+import gfx.codec_png;
+import gfx.codec_jpeg_enc;
+=== -2b5b66bcf57c3053
+var bk_changed int[>..];
+var bk_untiled bool[>..];
+var bk_shape = false;
+var bk_mat = false;
+var bk_sum u64[>..];
+=== -ac8ea0ab7f6556d
+import tiles.py;
+var bk_kinit = false;
+var bk_kobj = -1000;
+var bk_karr = -1000;
+var bk_kstr = -1000;
+var bk_kint = -1000;
+var bk_kflt = -1000;
+var bk_ktrue = -1000;
+var bk_kfalse = -1000;
+fn bk_kinds() {
+	if bk_kinit { return; }
+	var r json::Doc;
+	let root, err = json::parse("[{},[],\"s\",0,1.5,true,false,null]", r);
+	if root >= 0 {
+		bk_kobj = json::kind(r, json::element(r, root, 0)) as int;
+		bk_karr = json::kind(r, json::element(r, root, 1)) as int;
+		bk_kstr = json::kind(r, json::element(r, root, 2)) as int;
+		bk_kint = json::kind(r, json::element(r, root, 3)) as int;
+		bk_kflt = json::kind(r, json::element(r, root, 4)) as int;
+		bk_ktrue = json::kind(r, json::element(r, root, 5)) as int;
+		bk_kfalse = json::kind(r, json::element(r, root, 6)) as int;
+	}
+	bk_kinit = true;
+}
+fn bk_is_int_text(s const byte[:]) bool {
+	if s.len == 0 { return false; }
+	for c, i in s {
+		if c == '-' && i == 0 { continue; }
+		if c < '0' || c > '9' { return false; }
+	}
+	true
+}
+fn bk_num(d json::Doc&, n int) real {
+	let s = py::str_of(d, n);
+	if bk_is_int_text(s) {
+		let iv, iok = parse_int(s);
+		if iok { return iv as real; }
+	}
+	let v, ok = parse_flt(s);
+	if ok { v } else { 0.0 }
+}
+fn bk_fmt_num(d json::Doc&, n int, out byte[>..]&) {
+	let s = py::str_of(d, n);
+	if bk_is_int_text(s) {
+		let iv, iok = parse_int(s);
+		if iok {
+			json::format_int(out, iv);
+			return;
+		}
+	}
+	let v, ok = parse_flt(s);
+	let x = if ok { v } else { 0.0 };
+	if abs(x) < 9e15 && (x as int) as real == x {
+		json::format_int(out, x as int);
+	} else {
+		json::format_number(out, x);
+	}
+}
+fn bk_fmt_leaf(d json::Doc&, n int, k int, out byte[>..]&) {
+	if k == bk_kstr {
+		json::format_string(out, py::str_of(d, n));
+	} else if k == bk_kint || k == bk_kflt {
+		bk_fmt_num(d, n, out);
+	} else if k == bk_ktrue || k == bk_kfalse {
+		let bv, bok = py::int_of(d, n);
+		json::format_bool(out, bok && bv == 1);
+	} else {
+		json::format_null(out);
+	}
+}
+recursive fn emit(d json::Doc&, n int, out byte[>..]&) {
+	bk_kinds();
+	let k = json::kind(d, n) as int;
+	if k == bk_kobj {
+		out.push('{');
+		var first = true;
+		json::each(d, n) { c =>
+			if !first { out.push(','); }
+			first = false;
+			json::format_key(out, json::name_of(d, c));
+			emit(d, c, out);
+		};
+		out.push('}');
+	} else if k == bk_karr {
+		out.push('[');
+		for i in json::count(d, n) {
+			if i > 0 { out.push(','); }
+			emit(d, json::element(d, n, i), out);
+		}
+		out.push(']');
+	} else {
+		bk_fmt_leaf(d, n, k, out);
+	}
+}
+=== -5d97100b14aca169
+fn bk_hash(b const byte[:]) u64 {
+	var h u64 = 14695981039346656037;
+	for x in b { h = (h ^ (x as u64)) * 1099511628211; }
+	h
+}
+=== -5176fc840b1dff17
+fn bake_mark(asset int) {
+	bk_sum.clear();
+	bk_sum.resize(gltf::images.len, 0);
+	let first = gltf::assets[asset].images.first;
+	for k in gltf::assets[asset].images.count {
+		let g = first + k;
+		gltf::need_pixels(g);
+		bk_sum[g] = bk_hash(gltf::image_pixels(g));
+	}
+}
+=== -51a3ccfc87d77737
+fn bk_pad(b byte[>..]&) {
+	while b.len % 4 != 0 { b.push(0); }
+}
+fn bk_u32(b const byte[:], at int) int {
+	if at < 0 || at + 4 > b.len { return 0; }
+	(b[at] as int) | ((b[at + 1] as int) << 8) | ((b[at + 2] as int) << 16) | ((b[at + 3] as int) << 24)
+}
+fn bk_put32(b byte[>..]&, v int) {
+	for i in 4 { b.push(((v >> (8 * i)) & 255) as byte); }
+}
+var bk_nb byte[>..];
+var bk_voff int[>..];
+var bk_vdead bool[>..];
+var bk_chg bool[>..];
+var bk_imgv int[>..];
+var bk_imgoff int[>..];
+var bk_imglen int[>..];
+var bk_imgjpg bool[>..];
+var bk_nv byte[>..];
+var bk_na byte[>..];
+var bk_nvc int = 0;
+var bk_nac int = 0;
+var bk_nview0 int = 0;
+var bk_ahas bool[>..];
+var bk_amn real[>..];
+var bk_amx real[>..];
+var bk_rbm int[>..];
+var bk_rbp int[>..];
+var bk_rbs int[>..];
+var bk_rbe int[>..];
+var bk_rbi int[>..];
+var bk_rbt byte[>..];
+fn bk_wu(at int, size int, v int) {
+	if at < 0 || at + size > bk_nb.len { return; }
+	for i in size { bk_nb[at + i] = ((v >> (8 * i)) & 255) as byte; }
+}
+fn bk_wf(x real, at int) {
+	if at < 0 || at + 4 > bk_nb.len { return; }
+	var t f32[1] = [x as f32];
+	let q = bytes_of(t);
+	for i in 4 { bk_nb[at + i] = q[i]; }
+}
+fn bk_pf32(x real) {
+	var t f32[1] = [x as f32];
+	let q = bytes_of(t);
+	for i in 4 { bk_nb.push(q[i]); }
+}
+fn bk_real(o byte[>..]&, x real) {
+	if abs(x) < 9e15 && (x as int) as real == x {
+		json::format_int(o, x as int);
+	} else {
+		json::format_number(o, x);
+	}
+}
+fn bk_vec(o byte[>..]&, v const real[:]) {
+	o.push('[');
+	for x, i in v {
+		if i > 0 { o.push(','); }
+		bk_real(o, x);
+	}
+	o.push(']');
+}
+fn bk_vec3(o byte[>..]&, v) {
+	o.push('[');
+	bk_real(o, v.x as real);
+	o.push(',');
+	bk_real(o, v.y as real);
+	o.push(',');
+	bk_real(o, v.z as real);
+	o.push(']');
+}
+fn bk_vec4(o byte[>..]&, v) {
+	o.push('[');
+	bk_real(o, v.x as real);
+	o.push(',');
+	bk_real(o, v.y as real);
+	o.push(',');
+	bk_real(o, v.z as real);
+	o.push(',');
+	bk_real(o, v.w as real);
+	o.push(']');
+}
+fn bk_sep(o byte[>..]&, any bool&) {
+	if any { o.push(','); }
+	any = true;
+}
+fn bk_opaque(px const byte[:]) bool {
+	var i = 3;
+	while i < px.len {
+		if px[i] != 255 { return false; }
+		i += 4;
+	}
+	true
+}
+fn bk_mem(d json::Doc&, n int, key const byte[:]) int {
+	bk_kinds();
+	if n < 0 { return -1; }
+	if json::kind(d, n) as int != bk_kobj { return -1; }
+	json::member(d, n, key)
+}
+fn bk_int(d json::Doc&, n int, dflt int) int {
+	if n < 0 { return dflt; }
+	bk_num(d, n) as int
+}
+recursive fn bk_merge(d json::Doc&, n int, p json::Doc&, pn int, out byte[>..]&) {
+	bk_kinds();
+	out.push('{');
+	var first = true;
+	json::each(d, n) { c =>
+		let nm = json::name_of(d, c);
+		if !first { out.push(','); }
+		first = false;
+		json::format_key(out, nm);
+		let pc = bk_mem(p, pn, nm);
+		if pc < 0 {
+			emit(d, c, out);
+		} else if nm != "KHR_texture_transform" && json::kind(d, c) as int == bk_kobj && json::kind(p, pc) as int == bk_kobj {
+			bk_merge(d, c, p, pc, out);
+		} else {
+			emit(p, pc, out);
+		}
+	};
+	json::each(p, pn) { c =>
+		let nm = json::name_of(p, c);
+		if bk_mem(d, n, nm) < 0 {
+			if !first { out.push(','); }
+			first = false;
+			json::format_key(out, nm);
+			emit(p, c, out);
+		}
+	};
+	out.push('}');
+}
+fn bk_emit_off(d json::Doc&, n int, off int, out byte[>..]&) {
+	out.push('{');
+	var first = true;
+	var seen = false;
+	json::each(d, n) { c =>
+		let nm = json::name_of(d, c);
+		if !first { out.push(','); }
+		first = false;
+		json::format_key(out, nm);
+		if nm == "byteOffset" {
+			json::format_int(out, off);
+			seen = true;
+		} else {
+			emit(d, c, out);
+		}
+	};
+	if !seen {
+		if !first { out.push(','); }
+		json::format_key(out, "byteOffset");
+		json::format_int(out, off);
+	}
+	out.push('}');
+}
+fn bk_emit_skip(d json::Doc&, n int, out byte[>..]&) {
+	out.push('{');
+	var first = true;
+	json::each(d, n) { c =>
+		let nm = json::name_of(d, c);
+		if nm != "mesh" && nm != "skin" {
+			if !first { out.push(','); }
+			first = false;
+			json::format_key(out, nm);
+			emit(d, c, out);
+		}
+	};
+	out.push('}');
+}
+fn bk_view_json(o byte[>..]&, off int, len int) {
+	o.append("{\"buffer\":0,\"byteOffset\":");
+	json::format_int(o, off);
+	o.append(",\"byteLength\":");
+	json::format_int(o, len);
+	o.push('}');
+}
+fn bk_acc_add(vi int, ct int, n int, ty const byte[:], mm bool, lo const real[:], hi const real[:]) {
+	bk_na.append(",{\"bufferView\":");
+	json::format_int(bk_na, vi);
+	bk_na.append(",\"componentType\":");
+	json::format_int(bk_na, ct);
+	bk_na.append(",\"count\":");
+	json::format_int(bk_na, n);
+	bk_na.append(",\"type\":");
+	json::format_string(bk_na, ty);
+	if mm {
+		bk_na.append(",\"min\":");
+		bk_vec(bk_na, lo);
+		bk_na.append(",\"max\":");
+		bk_vec(bk_na, hi);
+	}
+	bk_na.push('}');
+}
+fn bk_attr_name(i int) const byte[:] {
+	match i {
+		0 => "POSITION",
+		1 => "NORMAL",
+		2 => "TANGENT",
+		3 => "TEXCOORD_0",
+		4 => "TEXCOORD_1",
+		5 => "COLOR_0",
+		6 => "JOINTS_0",
+		_ => "WEIGHTS_0",
+	}
+}
+fn bk_attr_w(i int) int {
+	match i {
+		0, 1 => 3,
+		3, 4 => 2,
+		_ => 4,
+	}
+}
+fn bk_attr_at(i int) int {
+	match i {
+		0 => gltf::AT_POS,
+		1 => gltf::AT_NRM,
+		2 => gltf::AT_TAN,
+		3 => gltf::AT_UV0,
+		4 => gltf::AT_UV1,
+		5 => gltf::AT_COL,
+		6 => gltf::AT_JOINT,
+		_ => gltf::AT_WEIGHT,
+	}
+}
+fn bk_loc(d json::Doc&, accs int, views int, ai int, dstride int) int, int, int, int {
+	if ai < 0 || ai >= json::count(d, accs) { return -1, 0, 0, 0; }
+	let a = json::element(d, accs, ai);
+	let bv = bk_int(d, bk_mem(d, a, "bufferView"), -1);
+	if bv < 0 || bv >= bk_voff.len || bk_vdead[bv] { return -1, 0, 0, 0; }
+	let vw = json::element(d, views, bv);
+	var st = bk_int(d, bk_mem(d, vw, "byteStride"), 0);
+	if st <= 0 { st = dstride; }
+	let at = bk_voff[bv] + bk_int(d, bk_mem(d, a, "byteOffset"), 0);
+	return at, st, bk_int(d, bk_mem(d, a, "count"), 0), bk_int(d, bk_mem(d, a, "componentType"), 5126);
+}
+fn bk_write_attr(d json::Doc&, accs int, views int, attrs int, name const byte[:], w int, off int, dstride int, gi int, track bool) {
+	let a = bk_mem(d, attrs, name);
+	if a < 0 { return; }
+	let ai = bk_int(d, a, -1);
+	let at, st, cnt, ct = bk_loc(d, accs, views, ai, dstride);
+	if at < 0 { return; }
+	let vf = gltf::VERTEX_FLOATS;
+	let v0 = gltf::prims[gi].vfirst;
+	let n = min(cnt, gltf::prims[gi].vcount);
+	var lo real[3] = [1e30; 3];
+	var hi real[3] = [-1e30; 3];
+	for v in n {
+		for c in w {
+			let x = gltf::verts[(v0 + v) * vf + off + c] as real;
+			bk_wf(x, at + v * st + 4 * c);
+			if track && c < 3 {
+				lo[c] = min(lo[c], x);
+				hi[c] = max(hi[c], x);
+			}
+		}
+	}
+	if track && n > 0 {
+		bk_ahas[ai] = true;
+		for c in 3 {
+			bk_amn[ai * 3 + c] = lo[c];
+			bk_amx[ai * 3 + c] = hi[c];
+		}
+	}
+}
+fn bk_write_indices(d json::Doc&, accs int, views int, pn int, gi int) {
+	let ia = bk_int(d, bk_mem(d, pn, "indices"), -1);
+	if ia < 0 { return; }
+	let at, st, cnt, ct = bk_loc(d, accs, views, ia, 0);
+	let icount = gltf::prims[gi].icount;
+	if at < 0 || cnt < icount { return; }
+	let sz = match ct { 5121 => 1, 5123 => 2, _ => 4 };
+	let step = if st > 0 { st } else { sz };
+	let i0 = gltf::prims[gi].ifirst;
+	for t in cnt {
+		let v = if t < icount { gltf::indices[i0 + t] as int } else { 0 };
+		bk_wu(at + t * step, sz, v);
+	}
+}
+fn bk_rebuild(d json::Doc&, accs int, attrs int, k int, j int, gm int, gi int) {
+	let vf = gltf::VERTEX_FLOATS;
+	let v0 = gltf::prims[gi].vfirst;
+	let vc = gltf::prims[gi].vcount;
+	let base = json::count(d, accs);
+	var txt byte[>..] = [];
+	for a in 8 {
+		let name = bk_attr_name(a);
+		if bk_mem(d, attrs, name) < 0 { continue; }
+		let w = bk_attr_w(a);
+		let off = bk_attr_at(a);
+		bk_pad(bk_nb);
+		let start = bk_nb.len;
+		var lo real[3] = [1e30; 3];
+		var hi real[3] = [-1e30; 3];
+		for v in vc {
+			for c in w {
+				let x = gltf::verts[(v0 + v) * vf + off + c] as real;
+				if a == 6 {
+					let q = x as int;
+					bk_nb.push((q & 255) as byte);
+					bk_nb.push(((q >> 8) & 255) as byte);
+				} else {
+					bk_pf32(x);
+				}
+				if a == 0 && c < 3 {
+					lo[c] = min(lo[c], x);
+					hi[c] = max(hi[c], x);
+				}
+			}
+		}
+		let len = bk_nb.len - start;
+		bk_pad(bk_nb);
+		let vi = bk_nview0 + bk_nvc;
+		bk_nv.push(',');
+		bk_view_json(bk_nv, start, len);
+		bk_nvc += 1;
+		let ty = match w { 2 => "VEC2", 3 => "VEC3", _ => "VEC4" };
+		bk_acc_add(vi, if a == 6 { 5123 } else { 5126 }, vc, ty, a == 0 && vc > 0, lo, hi);
+		if txt.len > 0 { txt.push(','); }
+		json::format_key(txt, name);
+		json::format_int(txt, base + bk_nac);
+		bk_nac += 1;
+	}
+	bk_pad(bk_nb);
+	let istart = bk_nb.len;
+	let icount = gltf::prims[gi].icount;
+	let i0 = gltf::prims[gi].ifirst;
+	for t in icount { bk_put32(bk_nb, gltf::indices[i0 + t] as int); }
+	let ivi = bk_nview0 + bk_nvc;
+	bk_nv.push(',');
+	bk_view_json(bk_nv, istart, icount * 4);
+	bk_nvc += 1;
+	let nolo real[3] = [0.0; 3];
+	bk_acc_add(ivi, 5125, icount, "SCALAR", false, nolo, nolo);
+	let idxacc = base + bk_nac;
+	bk_nac += 1;
+	bk_rbm.push(k);
+	bk_rbp.push(j);
+	bk_rbs.push(bk_rbt.len);
+	bk_rbt.append(txt);
+	bk_rbe.push(bk_rbt.len);
+	bk_rbi.push(idxacc);
+	print("bake: mesh ", gltf::text_of(gltf::meshes[gm].name), " rebuilt with ", vc);
+}
+fn bk_prim(d json::Doc&, accs int, views int, pn int, k int, j int, gm int, gi int) {
+	let attrs = bk_mem(d, pn, "attributes");
+	let pai = bk_int(d, bk_mem(d, attrs, "POSITION"), -1);
+	if pai < 0 || pai >= json::count(d, accs) { return; }
+	let count = bk_int(d, bk_mem(d, json::element(d, accs, pai), "count"), -1);
+	if count == gltf::prims[gi].vcount {
+		bk_write_attr(d, accs, views, attrs, "POSITION", 3, gltf::AT_POS, 12, gi, true);
+		bk_write_attr(d, accs, views, attrs, "NORMAL", 3, gltf::AT_NRM, 12, gi, false);
+		bk_write_indices(d, accs, views, pn, gi);
+	} else if bk_mem(d, pn, "targets") < 0 {
+		bk_rebuild(d, accs, attrs, k, j, gm, gi);
+	} else {
+		print("bake: mesh ", gltf::text_of(gltf::meshes[gm].name), " changed its vertex count, kept the original");
+	}
+}
+fn bk_shape_pass(d json::Doc&, root int, asset int) {
+	let accs = bk_mem(d, root, "accessors");
+	let views = bk_mem(d, root, "bufferViews");
+	let meshes = bk_mem(d, root, "meshes");
+	if accs < 0 || views < 0 || meshes < 0 { return; }
+	let nacc = json::count(d, accs);
+	bk_ahas.clear();
+	bk_amn.clear();
+	bk_amx.clear();
+	bk_ahas.resize(nacc, false);
+	bk_amn.resize(nacc * 3, 0.0);
+	bk_amx.resize(nacc * 3, 0.0);
+	for k in json::count(d, meshes) {
+		let mn = json::element(d, meshes, k);
+		let gm = gltf::assets[asset].meshes.first + k;
+		let prims = bk_mem(d, mn, "primitives");
+		if prims < 0 { continue; }
+		let np = min(json::count(d, prims), gltf::meshes[gm].prims.count);
+		for j in np {
+			let pn = json::element(d, prims, j);
+			bk_prim(d, accs, views, pn, k, j, gm, gltf::meshes[gm].prims.first + j);
+		}
+	}
+}
+fn bk_untiled_of(d json::Doc&, root int, mn int, asset int) bool {
+	let pbr = bk_mem(d, mn, "pbrMetallicRoughness");
+	let bct = bk_mem(d, pbr, "baseColorTexture");
+	let ti = bk_int(d, bk_mem(d, bct, "index"), -1);
+	let texs = bk_mem(d, root, "textures");
+	if ti < 0 || texs < 0 || ti >= json::count(d, texs) { return false; }
+	let src = bk_int(d, bk_mem(d, json::element(d, texs, ti), "source"), -1);
+	let g = gltf::assets[asset].images.first + src;
+	src >= 0 && g < bk_untiled.len && bk_untiled[g]
+}
+fn bk_mat_patch(d json::Doc&, mn int, gm int, ut bool, pt byte[>..]&) {
+	let mt .= gltf::materials[gm];
+	var any = false;
+	pt.push('{');
+	if bk_mat || ut {
+		bk_sep(pt, any);
+		json::format_key(pt, "pbrMetallicRoughness");
+		pt.push('{');
+		var g = false;
+		if bk_mat {
+			bk_sep(pt, g);
+			json::format_key(pt, "baseColorFactor");
+			bk_vec4(pt, mt.base);
+			bk_sep(pt, g);
+			json::format_key(pt, "metallicFactor");
+			bk_real(pt, mt.metallic as real);
+			bk_sep(pt, g);
+			json::format_key(pt, "roughnessFactor");
+			bk_real(pt, mt.roughness as real);
+		}
+		if ut {
+			bk_sep(pt, g);
+			json::format_key(pt, "baseColorTexture");
+			pt.append("{\"extensions\":{\"KHR_texture_transform\":{\"scale\":[");
+			bk_real(pt, mt.base_tex.m.x as real);
+			pt.push(',');
+			bk_real(pt, mt.base_tex.m.w as real);
+			pt.append("]}}}");
+		}
+		pt.push('}');
+	}
+	if bk_mat {
+		bk_sep(pt, any);
+		json::format_key(pt, "emissiveFactor");
+		bk_vec3(pt, mt.emissive);
+		if bk_mem(d, mn, "normalTexture") >= 0 {
+			bk_sep(pt, any);
+			json::format_key(pt, "normalTexture");
+			pt.append("{\"scale\":");
+			bk_real(pt, mt.normal_scale as real);
+			pt.push('}');
+		}
+		let ex = bk_mem(d, mn, "extensions");
+		if bk_mem(d, ex, "KHR_materials_sheen") >= 0 {
+			bk_sep(pt, any);
+			json::format_key(pt, "extensions");
+			pt.append("{\"KHR_materials_sheen\":{\"sheenColorFactor\":");
+			bk_vec3(pt, mt.sheen);
+			pt.append("}}");
+		}
+	}
+	pt.push('}');
+}
+fn bk_emit_mats(d json::Doc&, c int, root int, asset int, out byte[>..]&) {
+	out.push('[');
+	for i in json::count(d, c) {
+		if i > 0 { out.push(','); }
+		let mn = json::element(d, c, i);
+		let gm = gltf::assets[asset].materials.first + i;
+		let ut = bk_untiled_of(d, root, mn, asset);
+		if bk_mat || ut {
+			var pt byte[>..] = [];
+			bk_mat_patch(d, mn, gm, ut, pt);
+			var pd json::Doc;
+			let pr, pe = json::parse(pt, pd);
+			if pr >= 0 { bk_merge(d, mn, pd, pr, out); } else { emit(d, mn, out); }
+		} else {
+			emit(d, mn, out);
+		}
+	}
+	out.push(']');
+}
+fn bk_emit_nodes(d json::Doc&, c int, asset int, out byte[>..]&) {
+	out.push('[');
+	for i in json::count(d, c) {
+		if i > 0 { out.push(','); }
+		let nd = json::element(d, c, i);
+		let g = gltf::assets[asset].nodes.first + i;
+		if bk_mem(d, nd, "mesh") >= 0 && gltf::nodes[g].mesh < 0 {
+			bk_emit_skip(d, nd, out);
+		} else {
+			emit(d, nd, out);
+		}
+	}
+	out.push(']');
+}
+fn bk_emit_images(d json::Doc&, c int, out byte[>..]&) {
+	out.push('[');
+	for k in json::count(d, c) {
+		if k > 0 { out.push(','); }
+		let el = json::element(d, c, k);
+		if k < bk_chg.len && bk_chg[k] {
+			out.append("{\"bufferView\":");
+			json::format_int(out, bk_imgv[k]);
+			out.append(",\"mimeType\":");
+			json::format_string(out, if bk_imgjpg[k] { "image/jpeg" } else { "image/png" });
+			out.append(",\"name\":");
+			let nm = bk_mem(d, el, "name");
+			if nm >= 0 { json::format_string(out, py::str_of(d, nm)); } else { json::format_string(out, ""); }
+			out.push('}');
+		} else {
+			emit(d, el, out);
+		}
+	}
+	out.push(']');
+}
+fn bk_emit_views(d json::Doc&, c int, out byte[>..]&) {
+	let n = json::count(d, c);
+	var total = n;
+	out.push('[');
+	for i in n {
+		if i > 0 { out.push(','); }
+		if bk_vdead[i] {
+			out.append("{\"buffer\":0,\"byteOffset\":0,\"byteLength\":4}");
+		} else {
+			bk_emit_off(d, json::element(d, c, i), bk_voff[i], out);
+		}
+	}
+	for k in bk_chg.len {
+		if !bk_chg[k] { continue; }
+		if total > 0 { out.push(','); }
+		total += 1;
+		bk_view_json(out, bk_imgoff[k], bk_imglen[k]);
+	}
+	if bk_nv.len > 0 {
+		if total == 0 { out.append(bk_nv[1..bk_nv.len]); } else { out.append(bk_nv); }
+	}
+	out.push(']');
+}
+fn bk_emit_accs(d json::Doc&, c int, out byte[>..]&) {
+	let n = json::count(d, c);
+	out.push('[');
+	for i in n {
+		if i > 0 { out.push(','); }
+		let an = json::element(d, c, i);
+		if i < bk_ahas.len && bk_ahas[i] {
+			var pt byte[>..] = [];
+			pt.append("{\"min\":");
+			bk_vec(pt, bk_amn[i * 3..i * 3 + 3]);
+			pt.append(",\"max\":");
+			bk_vec(pt, bk_amx[i * 3..i * 3 + 3]);
+			pt.push('}');
+			var pd json::Doc;
+			let pr, pe = json::parse(pt, pd);
+			if pr >= 0 { bk_merge(d, an, pd, pr, out); } else { emit(d, an, out); }
+		} else {
+			emit(d, an, out);
+		}
+	}
+	if bk_na.len > 0 {
+		if n == 0 { out.append(bk_na[1..bk_na.len]); } else { out.append(bk_na); }
+	}
+	out.push(']');
+}
+fn bk_find_rb(k int, j int) int {
+	for r in bk_rbm.len {
+		if bk_rbm[r] == k && bk_rbp[r] == j { return r; }
+	}
+	-1
+}
+fn bk_emit_prims(d json::Doc&, c int, k int, out byte[>..]&) {
+	out.push('[');
+	for j in json::count(d, c) {
+		if j > 0 { out.push(','); }
+		let pn = json::element(d, c, j);
+		let r = bk_find_rb(k, j);
+		if r < 0 {
+			emit(d, pn, out);
+		} else {
+			var pt byte[>..] = [];
+			pt.append("{\"attributes\":{");
+			pt.append(bk_rbt[bk_rbs[r]..bk_rbe[r]]);
+			pt.append("},\"indices\":");
+			json::format_int(pt, bk_rbi[r]);
+			pt.push('}');
+			var pd json::Doc;
+			let pr, pe = json::parse(pt, pd);
+			if pr >= 0 { bk_merge(d, pn, pd, pr, out); } else { emit(d, pn, out); }
+		}
+	}
+	out.push(']');
+}
+fn bk_emit_meshes(d json::Doc&, c int, out byte[>..]&) {
+	if bk_rbm.len == 0 {
+		emit(d, c, out);
+		return;
+	}
+	out.push('[');
+	for k in json::count(d, c) {
+		if k > 0 { out.push(','); }
+		let mn = json::element(d, c, k);
+		out.push('{');
+		var first = true;
+		json::each(d, mn) { m =>
+			if !first { out.push(','); }
+			first = false;
+			let nm = json::name_of(d, m);
+			json::format_key(out, nm);
+			if nm == "primitives" { bk_emit_prims(d, m, k, out); } else { emit(d, m, out); }
+		};
+		out.push('}');
+	}
+	out.push(']');
+}
+fn bk_emit_root(d json::Doc&, root int, asset int, out byte[>..]&) {
+	out.push('{');
+	var first = true;
+	json::each(d, root) { c =>
+		let nm = json::name_of(d, c);
+		if !first { out.push(','); }
+		first = false;
+		json::format_key(out, nm);
+		if nm == "bufferViews" {
+			bk_emit_views(d, c, out);
+		} else if nm == "accessors" {
+			bk_emit_accs(d, c, out);
+		} else if nm == "images" {
+			bk_emit_images(d, c, out);
+		} else if nm == "meshes" {
+			bk_emit_meshes(d, c, out);
+		} else if nm == "nodes" {
+			bk_emit_nodes(d, c, asset, out);
+		} else if nm == "materials" {
+			bk_emit_mats(d, c, root, asset, out);
+		} else if nm == "buffers" {
+			out.append("[{\"byteLength\":");
+			json::format_int(out, bk_nb.len);
+			out.append("}]");
+		} else {
+			emit(d, c, out);
+		}
+	};
+	out.push('}');
+}
+fn bake_glb(asset int, src const byte[:], out const byte[:], prefix const byte[:]) bool {
+	var data byte[>..] = [];
+	read_file(src, data);
+	if data.len < 28 { return false; }
+	let jl = bk_u32(data, 12);
+	if 20 + jl > data.len { return false; }
+	let jtext = data[20..20 + jl];
+	var d json::Doc;
+	let root, err = json::parse(jtext, d);
+	if root < 0 { return false; }
+	let bs = 20 + jl;
+	var b0 = bs + 8;
+	var bl = bk_u32(data, bs);
+	if b0 > data.len {
+		b0 = data.len;
+		bl = 0;
+	}
+	if b0 + bl > data.len { bl = data.len - b0; }
+	let bin = data[b0..b0 + bl];
+	bk_kinds();
+	bk_nb.clear();
+	bk_voff.clear();
+	bk_vdead.clear();
+	bk_chg.clear();
+	bk_imgv.clear();
+	bk_imgoff.clear();
+	bk_imglen.clear();
+	bk_imgjpg.clear();
+	bk_nv.clear();
+	bk_na.clear();
+	bk_ahas.clear();
+	bk_amn.clear();
+	bk_amx.clear();
+	bk_rbm.clear();
+	bk_rbp.clear();
+	bk_rbs.clear();
+	bk_rbe.clear();
+	bk_rbi.clear();
+	bk_rbt.clear();
+	bk_nvc = 0;
+	bk_nac = 0;
+	let imgs = bk_mem(d, root, "images");
+	let views = bk_mem(d, root, "bufferViews");
+	let accs = bk_mem(d, root, "accessors");
+	let nimg = if imgs >= 0 { json::count(d, imgs) } else { 0 };
+	let nvo = if views >= 0 { json::count(d, views) } else { 0 };
+	let nacc = if accs >= 0 { json::count(d, accs) } else { 0 };
+	let first = gltf::assets[asset].images.first;
+	for k in nimg {
+		let g = first + k;
+		var c = false;
+		if g < bk_changed.len && bk_changed[g] != 0 { c = true; }
+		if !c && g < bk_sum.len && bk_sum[g] != 0 {
+			gltf::need_pixels(g);
+			if bk_hash(gltf::image_pixels(g)) != bk_sum[g] { c = true; }
+		}
+		bk_chg.push(c);
+	}
+	var byc bool[>..] = [];
+	var byo bool[>..] = [];
+	byc.resize(nvo, false);
+	byo.resize(nvo, false);
+	for ai in nacc {
+		let bv = bk_int(d, bk_mem(d, json::element(d, accs, ai), "bufferView"), -1);
+		if bv >= 0 && bv < nvo { byo[bv] = true; }
+	}
+	for k in nimg {
+		let bv = bk_int(d, bk_mem(d, json::element(d, imgs, k), "bufferView"), -1);
+		if bv >= 0 && bv < nvo {
+			if bk_chg[k] { byc[bv] = true; } else { byo[bv] = true; }
+		}
+	}
+	for i in 4 { bk_nb.push(0); }
+	for v in nvo {
+		let dead = byc[v] && !byo[v];
+		bk_vdead.push(dead);
+		if dead {
+			bk_voff.push(0);
+		} else {
+			let vw = json::element(d, views, v);
+			let off = bk_int(d, bk_mem(d, vw, "byteOffset"), 0);
+			var len = bk_int(d, bk_mem(d, vw, "byteLength"), 0);
+			if off < 0 || off > bin.len { len = 0; }
+			if len < 0 { len = 0; }
+			if off >= 0 && off <= bin.len && off + len > bin.len { len = bin.len - off; }
+			bk_voff.push(bk_nb.len);
+			if len > 0 { bk_nb.append(bin[off..off + len]); }
+			bk_pad(bk_nb);
+		}
+	}
+	var nch = 0;
+	for k in nimg {
+		if !bk_chg[k] {
+			bk_imgv.push(-1);
+			bk_imgoff.push(0);
+			bk_imglen.push(0);
+			bk_imgjpg.push(false);
+			continue;
+		}
+		let g = first + k;
+		let el = json::element(d, imgs, k);
+		let mm = bk_mem(d, el, "mimeType");
+		let srcjpg = mm >= 0 && py::str_of(d, mm) == "image/jpeg";
+		gltf::need_pixels(g);
+		let px = gltf::image_pixels(g);
+		let w = gltf::images[g].width;
+		let h = gltf::images[g].height;
+		var bytes byte[>..] = [];
+		let jpg = srcjpg || bk_opaque(px);
+		if jpg {
+			codec_jpeg_enc::encode(px, w, h, 92, bytes);
+		} else {
+			var have = false;
+			if prefix.len > 0 {
+				let pth = str(prefix, "_tex", g, ".png");
+				var pf byte[>..] = [];
+				read_file(pth, pf);
+				if pf.len > 0 {
+					bytes.append(pf);
+					have = true;
+				}
+			}
+			if !have { codec_png::encode(w, h, 4, px, bytes); }
+		}
+		bk_imgoff.push(bk_nb.len);
+		bk_imglen.push(bytes.len);
+		bk_imgjpg.push(jpg);
+		bk_imgv.push(nvo + nch);
+		nch += 1;
+		bk_nb.append(bytes);
+		bk_pad(bk_nb);
+	}
+	bk_nview0 = nvo + nch;
+	if bk_shape { bk_shape_pass(d, root, asset); }
+	bk_pad(bk_nb);
+	var js byte[>..] = [];
+	bk_emit_root(d, root, asset, js);
+	while js.len % 4 != 0 { js.push(' '); }
+	var o byte[>..] = [];
+	o.append("glTF");
+	bk_put32(o, 2);
+	bk_put32(o, 12 + 8 + js.len + 8 + bk_nb.len);
+	bk_put32(o, js.len);
+	o.append("JSON");
+	o.append(js);
+	bk_put32(o, bk_nb.len);
+	o.append("BIN");
+	o.push(0);
+	o.append(bk_nb);
+	write_file(out, o);
+	print("glb ", out);
+	true
+}

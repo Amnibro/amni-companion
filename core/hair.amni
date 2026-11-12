@@ -60,17 +60,18 @@ fn mel_of(c float3, bn f32) float2 {
 var on = false;
 var hair_top f32 = 0.0;
 var hair_col = float3 { 0.58, 0.38, 0.14 };
+var hair_gain f32 = 1.0;
 var guides = 0;
 var parts = 0;
 var cells = 0;
 var sdf_done = false;
 var sim_reset = true;
 var probe_ask = false;
-var probe_v f32[>..] = [];
+var probe_v f32[>..];
 var hm_prev = gfx::mat4_identity;
-var part_node int[>..] = [];
-var part_ib gfx::mat4[>..] = [];
-var simv float4[>..] = [];
+var part_node int[>..];
+var part_ib gfx::mat4[>..];
+var simv float4[>..];
 var tgt gfx::Buffer = default<gfx::Buffer>();
 var st gfx::Buffer = default<gfx::Buffer>();
 var gd gfx::Buffer = default<gfx::Buffer>();
@@ -87,8 +88,8 @@ var points = 0;
 var segments = 0;
 var center = float3 { 0.0, 0.0, 0.0 };
 var bones = 0;
-var bone_node int[>..] = [];
-var mats gfx::mat4[>..] = [];
+var bone_node int[>..];
+var mats gfx::mat4[>..];
 var pts gfx::Buffer = default<gfx::Buffer>();
 var rest gfx::Buffer = default<gfx::Buffer>();
 var skin gfx::Buffer = default<gfx::Buffer>();
@@ -595,8 +596,15 @@ fn hair_bone(i int) int {
 fn hair_pose(i int, m gfx::mat4) {
 	if i >= 0 && i < bones { mats[i] = m; }
 }
+fn hair_style(o float4) {
+	if o.x >= 0.0 { hair_col = float3 { o.x, o.y, o.z }; }
+	hair_gain = max(o.w, 0.0);
+}
 fn hair_draw(model gfx::mat4, dt f32) {
 	if !on { return; }
+	fn len3(v float3) f32 {
+		sqrt((v.x * v.x + v.y * v.y + v.z * v.z) as real) as f32
+	}
 	let im = linalg::inverse(model);
 	var u = default<HairU>();
 	u.view_proj = gfx::mul(s3d::view_proj_nj, model);
@@ -615,13 +623,13 @@ fn hair_draw(model gfx::mat4, dt f32) {
 	u.mel = float4 { m.x, m.y, 0.3, nl as f32 };
 	for i in nl {
 		let lp = linalg::point(im, s3d::lights[i].pos);
-		let lc = s3d::lights[i].rgb;
+		let lc = s3d::lights[i].rgb / max(hair_gain, 1.0);
 		u.pl[2 * i] = float4 { lp.x, lp.y, lp.z, s3d::lights[i].range };
 		u.pl[2 * i + 1] = float4 { lc.x, lc.y, lc.z, 0.0 };
 	}
 	u.sky = float4 { 0.12, 0.13, 0.15, 40.0 };
 	u.params = float4 { 0.004, 1.7, 0.004, 0.00007 };
-	u.look = float4 { 1.0, 1.0, 0.0, 0.7 };
+	u.look = float4 { hair_gain, 1.0, 0.0, 0.7 };
 	u.shape = float4 { hair_top, center.z, 0.0035, 0.0 };
 	u.light_vp = gfx::mul(gfx::perspective(0.24, 1.0, 2.0, 4.0), gfx::look_at(center + ld * 3.0, center, float3 { 0.0, 1.0, 0.0 }));
 	u.light = float4 { 512.0, 512.0, 0.35, (256.0 / tan(0.12)) as f32 };
@@ -653,20 +661,18 @@ fn hair_draw(model gfx::mat4, dt f32) {
 		gfx::end_compute();
 		u.size.w = segments as f32;
 	}
-	let mdx = model.c3.x - hm_prev.c3.x;
-	let mdy = model.c3.y - hm_prev.c3.y;
-	let mdz = model.c3.z - hm_prev.c3.z;
-	let reset = sim_reset || dt <= 0.0 || mdx * mdx + mdy * mdy + mdz * mdz > 0.25;
+	let reset = sim_reset || dt <= 0.0 || len3(float3 { model.c3.x - hm_prev.c3.x, model.c3.y - hm_prev.c3.y, model.c3.z - hm_prev.c3.z }) > 0.5;
 	if reset { hm_prev = model; }
-	var carry = gfx::mat4_identity;
-	let de = gfx::mul(model, linalg::inverse(hm_prev));
-	let cs real = ((de.c0.x + de.c1.y + de.c2.z - 1.0) / 2.0) as real;
-	let ang = acos(clamp(cs, -1.0, 1.0)) as f32;
+	var carry = gfx::mul(model, linalg::inverse(hm_prev));
+	let de = carry;
+	carry = gfx::mat4_identity;
+	let cs = clamp(((de.c0.x + de.c1.y + de.c2.z - 1.0) / 2.0) as real, -1.0, 1.0);
+	let ang = acos(cs) as f32;
 	let ax = float3 { de.c1.z - de.c2.y, de.c2.x - de.c0.z, de.c0.y - de.c1.x };
 	if !reset && ang > 0.2 {
 		let k = 1.0 - 0.2 / ang;
-		let axl2 = ax.x * ax.x + ax.y * ax.y + ax.z * ax.z;
-		let qe = linalg::qaxis(if axl2 > 0.000001 { linalg::unit3(ax) } else { float3 { 0.0, 1.0, 0.0 } }, ang * k);
+		let axis = if len3(ax) > 0.001 { linalg::unit3(ax) } else { float3 { 0.0, 1.0, 0.0 } };
+		let qe = linalg::qaxis(axis, ang * k);
 		let c = float3 { hm_prev.c3.x, hm_prev.c3.y, hm_prev.c3.z };
 		let mv = float3 { (model.c3.x - c.x) * k, (model.c3.y - c.y) * k, (model.c3.z - c.z) * k };
 		carry = gfx::mul(gfx::translate(c + mv), gfx::mul(linalg::qmatrix(qe), gfx::translate(float3 { -c.x, -c.y, -c.z })));
@@ -696,11 +702,11 @@ fn hair_draw(model gfx::mat4, dt f32) {
 	for p in parts {
 		let o = 20 + 12 * p;
 		let mp = gfx::mul(motion::world[part_node[p]], part_ib[p]);
-		let imp = linalg::inverse(mp);
-		simv[o + 3] = imp.c0;
-		simv[o + 4] = imp.c1;
-		simv[o + 5] = imp.c2;
-		simv[o + 6] = imp.c3;
+		let inv = linalg::inverse(mp);
+		simv[o + 3] = inv.c0;
+		simv[o + 4] = inv.c1;
+		simv[o + 5] = inv.c2;
+		simv[o + 6] = inv.c3;
 		simv[o + 7] = mp.c0;
 		simv[o + 8] = mp.c1;
 		simv[o + 9] = mp.c2;
@@ -733,23 +739,27 @@ fn hair_draw(model gfx::mat4, dt f32) {
 		var s0 real = 0.0;
 		var s1 real = 0.0;
 		var s2 real = 0.0;
-		var mx real = 0.0;
 		var s3 real = 0.0;
+		var mx real = 0.0;
+		var s4 real = 0.0;
 		for g in guides {
 			let at = g * 16;
-			s0 += binary::gather(raw, at, 4) as real;
-			s1 += binary::gather(raw, at + 4, 4) as real;
-			let d2 = binary::gather(raw, at + 8, 4) as real;
-			s2 += d2;
-			if d2 > mx { mx = d2; }
-			s3 += (binary::gather(raw, at + 12, 4) as real) - 1000000000.0;
+			let a0 = binary::gather(raw, at, 4) as int;
+			let a1 = binary::gather(raw, at + 4, 4) as int;
+			let a2 = binary::gather(raw, at + 8, 4) as int;
+			let a3 = binary::gather(raw, at + 12, 4) as int;
+			s0 += a0 as real;
+			s1 += a1 as real;
+			s2 += a2 as real;
+			if (a2 as real) > mx { mx = a2 as real; }
+			s4 += (a3 - 1000000000) as real;
 		}
-		let gn = max(guides, 1) as real;
+		let ng = max(guides, 1) as real;
 		probe_v[0] = s0 as f32;
 		probe_v[1] = s1 as f32;
-		probe_v[2] = (s2 / gn / 1000.0) as f32;
+		probe_v[2] = (s2 / ng / 1000.0) as f32;
 		probe_v[3] = (mx / 1000.0) as f32;
-		probe_v[4] = (s3 / gn / 1000.0) as f32;
+		probe_v[4] = (s4 / ng / 1000.0) as f32;
 		probe_v[5] += 1.0;
 		probe_v[6] = guides as f32;
 		probe_ask = false;
@@ -777,7 +787,7 @@ fn hair_draw(model gfx::mat4, dt f32) {
 	gfx::bind_storage_buffer(gfx::COMPUTE, 0, acc);
 	gfx::dispatch((w + 7) / 8, (h + 7) / 8, 1);
 	gfx::end_compute();
-	if gfx::begin_pass(gfx::PassDesc { color: [s3d::hdr_target(), gfx::Texture{0}, gfx::Texture{0}, gfx::Texture{0}], clear_color: false, .. }) {
+	if gfx::begin_pass(gfx::PassDesc { color: [s3d::hdr_target(), gfx::Texture { 0 }, gfx::Texture { 0 }, gfx::Texture { 0 }], clear_color: false, .. }) {
 		gfx::bind(comp);
 		gfx::bind_texture(gfx::FRAGMENT, 0, hairt, smp);
 		gfx::draw(3);

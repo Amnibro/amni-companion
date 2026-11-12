@@ -1,13 +1,14 @@
-import gfx.codec_jpeg_enc;
 import os;
 import gfx;
 import math;
 import gfx.linalg;
 import gfx.gltf;
 import gfx.codec_png;
+import gfx.codec_jpeg_enc;
 import gfx.motion;
 import gfx.scene3d;
 import json;
+import bake;
 import look;
 var tw = 0;
 var th = 0;
@@ -1924,503 +1925,6 @@ fn light_fit() {
 	f4(o, sun_el);
 	print(o);
 }
-fn emit(d json::Doc&, n int, out byte[>..]&) {
-	json::format_node(out, d, n);
-}
-var eg_off int[>..];
-var eg_dead bool[>..];
-var eg_ioff int[>..];
-var eg_ilen int[>..];
-var eg_ijpg bool[>..];
-var eg_ivw int[>..];
-var eg_aflag bool[>..];
-var eg_amin float3[>..];
-var eg_amax float3[>..];
-fn eg_u32(b const byte[:], at int) int {
-	(b[at] as int) + (b[at + 1] as int) * 256 + (b[at + 2] as int) * 65536 + (b[at + 3] as int) * 16777216
-}
-fn eg_p32(o byte[>..]&, v int) {
-	o.push((v % 256) as byte);
-	o.push(((v / 256) % 256) as byte);
-	o.push(((v / 65536) % 256) as byte);
-	o.push(((v / 16777216) % 256) as byte);
-}
-fn eg_pad(o byte[>..]&) {
-	while o.len % 4 != 0 { o.push(0); }
-}
-fn eg_int(d json::Doc&, n int, key const byte[:], def int) int {
-	let m = json::member(d, n, key);
-	if m < 0 { return def; }
-	var t byte[>..] = [];
-	emit(d, m, t);
-	let v, ok = parse_flt(t);
-	if !ok { return def; }
-	v as int
-}
-fn eg_count(d json::Doc&, n int) int {
-	var i = 0;
-	while json::element(d, n, i) >= 0 { i++; }
-	i
-}
-fn eg_k(o byte[>..]&, first bool&, name const byte[:]) {
-	if !first { o.push(','); }
-	first = false;
-	json::format_key(o, name);
-}
-fn eg_num(o byte[>..]&, v f32) {
-	json::format_number(o, v as real);
-}
-fn eg_f3(o byte[>..]&, a float3) {
-	o.push('[');
-	eg_num(o, a.x);
-	o.push(',');
-	eg_num(o, a.y);
-	o.push(',');
-	eg_num(o, a.z);
-	o.push(']');
-}
-fn eg_tt(o byte[>..]&, nu int, nv int) {
-	o.append("\"KHR_texture_transform\":{\"scale\":[");
-	eg_num(o, 1.0 / (nu as f32));
-	o.push(',');
-	eg_num(o, 1.0 / (nv as f32));
-	o.append("]}");
-}
-fn eg_bext(d json::Doc&, n int, o byte[>..]&, nu int, nv int) {
-	o.push('{');
-	var first = true;
-	json::each(d, n) { c =>
-		let nm = json::name_of(d, c);
-		if nm != "KHR_texture_transform" {
-			eg_k(o, first, nm);
-			emit(d, c, o);
-		}
-	};
-	if !first { o.push(','); }
-	eg_tt(o, nu, nv);
-	o.push('}');
-}
-fn eg_bct(d json::Doc&, n int, o byte[>..]&, nu int, nv int) {
-	o.push('{');
-	var first = true;
-	var seen = false;
-	json::each(d, n) { c =>
-		let nm = json::name_of(d, c);
-		eg_k(o, first, nm);
-		if nm == "extensions" {
-			eg_bext(d, c, o, nu, nv);
-			seen = true;
-		} else {
-			emit(d, c, o);
-		}
-	};
-	if !seen {
-		eg_k(o, first, "extensions");
-		o.push('{');
-		eg_tt(o, nu, nv);
-		o.push('}');
-	}
-	o.push('}');
-}
-fn eg_pbr(d json::Doc&, n int, o byte[>..]&, gm int, ut bool, nu int, nv int) {
-	o.push('{');
-	var first = true;
-	var seen = false;
-	json::each(d, n) { c =>
-		let nm = json::name_of(d, c);
-		eg_k(o, first, nm);
-		if nm == "roughnessFactor" && mat_changed {
-			eg_num(o, gltf::materials[gm].roughness);
-			seen = true;
-		} else if nm == "baseColorTexture" && ut {
-			eg_bct(d, c, o, nu, nv);
-		} else {
-			emit(d, c, o);
-		}
-	};
-	if mat_changed && !seen {
-		eg_k(o, first, "roughnessFactor");
-		eg_num(o, gltf::materials[gm].roughness);
-	}
-	o.push('}');
-}
-fn eg_normal(d json::Doc&, n int, o byte[>..]&, gm int) {
-	o.push('{');
-	var first = true;
-	var seen = false;
-	json::each(d, n) { c =>
-		let nm = json::name_of(d, c);
-		eg_k(o, first, nm);
-		if nm == "scale" {
-			eg_num(o, gltf::materials[gm].normal_scale);
-			seen = true;
-		} else {
-			emit(d, c, o);
-		}
-	};
-	if !seen {
-		eg_k(o, first, "scale");
-		eg_num(o, gltf::materials[gm].normal_scale);
-	}
-	o.push('}');
-}
-fn eg_sheen(d json::Doc&, n int, o byte[>..]&, gm int) {
-	o.push('{');
-	var first = true;
-	var seen = false;
-	json::each(d, n) { c =>
-		let nm = json::name_of(d, c);
-		eg_k(o, first, nm);
-		if nm == "sheenColorFactor" {
-			eg_f3(o, gltf::materials[gm].sheen);
-			seen = true;
-		} else {
-			emit(d, c, o);
-		}
-	};
-	if !seen {
-		eg_k(o, first, "sheenColorFactor");
-		eg_f3(o, gltf::materials[gm].sheen);
-	}
-	o.push('}');
-}
-fn eg_mext(d json::Doc&, n int, o byte[>..]&, gm int) {
-	o.push('{');
-	var first = true;
-	json::each(d, n) { c =>
-		let nm = json::name_of(d, c);
-		eg_k(o, first, nm);
-		if nm == "KHR_materials_sheen" {
-			eg_sheen(d, c, o, gm);
-		} else {
-			emit(d, c, o);
-		}
-	};
-	o.push('}');
-}
-fn eg_mat(d json::Doc&, n int, o byte[>..]&, gm int) {
-	let mt = gltf::materials[gm];
-	var ut = false;
-	var nu = 1;
-	var nv = 1;
-	if mt.base_tex.texture >= 0 {
-		let im = gltf::textures[mt.base_tex.texture].image;
-		if im >= 0 && im < untiled.len && untiled[im] {
-			ut = true;
-			nu = ut_u[im];
-			nv = ut_v[im];
-		}
-	}
-	o.push('{');
-	var first = true;
-	json::each(d, n) { c =>
-		let nm = json::name_of(d, c);
-		eg_k(o, first, nm);
-		if nm == "pbrMetallicRoughness" {
-			eg_pbr(d, c, o, gm, ut, nu, nv);
-		} else if nm == "normalTexture" && mat_changed {
-			eg_normal(d, c, o, gm);
-		} else if nm == "extensions" && mat_changed {
-			eg_mext(d, c, o, gm);
-		} else {
-			emit(d, c, o);
-		}
-	};
-	o.push('}');
-}
-fn eg_mats(d json::Doc&, n int, o byte[>..]&, mfirst int) {
-	o.push('[');
-	var i = 0;
-	while json::element(d, n, i) >= 0 {
-		if i > 0 { o.push(','); }
-		eg_mat(d, json::element(d, n, i), o, mfirst + i);
-		i++;
-	}
-	o.push(']');
-}
-fn eg_acc(d json::Doc&, n int, o byte[>..]&, ai int) {
-	o.push('{');
-	var first = true;
-	var smin = false;
-	var smax = false;
-	json::each(d, n) { c =>
-		let nm = json::name_of(d, c);
-		eg_k(o, first, nm);
-		if nm == "min" {
-			eg_f3(o, eg_amin[ai]);
-			smin = true;
-		} else if nm == "max" {
-			eg_f3(o, eg_amax[ai]);
-			smax = true;
-		} else {
-			emit(d, c, o);
-		}
-	};
-	if !smin {
-		eg_k(o, first, "min");
-		eg_f3(o, eg_amin[ai]);
-	}
-	if !smax {
-		eg_k(o, first, "max");
-		eg_f3(o, eg_amax[ai]);
-	}
-	o.push('}');
-}
-fn eg_accs(d json::Doc&, n int, o byte[>..]&) {
-	o.push('[');
-	var i = 0;
-	while json::element(d, n, i) >= 0 {
-		if i > 0 { o.push(','); }
-		let an = json::element(d, n, i);
-		if i < eg_aflag.len && eg_aflag[i] {
-			eg_acc(d, an, o, i);
-		} else {
-			emit(d, an, o);
-		}
-		i++;
-	}
-	o.push(']');
-}
-fn eg_views(d json::Doc&, n int, o byte[>..]&, nbv int) {
-	o.push('[');
-	for v in nbv {
-		if v > 0 { o.push(','); }
-		let bn = json::element(d, n, v);
-		if eg_dead[v] {
-			o.append("{\"buffer\":0,\"byteOffset\":0,\"byteLength\":4}");
-			continue;
-		}
-		o.push('{');
-		var first = true;
-		var seen = false;
-		json::each(d, bn) { c =>
-			let nm = json::name_of(d, c);
-			eg_k(o, first, nm);
-			if nm == "byteOffset" {
-				format(o, eg_off[v]);
-				seen = true;
-			} else {
-				emit(d, c, o);
-			}
-		};
-		if !seen {
-			eg_k(o, first, "byteOffset");
-			format(o, eg_off[v]);
-		}
-		o.push('}');
-	}
-	for k in eg_ivw.len {
-		if eg_ivw[k] >= 0 {
-			o.push(',');
-			format(o, "{\"buffer\":0,\"byteOffset\":", eg_ioff[k], ",\"byteLength\":", eg_ilen[k], "}");
-		}
-	}
-	o.push(']');
-}
-fn eg_images(d json::Doc&, n int, o byte[>..]&, nim int) {
-	o.push('[');
-	for k in nim {
-		if k > 0 { o.push(','); }
-		let node = json::element(d, n, k);
-		if eg_ivw[k] >= 0 {
-			format(o, "{\"bufferView\":", eg_ivw[k], ",\"mimeType\":");
-			if eg_ijpg[k] { o.append("\"image/jpeg\""); } else { o.append("\"image/png\""); }
-			o.append(",\"name\":");
-			let nm = json::member(d, node, "name");
-			if nm >= 0 { emit(d, nm, o); } else { o.append("\"\""); }
-			o.push('}');
-		} else {
-			emit(d, node, o);
-		}
-	}
-	o.push(']');
-}
-fn export_glb(src const byte[:], out const byte[:], prefix const byte[:]) {
-	var data byte[>..] = [];
-	if !read_file(src, data) { return; }
-	if data.len < 28 { return; }
-	let jl = eg_u32(data, 12);
-	let bl = eg_u32(data, 20 + jl);
-	let bstart = 28 + jl;
-	let js = data[20..20 + jl];
-	let bin = data[bstart..min(bstart + bl, data.len)];
-	var d = json::Doc {};
-	let root, perr = json::parse(js, d);
-	if root < 0 { return; }
-	let bvs = json::member(d, 0, "bufferViews");
-	let ims = json::member(d, 0, "images");
-	let accs = json::member(d, 0, "accessors");
-	let mshs = json::member(d, 0, "meshes");
-	let nbv = if bvs >= 0 { eg_count(d, bvs) } else { 0 };
-	let nim = if ims >= 0 { eg_count(d, ims) } else { 0 };
-	let nacc = if accs >= 0 { eg_count(d, accs) } else { 0 };
-	let ifirst = gltf::assets[asset].images.first;
-	fn chg(k int) bool {
-		let g = ifirst + k;
-		g < img_changed.len && img_changed[g] != 0
-	}
-	var live bool[>..] = [];
-	var chref bool[>..] = [];
-	live.resize(nbv, false);
-	chref.resize(nbv, false);
-	for i in nacc {
-		let bv = eg_int(d, json::element(d, accs, i), "bufferView", -1);
-		if bv >= 0 && bv < nbv { live[bv] = true; }
-	}
-	for k in nim {
-		let bv = eg_int(d, json::element(d, ims, k), "bufferView", -1);
-		if bv >= 0 && bv < nbv {
-			if chg(k) { chref[bv] = true; } else { live[bv] = true; }
-		}
-	}
-	eg_dead.clear();
-	eg_dead.resize(nbv, false);
-	for v in nbv { eg_dead[v] = chref[v] && !live[v]; }
-	var nb byte[>..] = [];
-	for i in 4 { nb.push(0); }
-	eg_off.clear();
-	eg_off.resize(nbv, 0);
-	for v in nbv {
-		if eg_dead[v] { continue; }
-		let bn = json::element(d, bvs, v);
-		let off = eg_int(d, bn, "byteOffset", 0);
-		let len = eg_int(d, bn, "byteLength", 0);
-		eg_off[v] = nb.len;
-		if off >= 0 && len >= 0 && off + len <= bin.len { nb.append(bin[off..off + len]); }
-		eg_pad(nb);
-	}
-	eg_ivw.clear();
-	eg_ivw.resize(nim, -1);
-	eg_ioff.clear();
-	eg_ioff.resize(nim, 0);
-	eg_ilen.clear();
-	eg_ilen.resize(nim, 0);
-	eg_ijpg.clear();
-	eg_ijpg.resize(nim, false);
-	var added = 0;
-	for k in nim {
-		if !chg(k) { continue; }
-		let g = ifirst + k;
-		let node = json::element(d, ims, k);
-		var jpg = false;
-		let mm = json::member(d, node, "mimeType");
-		if mm >= 0 {
-			var mt byte[>..] = [];
-			emit(d, mm, mt);
-			jpg = mt == "\"image/jpeg\"";
-		}
-		var bytes byte[>..] = [];
-		if jpg {
-			let im = gltf::images[g];
-			codec_jpeg_enc::encode(gltf::image_pixels(g), im.width, im.height, 92, bytes);
-		} else {
-			var pth byte[>..] = [];
-			format(pth, prefix, "_tex", g, ".png");
-			read_file(pth, bytes);
-		}
-		eg_ioff[k] = nb.len;
-		eg_ilen[k] = bytes.len;
-		eg_ijpg[k] = jpg;
-		eg_ivw[k] = nbv + added;
-		added++;
-		nb.append(bytes);
-		eg_pad(nb);
-	}
-	eg_aflag.clear();
-	eg_aflag.resize(nacc, false);
-	eg_amin.clear();
-	eg_amin.resize(nacc, float3 { 0.0, 0.0, 0.0 });
-	eg_amax.clear();
-	eg_amax.resize(nacc, float3 { 0.0, 0.0, 0.0 });
-	if shape_changed && mshs >= 0 {
-		let mf = gltf::assets[asset].meshes.first;
-		for k in eg_count(d, mshs) {
-			let mn = json::element(d, mshs, k);
-			let prs = json::member(d, mn, "primitives");
-			if prs < 0 { continue; }
-			let mesh = gltf::meshes[mf + k];
-			for j in mesh.prims.count {
-				let pn = json::element(d, prs, j);
-				if pn < 0 { continue; }
-				let at = json::member(d, pn, "attributes");
-				if at < 0 { continue; }
-				let ai = eg_int(d, at, "POSITION", -1);
-				if ai < 0 || ai >= nacc { continue; }
-				let an = json::element(d, accs, ai);
-				let bv = eg_int(d, an, "bufferView", -1);
-				if bv < 0 || bv >= nbv { continue; }
-				let bn = json::element(d, bvs, bv);
-				let base = eg_off[bv] + eg_int(d, an, "byteOffset", 0);
-				let stride = eg_int(d, bn, "byteStride", 12);
-				let cnt = eg_int(d, an, "count", 0);
-				let prim = gltf::prims[mesh.prims.first + j];
-				if cnt != prim.vcount || cnt == 0 { continue; }
-				var lo = float3 { 0.0, 0.0, 0.0 };
-				var hi = float3 { 0.0, 0.0, 0.0 };
-				for v in cnt {
-					let o = (prim.vfirst + v) * gltf::VERTEX_FLOATS;
-					let x = gltf::verts[o];
-					let y = gltf::verts[o + 1];
-					let z = gltf::verts[o + 2];
-					let fa f32[3] = [x, y, z];
-					let bb = bytes_of(fa);
-					let p = base + v * stride;
-					if p >= 0 && p + 12 <= nb.len {
-						for q in 12 { nb[p + q] = bb[q]; }
-					}
-					if v == 0 {
-						lo = float3 { x, y, z };
-						hi = float3 { x, y, z };
-					} else {
-						lo = float3 { min(lo.x, x), min(lo.y, y), min(lo.z, z) };
-						hi = float3 { max(hi.x, x), max(hi.y, y), max(hi.z, z) };
-					}
-				}
-				eg_aflag[ai] = true;
-				eg_amin[ai] = lo;
-				eg_amax[ai] = hi;
-			}
-		}
-	}
-	eg_pad(nb);
-	let mfirst = gltf::assets[asset].materials.first;
-	var jo byte[>..] = [];
-	jo.push('{');
-	var first = true;
-	json::each(d, 0) { c =>
-		let nm = json::name_of(d, c);
-		eg_k(jo, first, nm);
-		if nm == "buffers" {
-			format(jo, "[{\"byteLength\":", nb.len, "}]");
-		} else if nm == "bufferViews" {
-			eg_views(d, c, jo, nbv);
-		} else if nm == "images" {
-			eg_images(d, c, jo, nim);
-		} else if nm == "accessors" && shape_changed {
-			eg_accs(d, c, jo);
-		} else if nm == "materials" {
-			eg_mats(d, c, jo, mfirst);
-		} else {
-			emit(d, c, jo);
-		}
-	};
-	jo.push('}');
-	while jo.len % 4 != 0 { jo.push(' '); }
-	var fo byte[>..] = [];
-	let total = 12 + 8 + jo.len + 8 + nb.len;
-	fo.append("glTF");
-	eg_p32(fo, 2);
-	eg_p32(fo, total);
-	eg_p32(fo, jo.len);
-	fo.append("JSON");
-	fo.append(jo);
-	eg_p32(fo, nb.len);
-	fo.append("BIN");
-	fo.push(0);
-	fo.append(nb);
-	write_file(out, fo);
-	print("glb ", out);
-}
 fn report(tag const byte[:], save bool, prefix const byte[:]) {
 	var si f32 = 0.0;
 	var ss f32 = 0.0;
@@ -2568,63 +2072,53 @@ fn env_is(name const byte[:], val const byte[:]) bool {
 fn learn_clear() {
 	s3d::place(item, gfx::translate(float3 { 0.0, -1000.0, 0.0 }));
 	s3d::view = s3d::Camera { eye: float3 { 0.0, 0.85, 3.2 }, target: float3 { 0.0, 0.85, 0.0 }, up: float3 { 0.0, 1.0, 0.0 }, fov_y: fov, near: 0.05, far: 100.0 };
-	s3d::render(big);
-	s3d::render(big);
-	s3d::render(big);
+	for i in 3 { s3d::render(big); }
 	let px = gfx::read_pixels(big);
 	clear_c = float3 { px[0] as f32, px[1] as f32, px[2] as f32 };
 	print("clear ", clear_c.x, " ", clear_c.y, " ", clear_c.z);
 	s3d::place(item, gfx::mat4_identity);
 }
+fn refit_all(iters int) {
+	for k in nview { cam_fit(k, iters); }
+}
 fn main() {
 	let a = args();
 	if a.len < 4 {
-		print("usage: fit model.glb targets prefix [pose]");
+		print("usage: fit model.glb targets out_prefix [pose]");
 		return;
 	}
-	for tgt in split(a[2], ',') {
+	let items = split(a[2], ',');
+	for t in items {
 		if nview >= 7 { break; }
+		let fs = split(t, ':');
 		var path const byte[:] = "";
-		var yaw f32 = 0.0;
-		var dd f32 = 3.2;
-		var cyy f32 = 0.85;
-		var cxx f32 = 0.0;
-		var fixed = false;
-		let parts = split(tgt, ':');
-		for w, k in parts {
-			if k == 0 {
-				path = w;
-			} else if k == 1 {
-				yaw = num(w);
-			} else {
-				fixed = true;
-				if k == 2 {
-					dd = num(w);
-				} else if k == 3 {
-					cyy = num(w);
-				} else if k == 4 {
-					cxx = num(w);
-				}
-			}
+		var nums f32[..4] = [];
+		for w, j in fs {
+			if j == 0 { path = w; } else if nums.len < 4 { nums.push(num(w)); }
 		}
 		var data byte[>..] = [];
 		if !read_file(path, data) {
-			print("target failed ", path);
+			print("target failed");
 			continue;
 		}
 		tpx.clear();
 		let w, h, ok = codec_png::decode(data, tpx);
 		if !ok {
-			print("target failed ", path);
+			print("target failed");
 			continue;
 		}
 		if nview == 0 {
 			tw = w;
 			th = h;
 		} else if w != tw || h != th {
-			print("target size differs, skipped ", path);
+			print("target skipped (size differs)");
 			continue;
 		}
+		let yaw f32 = if nums.len > 0 { nums[0] } else { 0.0 };
+		let given = nums.len > 1;
+		let dd f32 = if nums.len > 1 { nums[1] } else { 3.2 };
+		let cyy f32 = if nums.len > 2 { nums[2] } else { 0.85 };
+		let cxx f32 = if nums.len > 3 { nums[3] } else { 0.0 };
 		tmask.resize(tw * th, 1.0);
 		gray_bg();
 		v_px.append(tpx);
@@ -2634,7 +2128,7 @@ fn main() {
 		v_d.push(dd);
 		v_cy.push(cyy);
 		v_cx.push(cxx);
-		v_fix.push(fixed);
+		v_fix.push(given);
 		nview++;
 	}
 	if nview == 0 {
@@ -2644,23 +2138,21 @@ fn main() {
 	let n = tw * th;
 	if env_on("FIT_MASK") {
 		for k in nview {
-			var m byte[>..] = [];
-			m.resize(n * 4, 0);
+			var px byte[>..] = [];
+			px.resize(n * 4, 0);
 			var cnt = 0;
 			for i in n {
-				var v byte = 0;
-				if v_mask[k * n + i] == 1.0 {
-					v = 255;
-					cnt++;
-				}
-				m[i * 4] = v;
-				m[i * 4 + 1] = v;
-				m[i * 4 + 2] = v;
-				m[i * 4 + 3] = 255;
+				let on = v_mask[k * n + i] > 0.5;
+				let v byte = if on { 255 } else { 0 };
+				if on { cnt++; }
+				px[i * 4] = v;
+				px[i * 4 + 1] = v;
+				px[i * 4 + 2] = v;
+				px[i * 4 + 3] = 255;
 			}
 			var p byte[>..] = [];
 			format(p, a[3], "_v", k, "_mask.png");
-			gfx::save_shot(gfx::Shot { w: tw, h: th, pf: 376840196, px: m }, p);
+			gfx::save_shot(gfx::Shot { w: tw, h: th, pf: 376840196, px: px }, p);
 			var o byte[>..] = [];
 			format(o, "mask v", k, " ");
 			f4(o, (cnt as f32) / (n as f32));
@@ -2678,7 +2170,7 @@ fn main() {
 		print("load failed: ", gltf::error());
 		return;
 	}
-	if !env_off("FIT_LOOK") { look_setup(asset); }
+	if !env_is("FIT_LOOK", "0") { look_setup(asset); }
 	item = s3d::add(asset);
 	s3d::place(item, gfx::mat4_identity);
 	if a.len > 4 { load_pose(a[4]); }
@@ -2696,9 +2188,10 @@ fn main() {
 			return;
 		}
 	}
+	for i in 768 { tc[i] = i % 256; }
 	if !env_off("FIT_POSE") {
 		pose_fit();
-		for k in nview { cam_fit(k, 3); }
+		refit_all(3);
 		var pp byte[>..] = [];
 		format(pp, a[3], "_pose.txt");
 		save_pose(pp);
@@ -2706,7 +2199,7 @@ fn main() {
 	if env_is("FIT_SHAPE", "1") {
 		for r in 4 {
 			shape_fit(r);
-			for k in nview { cam_fit(k, 3); }
+			refit_all(3);
 			var tg byte[>..] = [];
 			format(tg, "shape", r);
 			report(tg, false, a[3]);
@@ -2714,15 +2207,19 @@ fn main() {
 	}
 	if !env_off("FIT_LIGHT") { light_fit(); }
 	report("fit", false, a[3]);
-	if !env_off("FIT_TONE") && !env_is("FIT_TONE", "post") {
+	let tone_allowed = !(env_is("FIT_TONE", "0") || env_is("FIT_TONE", "post"));
+	if tone_allowed {
 		tone_fit();
 		report("tone", false, a[3]);
 	}
 	if !env_off("FIT_GAIN") { view_gain(); }
 	if !env_off("FIT_MATERIAL") { material_fit(); }
-	if img_changed.len < gltf::images.len { img_changed.resize(gltf::images.len, 0); }
-	if !env_off("FIT_PATTERN") { pattern_fit(); }
+	if !env_off("FIT_PATTERN") {
+		if img_changed.len < gltf::images.len { img_changed.resize(gltf::images.len, 0); }
+		pattern_fit();
+	}
 	if !env_off("FIT_UNTILE") { untile(); }
+	var saved = 0;
 	if !env_off("FIT_PAINT") {
 		for r in 4 {
 			paint(false);
@@ -2746,23 +2243,28 @@ fn main() {
 			}
 			pcell = 4;
 		}
-	}
-	var saved = 0;
-	for im in gltf::images.len {
-		if im < img_changed.len && img_changed[im] != 0 {
-			let info = gltf::images[im];
-			var px byte[>..] = [];
-			px.append(gltf::image_pixels(im));
-			var p byte[>..] = [];
-			format(p, a[3], "_tex", im, ".png");
-			gfx::save_shot(gfx::Shot { w: info.width, h: info.height, pf: 376840196, px: px }, p);
-			saved++;
+		for i in gltf::images.len {
+			if i < img_changed.len && img_changed[i] != 0 {
+				let im = gltf::images[i];
+				var px byte[>..] = [];
+				px.append(gltf::image_pixels(i));
+				var p byte[>..] = [];
+				format(p, a[3], "_tex", i, ".png");
+				gfx::save_shot(gfx::Shot { w: im.width, h: im.height, pf: 376840196, px: px }, p);
+				saved++;
+			}
 		}
 	}
 	if saved > 0 || shape_changed || mat_changed {
-		var op byte[>..] = [];
-		format(op, a[3], ".glb");
-		export_glb(a[1], op, a[3]);
+		bk_changed.clear();
+		bk_changed.append(img_changed);
+		bk_untiled.clear();
+		bk_untiled.append(untiled);
+		bk_shape = shape_changed;
+		bk_mat = mat_changed;
+		var gp byte[>..] = [];
+		format(gp, a[3], ".glb");
+		bake_glb(asset, a[1], gp, a[3]);
 	}
 	if tone_on {
 		var o byte[>..] = [];

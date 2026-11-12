@@ -5,6 +5,7 @@ import gfx.linalg;
 import gfx.gltf;
 import gfx.scene3d;
 import dictionary;
+var fe_hair float4 = float4 { -1.0, -1.0, -1.0, 1.0 };
 var fe_c0 float3;
 var fe_c1 float3;
 var fe_r f32 = 0.0;
@@ -1141,109 +1142,119 @@ fn fe_amounts(rg f32[>..]&, a f32, b f32) {
 		rg[i * 6 + 5] *= b;
 	}
 }
-fn fe_num(nums const real[:], i int, def real) real {
-	if i < nums.len { return nums[i]; }
-	return def;
+fn fe_num(nums const real[:], oks const int[:], k int, d real) real {
+	if k < nums.len && oks[k] == 1 { nums[k] } else { d }
 }
 fn feature_setup(path const byte[:], asset int) bool {
-	var txt byte[>..] = [];
-	let okr = read_file(path, txt);
-	if !okr { return false; }
-	var tried = false;
-	var eyes_ok = false;
-	fn need_eyes() bool {
-		if !tried {
-			tried = true;
-			eyes_ok = fe_eyes(asset);
+	if !file_exists(path) { return false; }
+	var data byte[>..] = [];
+	read_file(path, data);
+	var have = false;
+	var found = false;
+	fn eyes() bool {
+		if !have {
+			have = true;
+			found = fe_eyes(asset);
 		}
-		eyes_ok
+		found
 	}
-	fn need_frame() bool {
-		if !need_eyes() { return false; }
+	fn reserve() {
+		if eyes() && fe_at.len == 0 { fe_reserve(asset); }
+	}
+	fn frame() bool {
+		if !eyes() { return false; }
 		fe_arc(asset, fe_c0, fe_arc0);
 		fe_arc(asset, fe_c1, fe_arc1);
 		fe_arc0.len >= 4 && fe_arc1.len >= 4
 	}
-	fn need_reserve() {
-		if fe_at.len == 0 { fe_reserve(asset); }
-	}
-	for raw in split(txt, '\n') {
+	let lines = split(data, '\n');
+	for raw in lines {
 		let line = trim(raw);
 		if line.len == 0 { continue; }
 		if line[0] == '#' { continue; }
-		var word byte[>..] = [];
-		var arg byte[>..] = [];
+		var cmd byte[>..] = [];
+		var mesh byte[>..] = [];
 		var nums real[>..] = [];
-		var k = 0;
-		let ws = words(line);
-		for w in ws {
-			if k == 0 {
-				word.append(w);
+		var oks int[>..] = [];
+		for w, i in words(line) {
+			if i == 0 {
+				cmd.append(w);
 			} else {
-				if k == 1 { arg.append(w); }
+				if i == 1 { mesh.append(w); }
 				let v, ok = parse_flt(w);
-				nums.push(if ok { v } else { 0.0 });
+				nums.push(v);
+				oks.push(if ok { 1 } else { 0 });
 			}
-			k++;
 		}
-		if word == "liner" {
-			let st = fe_num(nums, 0, 1.0);
-			let w0 = fe_num(nums, 1, 0.05);
-			let w1 = fe_num(nums, 2, 0.185);
-			let wing = fe_num(nums, 3, 0.3);
-			let ang = fe_num(nums, 4, 22.0);
-			let lift = fe_num(nums, 5, 0.075);
-			let dark = fe_num(nums, 6, 18.0);
-			if need_frame() {
-				need_reserve();
-				fe_liner(asset, w0 as f32, w1 as f32, wing as f32, ang as f32, lift as f32, dark as f32, st as f32);
+		if cmd.len == 0 { continue; }
+		if cmd == "liner" {
+			let st = fe_num(nums, oks, 0, 1.0);
+			let w0 = fe_num(nums, oks, 1, 0.05);
+			let w1 = fe_num(nums, oks, 2, 0.185);
+			let wing = fe_num(nums, oks, 3, 0.3);
+			let ang = fe_num(nums, oks, 4, 22.0);
+			let lift = fe_num(nums, oks, 5, 0.075);
+			let dark = fe_num(nums, oks, 6, 18.0);
+			if eyes() {
+				reserve();
+				if frame() {
+					fe_liner(asset, w0 as f32, w1 as f32, wing as f32, ang as f32, lift as f32, dark as f32, st as f32);
+				}
 			}
-		} else if word == "lids" {
-			let crease = fe_num(nums, 0, 1.0);
-			let edge = fe_num(nums, 1, 1.0);
-			let passes = fe_num(nums, 2, 25.0);
-			let fill = fe_num(nums, 3, 1.0);
-			if need_eyes() {
+		} else if cmd == "lids" {
+			let crease = fe_num(nums, oks, 0, 1.0);
+			let edge = fe_num(nums, oks, 1, 1.0);
+			let passes = fe_num(nums, oks, 2, 25.0);
+			let fill = fe_num(nums, oks, 3, 1.0);
+			if eyes() {
 				var rg f32[>..] = [];
 				fe_regions("lids", rg);
 				fe_amounts(rg, crease as f32, edge as f32);
 				let ps = fe_prims(asset, false);
 				fe_soften(asset, ps, rg, passes as int, fill as f32);
 			}
-		} else if word == "clean" {
-			let amount = fe_num(nums, 0, 1.0);
-			let radius = fe_num(nums, 1, 7.0);
-			let keep = fe_num(nums, 2, 0.85);
-			if need_frame() {
-				need_reserve();
-				var rg f32[>..] = [];
-				fe_regions("lids", rg);
-				fe_clean(asset, rg, amount as f32, radius as int, keep as f32);
+		} else if cmd == "clean" {
+			let amt = fe_num(nums, oks, 0, 1.0);
+			let rad = fe_num(nums, oks, 1, 7.0);
+			let keep = fe_num(nums, oks, 2, 0.85);
+			if eyes() {
+				reserve();
+				if frame() {
+					var rg f32[>..] = [];
+					fe_regions("lids", rg);
+					fe_clean(asset, rg, amt as f32, rad as int, keep as f32);
+				}
 			}
-		} else if word == "nose" {
-			let amount = fe_num(nums, 0, 1.0);
-			let passes = fe_num(nums, 1, 25.0);
-			let fill = fe_num(nums, 2, 1.0);
-			if need_eyes() {
+		} else if cmd == "nose" {
+			let amt = fe_num(nums, oks, 0, 1.0);
+			let passes = fe_num(nums, oks, 1, 25.0);
+			let fill = fe_num(nums, oks, 2, 1.0);
+			if eyes() {
 				var rg f32[>..] = [];
 				fe_regions("nose", rg);
-				fe_amounts(rg, amount as f32, 0.0);
+				fe_amounts(rg, amt as f32, 0.0);
 				let ps = fe_prims(asset, false);
 				fe_soften(asset, ps, rg, passes as int, fill as f32);
 			}
-		} else if word == "smooth" {
-			let passes = fe_num(nums, 1, 20.0);
+		} else if cmd == "smooth" {
+			let passes = fe_num(nums, oks, 1, 20.0);
 			var rg f32[>..] = [];
 			fe_row(rg, 0.0, 0.0, 1e5, 1e5, 0.0, 1.0);
-			let ps = fe_mesh_prims(asset, arg);
+			let ps = fe_mesh_prims(asset, mesh);
 			fe_soften(asset, ps, rg, passes as int, 0.0);
-		} else if word == "hide" {
-			fe_hide(asset, arg);
-		} else if word == "tint" {
-			let r = fe_num(nums, 1, 1.0);
-			let g = fe_num(nums, 2, 1.0);
-			let b = fe_num(nums, 3, 1.0);
-			fe_tint(asset, arg, float3 { r as f32, g as f32, b as f32 });
+		} else if cmd == "hide" {
+			fe_hide(asset, mesh);
+		} else if cmd == "tint" {
+			let r = fe_num(nums, oks, 1, 1.0);
+			let g = fe_num(nums, oks, 2, 1.0);
+			let b = fe_num(nums, oks, 3, 1.0);
+			fe_tint(asset, mesh, float3 { r as f32, g as f32, b as f32 });
+		} else if cmd == "hair" {
+			let r = fe_num(nums, oks, 0, -1.0);
+			let g = fe_num(nums, oks, 1, -1.0);
+			let b = fe_num(nums, oks, 2, -1.0);
+			let gain = fe_num(nums, oks, 3, 1.0);
+			fe_hair = float4 { r as f32, g as f32, b as f32, gain as f32 };
 		}
 	}
 	return true;
