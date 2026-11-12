@@ -80,7 +80,7 @@ fn eye_pair(asset int) float3, float3 {
 fn rect(pos float3, at float3, axis float3, w f32, h f32, rgb float3, sh bool) {
 	s3d::add_rect(pos, at, axis, w, h, rgb, 7.0, sh);
 }
-=== -176d0a5f3545936d
+=== -38c65c5a080aba6b
 fn main() {
 	let a = args();
 	let w = num(a[3]) as int;
@@ -98,36 +98,37 @@ fn main() {
 		return;
 	}
 	look_setup(asset);
+	fn hide(name const byte[:]) {
+		for i in gltf::assets[asset].nodes.count {
+			let n = gltf::assets[asset].nodes.first + i;
+			if gltf::nodes[n].mesh >= 0 {
+				if gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == name { gltf::nodes[n].mesh = -1; }
+			}
+		}
+	}
 	for i in gltf::assets[asset].materials.count {
 		let m = gltf::assets[asset].materials.first + i;
-		let mn = gltf::text_of(gltf::materials[m].name);
-		if tv(t, 13, 0.0) > 0.0 && mn == "face" { gltf::materials[m].roughness = tv(t, 13, 0.0); }
-		if tv(t, 19, 0.0) > 0.0 && mn == "skin" { gltf::materials[m].roughness = tv(t, 19, 0.0); }
-		if mn == "skin" || mn == "face" {
+		let nm = gltf::text_of(gltf::materials[m].name);
+		if tv(t, 13, 0.0) > 0.0 && nm == "face" { gltf::materials[m].roughness = tv(t, 13, 0.0); }
+		if tv(t, 19, 0.0) > 0.0 && nm == "skin" { gltf::materials[m].roughness = tv(t, 19, 0.0); }
+		if nm == "skin" || nm == "face" {
 			if tv(t, 15, 0.0) > 0.0 { gltf::materials[m].shade_c.y = tv(t, 15, 0.0); }
 			if tv(t, 16, -1.0) >= 0.0 { gltf::materials[m].shade_c.z = tv(t, 16, -1.0); }
 			gltf::materials[m].shade_a.x *= tv(t, 18, 1.0);
 			gltf::materials[m].shade_a.y *= tv(t, 18, 1.0);
 			gltf::materials[m].shade_a.z *= tv(t, 18, 1.0);
 			let k = tv(t, 17, 0.0);
-			let mean = (gltf::materials[m].base.x + gltf::materials[m].base.y + gltf::materials[m].base.z) / 3.0;
-			let cx = gltf::materials[m].base.x;
-			let cy = gltf::materials[m].base.y;
-			let cz = gltf::materials[m].base.z;
-			gltf::materials[m].base.x = cx + (mean - cx) * k;
-			gltf::materials[m].base.y = cy + (mean - cy) * k;
-			gltf::materials[m].base.z = cz + (mean - cz) * k;
+			let bx = gltf::materials[m].base.x;
+			let by = gltf::materials[m].base.y;
+			let bz = gltf::materials[m].base.z;
+			let mean = (bx + by + bz) / 3.0;
+			gltf::materials[m].base.x = bx + (mean - bx) * k;
+			gltf::materials[m].base.y = by + (mean - by) * k;
+			gltf::materials[m].base.z = bz + (mean - bz) * k;
 		}
-		if tv(t, 20, 0.0) > 0.0 && mn == "eyes" { gltf::materials[m].roughness = tv(t, 20, 0.0); }
+		if tv(t, 20, 0.0) > 0.0 && nm == "eyes" { gltf::materials[m].roughness = tv(t, 20, 0.0); }
 	}
-	if tv(t, 21, 0.0) > 0.0 {
-		for i in gltf::assets[asset].nodes.count {
-			let n = gltf::assets[asset].nodes.first + i;
-			if gltf::nodes[n].mesh >= 0 {
-				if gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "eye_occ" { gltf::nodes[n].mesh = -1; }
-			}
-		}
-	}
+	if tv(t, 21, 0.0) > 0.0 { hide("eye_occ"); }
 	let ep, en = eye_pair(asset);
 	let mid = (ep + en) * 0.5;
 	let ipd = linalg::length3(ep - en);
@@ -137,35 +138,96 @@ fn main() {
 	let fh = 2.0 * d * th;
 	let at = mid - float3 { 0.0, (0.5 - tv(t, 6, 0.408)) * fh, 0.0 };
 	print("portrait: eyes ", ep, en, " spacing ", ipd, " distance ", d);
-	let bg = tv(t, 10, 0.55);
-	var bm = shapes::material(linalg::v3(bg, bg * 0.985, bg * 1.03), 0.0, 0.95);
+	let g = tv(t, 10, 0.55);
+	var bm = shapes::material(linalg::v3(g, g * 0.985, g * 1.03), 0.0, 0.95);
 	bm.double_sided = true;
 	let bs = shapes::sheet(7, mid + float3 { -2.5, -2.5, -1.4 }, float3 { 5.0, 0.0, 0.0 }, float3 { 0.0, 5.0, 0.0 }, bm);
 	s3d::place(s3d::add(bs), gfx::mat4_identity);
 	s3d::alpha_to_coverage = true;
 	s3d::init(w, h);
 	var gs int[>..] = [];
-	for k in 2 {
-		let name = if k == 0 { "hair" } else { "braid_hair" };
-		let hg = hair::cards(asset, name, "head", tv(t, 8, 24.0) as int);
-		if hg >= 0 {
-			gs.push(hg);
-			hair::grooms[hg].look.color = mat_color(asset, name) * tv(t, 14, 1.0);
-			hair::grooms[hg].look.gain = tv(t, 11, 1.7);
-			hair::grooms[hg].look.frizz = tv(t, 9, 0.7);
-			hair::grooms[hg].look.ambient = float3 { 1.2, 1.2, 1.2 };
-			for i in gltf::assets[asset].nodes.count {
-				let n = gltf::assets[asset].nodes.first + i;
-				if gltf::nodes[n].mesh >= 0 {
-					if gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == name { gltf::nodes[n].mesh = -1; }
-				}
+	let sn = mesh_node(asset, "scalp");
+	if tv(t, 22, 1.0) > 0.0 && sn >= 0 {
+		var pos f32[>..] = [];
+		var nrm f32[>..] = [];
+		var idx int[>..] = [];
+		hair::mesh_soup(sn, pos, nrm, idx);
+		let nv = pos.len / 3;
+		var top f32 = -1e30;
+		for i in nv {
+			if pos[i * 3 + 1] > top { top = pos[i * 3 + 1]; }
+		}
+		var x0 f32 = 1e30;
+		var x1 f32 = -1e30;
+		var z0 f32 = 1e30;
+		var z1 f32 = -1e30;
+		for i in nv {
+			if pos[i * 3 + 1] > top - 0.14 {
+				x0 = min(x0, pos[i * 3]);
+				x1 = max(x1, pos[i * 3]);
+				z0 = min(z0, pos[i * 3 + 2]);
+				z1 = max(z1, pos[i * 3 + 2]);
+			}
+		}
+		let rx = (x1 - x0) * 0.5;
+		let rz = (z1 - z0) * 0.5;
+		let ry = (rx + rz) * 0.5;
+		let r = max(rx, max(ry, rz));
+		let c = float3 { (x0 + x1) * 0.5, top - ry, (z0 + z1) * 0.5 };
+		let sc = float3 { rx / r, ry / r, rz / r };
+		var rp float3[>..] = [];
+		var rn float3[>..] = [];
+		let _ = hair::mesh_roots(sn, float3 { -1.0, top - 0.19, -1.0 }, float3 { 1.0, top + 1.0, 1.0 }, tv(t, 23, 2500.0) as int, 7, rp, rn);
+		let dir = linalg::unit3(float3 { 0.0, 0.6, -0.8 });
+		let st = hair::Style { steps: 24, length: 0.3, width: 0.004, clumps: 300, head: float4 { c.x, c.y, c.z, r }, head_scale: sc, gather: c + float3 { dir.x * sc.x, dir.y * sc.y, dir.z * sc.z } * (r * 1.08), bun: 0.032, .. };
+		var data byte[>..] = [];
+		hair::groom(rp[..], rn[..], st, data);
+		let g0 = hair::load(data[..], tv(t, 8, 24.0) as int);
+		if g0 >= 0 { gs.push(g0); }
+		var wp float3[>..] = [];
+		var wn float3[>..] = [];
+		let _ = hair::mesh_roots(sn, float3 { -1.0, c.y - 0.01, c.z + rz * 0.35 }, float3 { 1.0, c.y + ry * 0.55, 1.0 }, 160, 11, wp, wn);
+		var qp float3[>..] = [];
+		var qn float3[>..] = [];
+		for i in wp.len {
+			if abs(wp[i].x - c.x) > rx * 0.6 {
+				qp.push(wp[i]);
+				qn.push(wn[i]);
+			}
+		}
+		if qp.len > 0 {
+			var wdata byte[>..] = [];
+			hair::groom(qp[..], qn[..], hair::Style { steps: 16, length: 0.17, vary: 0.35, width: 0.003, droop: 0.95, curl: 0.25, turns: 1.5, seed: 11, .. }, wdata);
+			let g1 = hair::load(wdata[..], 7);
+			if g1 >= 0 { gs.push(g1); }
+		}
+		for gi in gs {
+			hair::grooms[gi].look.color = float3 { 0.42, 0.32, 0.22 } * tv(t, 14, 1.0);
+			hair::grooms[gi].look.gain = tv(t, 11, 1.7);
+			hair::grooms[gi].look.frizz = tv(t, 9, 0.7);
+			hair::grooms[gi].look.ambient = float3 { 1.2, 1.2, 1.2 };
+		}
+		hide("hair");
+		hide("braid_hair");
+		hide("tie");
+	} else {
+		for k in 2 {
+			let name const byte[:] = if k == 0 { "hair" } else { "braid_hair" };
+			let gc = hair::cards(asset, name, "head", tv(t, 8, 24.0) as int);
+			if gc >= 0 {
+				gs.push(gc);
+				hair::grooms[gc].look.color = mat_color(asset, name) * tv(t, 14, 1.0);
+				hair::grooms[gc].look.gain = tv(t, 11, 1.7);
+				hair::grooms[gc].look.frizz = tv(t, 9, 0.7);
+				hair::grooms[gc].look.ambient = float3 { 1.2, 1.2, 1.2 };
+				hide(name);
 			}
 		}
 	}
 	print("portrait: grooms ", gs.len);
 	let item = s3d::add(asset);
 	s3d::place(item, gfx::mat4_identity);
-	for g in gs { hair::follow(g, item, -1); }
+	for gi in gs { hair::follow(gi, item, -1); }
 	s3d::sun = s3d::Sun { to_sun: linalg::unit3(float3 { 0.5, 0.6, 0.6 }), rgb: float3 { 0.0, 0.0, 0.0 }, shadows: false, shadow_far: 10.0, map_size: 2048, .. };
 	rect(mid + float3 { 0.55, 0.45, 0.9 }, mid, float3 { 0.85, 0.0, -0.52 }, 0.9, 0.9, float3 { 10.0, 9.6, 9.0 } * tv(t, 0, 1.0), true);
 	rect(mid + float3 { -0.8, 0.1, 0.8 }, mid, float3 { 0.7, 0.0, 0.7 }, 1.0, 1.0, float3 { 0.9, 1.0, 1.1 } * tv(t, 1, 0.45), false);
