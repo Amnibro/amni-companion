@@ -125,56 +125,70 @@ fn hair_open(path const byte[:], nw int, nh int, strands int) bool {
 	if !read_file(path, data) { return false; }
 	return hair_load(data, nw, nh, strands);
 }
-=== 698bdef34f4a3893
+=== 66cfc6de7f0591c9
 fn hair_load(data const byte[:], nw int, nh int, strands int) bool {
+	if data.len < 16 { return false; }
+	if data[0] != 'H' || data[1] != 'M' || data[2] != 'G' || (data[3] != 50 && data[3] != 51) { return false; }
+	fn fl(at int) f32 {
+		binary::f32_from_bits(binary::gather(data, at, 4) as! u32)
+	}
 	let np = binary::gather(data, 8, 4) as int;
 	let ns = binary::gather(data, 12, 4) as int;
+	if np < 0 || ns < 0 { return false; }
+	let pb = 16;
+	let sb = 16 + np * 48;
+	let e = sb + ns * 16;
+	if data.len < e { return false; }
+	var nb = 0;
+	bone_node.clear();
+	if data[3] == 51 {
+		if data.len < e + 4 { return false; }
+		nb = binary::gather(data, e, 4) as int;
+		if nb < 0 || data.len < e + 4 + nb * 4 + np * 16 { return false; }
+		for i in nb { bone_node.push(binary::gather(data, e + 4 + i * 4, 4) as int); }
+	}
+	let ko = e + 4 + nb * 4;
 	points = np;
 	segments = ns;
+	bones = nb;
 	spc = strands;
-	let rw = gfx::BUFFER_COMPUTE_READ | gfx::BUFFER_COMPUTE_WRITE;
-	pts = gfx::buffer(rw, points * 48, data[16..16 + points * 48]);
-	tgt = gfx::buffer(rw, points * 48, data[16..16 + points * 48]);
-	st = gfx::buffer(rw, points * 32, []);
-	let sb = 16 + points * 48;
-	segs = gfx::buffer(gfx::BUFFER_COMPUTE_READ, segments * 16, data[sb..sb + segments * 16]);
-	bones = 0;
-	bone_node.clear();
-	var k = sb + segments * 16;
-	if data[3] == 51 {
-		let e = sb + segments * 16;
-		bones = binary::gather(data, e, 4) as int;
-		for i in bones {
-			bone_node.push(binary::gather(data, e + 4 + i * 4, 4) as int);
-		}
-		k = e + 4 + bones * 4;
+	var mx = 0;
+	for s in ns {
+		let v = binary::gather(data, sb + s * 16 + 8, 4) as int;
+		if v > mx { mx = v; }
 	}
+	if mx > 0 { spc = mx; }
+	let rw = gfx::BUFFER_COMPUTE_READ | gfx::BUFFER_COMPUTE_WRITE;
+	pts = gfx::buffer(rw, np * 48, data[16..16 + np * 48]);
+	tgt = gfx::buffer(rw, np * 48, data[16..16 + np * 48]);
+	st = gfx::buffer(rw, np * 32, []);
+	segs = gfx::buffer(gfx::BUFFER_COMPUTE_READ, ns * 16, data[sb..sb + ns * 16]);
 	if bones > 0 {
-		rest = gfx::buffer(gfx::BUFFER_COMPUTE_READ, points * 48, data[16..16 + points * 48]);
-		skin = gfx::buffer(gfx::BUFFER_COMPUTE_READ, points * 16, data[k..k + points * 16]);
+		rest = gfx::buffer(gfx::BUFFER_COMPUTE_READ, np * 48, data[16..16 + np * 48]);
+		skin = gfx::buffer(gfx::BUFFER_COMPUTE_READ, np * 16, data[ko..ko + np * 16]);
 		mats.clear();
 		mats.resize(bones, gfx::mat4_identity);
 		matsb = gfx::buffer(gfx::BUFFER_COMPUTE_READ, bones * 64, []);
 		skin_p = gfx::compute_pipeline(embed_shader("shaders/strand_skin.comp"));
 	}
-	var top f32 = -1e9;
+	var top f32 = 0.0;
 	var sx f32 = 0.0;
 	var sy f32 = 0.0;
 	var sz f32 = 0.0;
-	for p in points {
-		let at = 16 + p * 48;
-		let px = binary::f32_from_bits(binary::gather(data, at, 4) as! u32);
-		let py = binary::f32_from_bits(binary::gather(data, at + 4, 4) as! u32);
-		let pz = binary::f32_from_bits(binary::gather(data, at + 8, 4) as! u32);
-		if py > top { top = py; }
-		sx += px;
-		sy += py;
-		sz += pz;
+	for k in np {
+		let at = 16 + k * 48;
+		let y = fl(at + 4);
+		if k == 0 || y > top { top = y; }
+		sx += fl(at);
+		sy += y;
+		sz += fl(at + 8);
 	}
-	if points > 0 {
-		hair_top = top;
-		let fp = points as f32;
-		center = float3 { sx / fp, sy / fp, sz / fp };
+	hair_top = top;
+	if np > 0 {
+		let n = np as f32;
+		center = float3 { sx / n, sy / n, sz / n };
+	} else {
+		center = float3 { 0.0, 0.0, 0.0 };
 	}
 	lfront = gfx::buffer(rw, 512 * 512 * 4, []);
 	lacc = gfx::buffer(rw, 512 * 512 * 64, []);
@@ -184,20 +198,19 @@ fn hair_load(data const byte[:], nw int, nh int, strands int) bool {
 	raster_p = gfx::compute_pipeline(embed_shader("shaders/strand_raster.comp"));
 	resolve_p = gfx::compute_pipeline(embed_shader("shaders/strand_resolve.comp"));
 	var gl i32[>..] = [];
-	var prevg = -1;
-	for s in segments {
-		let at = sb + s * 16;
-		let pi = binary::gather(data, at, 4) as int;
-		let gn = binary::gather(data, at + 4, 4) as int;
-		if s == 0 || gn != prevg {
-			gl.push(pi as i32);
+	var prev = 0;
+	for s in ns {
+		let pt = binary::gather(data, sb + s * 16, 4) as int;
+		let gn = binary::gather(data, sb + s * 16 + 4, 4) as int;
+		if s == 0 || gn != prev {
+			gl.push(pt as i32);
 			gl.push(2);
 			gl.push(0);
 			gl.push(0);
 		} else {
 			gl[gl.len - 3] += 1;
 		}
-		prevg = gn;
+		prev = gn;
 	}
 	let ng = gl.len / 4;
 	if bones > 0 {
@@ -205,10 +218,12 @@ fn hair_load(data const byte[:], nw int, nh int, strands int) bool {
 			let first = gl[4 * g] as int;
 			let cnt = gl[4 * g + 1] as int;
 			var skinned = false;
-			for q in first..first + cnt {
-				let wa = binary::f32_from_bits(binary::gather(data, k + q * 16 + 8, 4) as! u32);
-				let wb = binary::f32_from_bits(binary::gather(data, k + q * 16 + 12, 4) as! u32);
-				if wa + wb > 0.001 { skinned = true; }
+			for k in first..first + cnt {
+				if k >= 0 && k < np {
+					let w0 = fl(ko + k * 16 + 8);
+					let w1 = fl(ko + k * 16 + 12);
+					if w0 + w1 > 0.001 { skinned = true; }
+				}
 			}
 			if skinned { gl[4 * g + 2] = 1; }
 		}

@@ -68,17 +68,19 @@ vec3 strandPos(uint p, float u, float dz, float wob, float ph) {
 }
 void main() {
 	uint si = gl_GlobalInvocationID.x, j = gl_GlobalInvocationID.y;
-	if (si >= uint(size.w) || float(j) >= size.z) return;
+	if (si >= uint(size.w)) return;
 	uvec4 sg = segs[si];
+	float sc = sg.z > 0u ? min(float(sg.z), size.z) : size.z;
+	if (float(j) >= sc) return;
 	uint p = sg.x, g = sg.y;
 	float h0 = hsh(g, j * 4u), h1 = hsh(g, j * 4u + 1u), h2 = hsh(g, j * 4u + 2u), h3 = hsh(g, j * 4u + 3u);
 	float t0 = pts[p * 3u + 1u].w, t1 = pts[p * 3u + 4u].w;
 	float tend = 1.0 - 0.32 * h2 * h2;
 	if (t0 >= tend) return;
 	float lk = pts[p * 3u + 2u].w, fly = step(0.965, hsh(g, j * 4u + 31u));
-	if (lk > 0.5 && float(j) >= size.z * 0.45) return;
+	if (lk > 0.5 && float(j) >= sc * 0.45) return;
 	float nc = 3.0 + floor(hsh(g, 999u) * 5.0), cl = floor(h3 * nc), cc = (hsh(g, 1000u + uint(cl)) * 2.0 - 1.0) * 1.2, cz = (hsh(g, 2000u + uint(cl)) - 0.5) * params.z;
-	float u0 = (((float(j) + h0) / (lk > 0.5 ? size.z * 0.45 : size.z)) * 2.0 - 1.0) * 1.4, cs = (lk > 0.5 ? 0.18 : 0.62) + 0.25 * hsh(g, j * 4u + 77u) - fly * 0.4;
+	float u0 = (((float(j) + h0) / (lk > 0.5 ? sc * 0.45 : sc)) * 2.0 - 1.0) * 1.4, cs = (lk > 0.5 ? 0.18 : 0.62) + 0.25 * hsh(g, j * 4u + 77u) - fly * 0.4;
 	float ua = mix(u0, cc, min(cs + 0.3 * t0, 0.97)), ub = mix(u0, cc, min(cs + 0.3 * t1, 0.97));
 	float dz = mix((h1 - 0.5) * params.z, cz, lk > 0.5 ? 0.3 : 0.75) * (lk > 0.5 ? 2.2 : 1.0), wob = (0.0007 + fly * 0.0047 + lk * 0.0011) * hsh(g, j + 500u), ph = 6.2831 * h3;
 	vec3 A = strandPos(p, ua, dz, wob, ph) + partShift(p, ua), B = strandPos(p + 1u, ub, dz, wob, ph) + partShift(p + 1u, ub);
