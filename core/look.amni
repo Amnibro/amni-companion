@@ -595,26 +595,24 @@ fn lk_pick(name const byte[:]) int {
 fn look_setup(asset int) {
 	if lk_tex.len == 0 {
 		for kind in 8 {
-			if kind == 0 {
-				lk_tex.push(lk_make_tile(0, 512, 2.2));
-			} else {
-				let bump f32 = match kind {
-					1 => 2.4,
-					2 => 2.4,
-					3 => 2.0,
-					4 => 2.0,
-					5 => 1.1,
-					6 => 2.0,
-					_ => 2.4,
-				};
-				lk_tex.push(lk_make_tile(kind, 128, bump));
-			}
+			let n = if kind == 0 { 512 } else { 128 };
+			let bump f32 = match kind {
+				0 => 2.2,
+				1 => 2.4,
+				2 => 2.4,
+				3 => 2.0,
+				4 => 2.0,
+				5 => 1.1,
+				6 => 2.0,
+				_ => 2.4,
+			};
+			lk_tex.push(lk_make_tile(kind, n, bump));
 		}
 	}
 	lk_skin_geo(asset);
 	gltf::dome_normals(asset, "eyes");
-	let mats = gltf::assets[asset].materials;
-	for m in mats.first..mats.first + mats.count {
+	let ms = gltf::assets[asset].materials;
+	for m in ms.first..ms.first + ms.count {
 		let name = gltf::text_of(gltf::materials[m].name);
 		let k = lk_pick(name);
 		var x = gltf::materials[m];
@@ -625,7 +623,8 @@ fn look_setup(asset int) {
 				x.shade_b = gltf::shade_preset(1, 1);
 				x.shade_c = gltf::shade_preset(1, 2);
 			}
-			var dt = gltf::TexRef { lk_tex[0], 0, .. };
+			var dt = gltf::TexRef { -1, 0 };
+			dt.texture = lk_tex[0];
 			dt.m = lk_scale(asset, m, 0.2);
 			x.detail = dt;
 			if name == "skin" { x.roughness = 0.45; }
@@ -636,25 +635,31 @@ fn look_setup(asset int) {
 			x.shade_a.x = x.shade_a.x * 0.7;
 			x.shade_a.y = x.shade_a.y * 0.7;
 			x.shade_a.z = x.shade_a.z * 0.7;
-		} else if name == "teeth" {
+		}
+		if name == "teeth" {
 			x.shading = 1;
 			x.shade_a = float4 { 0.0007, 0.0005, 0.0004, 0.0 };
 			x.shade_b = float4 { 0.0, 0.0, 0.3, 0.5 };
 			x.shade_c = float4 { 0.04, 0.0, 0.0, 0.3 };
-		} else if name == "tongue" || name == "mouth" {
+		}
+		if name == "tongue" || name == "mouth" {
 			x.shading = 1;
 			x.shade_a = float4 { 0.0015, 0.0007, 0.0003, 0.0 };
 			x.shade_b = float4 { 0.0, 0.0, 0.3, 0.5 };
 			x.shade_c = float4 { 0.028, 0.0, 0.0, 0.3 };
-		} else if name == "eyes" {
+		}
+		if name == "eyes" {
 			let c, r = lk_iris(x.base_tex.texture);
 			let e = gltf::shade_preset(2, 2);
 			x.shading = 2;
 			x.shade_a = c;
 			x.shade_b = gltf::shade_preset(2, 1);
 			x.shade_c = float4 { r, e.y, e.z, e.w };
-			x.roughness = 1.0;
-		} else if k >= 1 {
+			if !x.ext { x.roughness = 1.0; }
+		}
+		if k >= 1 {
+			x.shading = 3;
+			x.normal_tex = gltf::TexRef { -1, 0 };
 			let t f32 = match k {
 				1 => 0.0125,
 				2 => 0.022,
@@ -664,6 +669,10 @@ fn look_setup(asset int) {
 				6 => 0.017,
 				_ => 0.009,
 			};
+			var dt = gltf::TexRef { -1, 0 };
+			dt.texture = lk_tex[k];
+			dt.m = lk_scale(asset, m, t);
+			x.detail = dt;
 			let s f32 = match k {
 				1 => 0.9,
 				2 => 1.0,
@@ -673,6 +682,7 @@ fn look_setup(asset int) {
 				6 => 0.8,
 				_ => 0.8,
 			};
+			x.shade_b = float4 { s, 0.85, 0.0, 0.0 };
 			let w f32 = match k {
 				1 => 0.25,
 				2 => 0.25,
@@ -700,12 +710,6 @@ fn look_setup(asset int) {
 				6 => 0.8,
 				_ => 0.7,
 			};
-			x.shading = 3;
-			x.normal_tex = gltf::TexRef { -1, 0 };
-			var dt = gltf::TexRef { lk_tex[k], 0, .. };
-			dt.m = lk_scale(asset, m, t);
-			x.detail = dt;
-			x.shade_b = float4 { s, 0.85, 0.0, 0.0 };
 			x.shade_a = float4 { w, f, sp, 0.0 };
 			if x.sheen.x < 0.001 && x.sheen.y < 0.001 && x.sheen.z < 0.001 {
 				x.sheen = float3 { 0.08 * x.base.x + 0.03, 0.08 * x.base.y + 0.03, 0.08 * x.base.z + 0.03 };
