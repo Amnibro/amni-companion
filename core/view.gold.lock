@@ -15,7 +15,7 @@ import cloth;
 import clips;
 import look;
 import feature;
-=== 0948f7b85ab9b809
+=== -4ac8cabb4c019bfc
 var P f32[10240];
 var C f32[16];
 var N byte[16384];
@@ -41,7 +41,14 @@ var sw = 0;
 var sh = 0;
 var springs = 0;
 var cloth = 0;
-var last_t = -1.0;
+var last_t real = -1.0;
+var rs_k = 0;
+var rs_n = 0;
+var rs_sum real = 0.0;
+var rs_hold = 600;
+var rs_wait = 600;
+var rs_up = 100000;
+var rs_skip = 90;
 === 7953a64120c37d49
 extern fn hv_f32(id i32, xs f32[:]);
 extern fn hv_i32(id i32, xs i32[:]);
@@ -345,13 +352,14 @@ fn relight() {
 		s3d::lights[i].axis = turn(lit_ax[i]);
 	}
 }
-=== -299b52e9a30ce716
+=== 61867cae4e7653c9
 export fn he_frame(t real) {
 	if !gfx::frame() { return; }
 	for k in nb {
-		if B[k] < 0 { continue; }
-		let o = k * 10;
-		s3d::set_node(item, B[k], float3 { P[o], P[o + 1], P[o + 2] }, linalg::Quat { P[o + 3], P[o + 4], P[o + 5], P[o + 6] }, float3 { P[o + 7], P[o + 8], P[o + 9] });
+		if B[k] >= 0 {
+			let o = k * 10;
+			s3d::set_node(item, B[k], float3 { P[o], P[o + 1], P[o + 2] }, linalg::Quat { P[o + 3], P[o + 4], P[o + 5], P[o + 6] }, float3 { P[o + 7], P[o + 8], P[o + 9] });
+		}
 	}
 	place_m();
 	s3d::place(pad_item, gfx::translate(float3 { C[8], C[9] + 0.002, C[10] }));
@@ -366,18 +374,63 @@ export fn he_frame(t real) {
 			gltf::materials[teeth_mat].roughness = C[13];
 		}
 	}
-	let dt = if last_t < 0.0 { 0.0 } else { min(0.05, (t - last_t) / 1000.0) };
+	let dt real = if last_t < 0.0 { 0.0 } else { min(0.05, (t - last_t) / 1000.0) };
 	if springs > 0 || cloth > 0 || hg >= 0 {
 		s3d::pose(item);
 		if springs > 0 { spring_step(dt as f32); }
 		if cloth > 0 { cloth_step(dt as f32); }
 	}
+	let gap real = if last_t < 0.0 { -1.0 } else { t - last_t };
 	last_t = t;
+	let scales f32[4] = [1.0, 0.85, 0.7, 0.6];
+	if C[15] > 0.0 {
+		var best = 0;
+		var bd = abs(scales[0] - C[15]);
+		for i in 1..4 {
+			let d = abs(scales[i] - C[15]);
+			if d < bd {
+				bd = d;
+				best = i;
+			}
+		}
+		rs_k = best;
+	} else if gap > 0.0 && gap < 200.0 {
+		if rs_skip > 0 {
+			rs_skip -= 1;
+		} else {
+			rs_sum += gap;
+			rs_n += 1;
+			rs_up += 1;
+			if rs_n >= 30 {
+				let avg = rs_sum / 30.0;
+				rs_sum = 0.0;
+				rs_n = 0;
+				if avg > 19.0 && rs_k < 3 {
+					if rs_up < 240 {
+						rs_wait = min(rs_wait * 2, 9600);
+					}
+					rs_k += 1;
+					rs_hold = rs_wait;
+				} else if avg < 17.5 {
+					rs_hold -= 30;
+					if rs_hold <= 0 && rs_k > 0 {
+						rs_k -= 1;
+						rs_hold = rs_wait;
+						rs_up = 0;
+					}
+				}
+			}
+		}
+	}
+	s3d::rect_detail = if rs_k > 0 { 1 } else { 2 };
 	let z = gfx::screen_size();
-	if z.x as int != sw || z.y as int != sh {
+	let sc = scales[rs_k];
+	let rw = max(16, (z.x * sc + 0.5) as int);
+	let rh = max(16, (z.y * sc + 0.5) as int);
+	if z.x as int != sw || z.y as int != sh || rw != s3d::width || rh != s3d::height {
 		sw = z.x as int;
 		sh = z.y as int;
-		s3d::init(sw, sh);
+		s3d::init(rw, rh, sw, sh);
 	}
 	if s3d::render_begin() {
 		if hg >= 0 {
