@@ -6,6 +6,8 @@ import gfx.gltf;
 import gfx.scene3d;
 import dictionary;
 var fe_hair float4 = float4 { -1.0, -1.0, -1.0, 1.0 };
+var fe_do byte[>..];
+var fe_shade byte[>..];
 var fe_c0 float3;
 var fe_c1 float3;
 var fe_r f32 = 0.0;
@@ -1142,119 +1144,122 @@ fn fe_amounts(rg f32[>..]&, a f32, b f32) {
 		rg[i * 6 + 5] *= b;
 	}
 }
-fn fe_num(nums const real[:], oks const int[:], k int, d real) real {
-	if k < nums.len && oks[k] == 1 { nums[k] } else { d }
+fn fe_arg(pv const real[:], pk const bool[:], k int, d real) real {
+	if k < pv.len && pk[k] { return pv[k]; }
+	d
 }
 fn feature_setup(path const byte[:], asset int) bool {
-	if !file_exists(path) { return false; }
 	var data byte[>..] = [];
-	read_file(path, data);
-	var have = false;
+	if !read_file(path, data) { return false; }
+	var tried = false;
 	var found = false;
-	fn eyes() bool {
-		if !have {
-			have = true;
+	fn need() bool {
+		if !tried {
+			tried = true;
 			found = fe_eyes(asset);
 		}
 		found
 	}
 	fn reserve() {
-		if eyes() && fe_at.len == 0 { fe_reserve(asset); }
-	}
-	fn frame() bool {
-		if !eyes() { return false; }
-		fe_arc(asset, fe_c0, fe_arc0);
-		fe_arc(asset, fe_c1, fe_arc1);
-		fe_arc0.len >= 4 && fe_arc1.len >= 4
+		if fe_at.len == 0 { fe_reserve(asset); }
 	}
 	let lines = split(data, '\n');
 	for raw in lines {
 		let line = trim(raw);
-		if line.len == 0 { continue; }
-		if line[0] == '#' { continue; }
-		var cmd byte[>..] = [];
-		var mesh byte[>..] = [];
-		var nums real[>..] = [];
-		var oks int[>..] = [];
+		if line.len == 0 || line[0] == '#' { continue; }
+		var kw byte[>..] = [];
+		var name byte[>..] = [];
+		var rest byte[>..] = [];
+		var pv real[8] = [0.0; 8];
+		var pk bool[8] = [false; 8];
 		for w, i in words(line) {
-			if i == 0 {
-				cmd.append(w);
-			} else {
-				if i == 1 { mesh.append(w); }
-				let v, ok = parse_flt(w);
-				nums.push(v);
-				oks.push(if ok { 1 } else { 0 });
+			if i == 0 { kw.append(w); }
+			if i == 1 { name.append(w); }
+			if i >= 1 {
+				if i > 1 { rest.push(' '); }
+				rest.append(w);
+				if i - 1 < 8 {
+					let v, ok = parse_flt(w);
+					if ok {
+						pv[i - 1] = v;
+						pk[i - 1] = true;
+					}
+				}
 			}
 		}
-		if cmd.len == 0 { continue; }
-		if cmd == "liner" {
-			let st = fe_num(nums, oks, 0, 1.0);
-			let w0 = fe_num(nums, oks, 1, 0.05);
-			let w1 = fe_num(nums, oks, 2, 0.185);
-			let wing = fe_num(nums, oks, 3, 0.3);
-			let ang = fe_num(nums, oks, 4, 22.0);
-			let lift = fe_num(nums, oks, 5, 0.075);
-			let dark = fe_num(nums, oks, 6, 18.0);
-			if eyes() {
+		if kw == "liner" {
+			let st = fe_arg(pv, pk, 0, 1.0);
+			let w0 = fe_arg(pv, pk, 1, 0.05);
+			let w1 = fe_arg(pv, pk, 2, 0.185);
+			let wing = fe_arg(pv, pk, 3, 0.3);
+			let ang = fe_arg(pv, pk, 4, 22.0);
+			let lift = fe_arg(pv, pk, 5, 0.075);
+			let dark = fe_arg(pv, pk, 6, 18.0);
+			if need() {
 				reserve();
-				if frame() {
+				if fe_frame(asset) {
 					fe_liner(asset, w0 as f32, w1 as f32, wing as f32, ang as f32, lift as f32, dark as f32, st as f32);
 				}
 			}
-		} else if cmd == "lids" {
-			let crease = fe_num(nums, oks, 0, 1.0);
-			let edge = fe_num(nums, oks, 1, 1.0);
-			let passes = fe_num(nums, oks, 2, 25.0);
-			let fill = fe_num(nums, oks, 3, 1.0);
-			if eyes() {
+		} else if kw == "lids" {
+			let crease = fe_arg(pv, pk, 0, 1.0);
+			let edge = fe_arg(pv, pk, 1, 1.0);
+			let passes = fe_arg(pv, pk, 2, 25.0);
+			let fill = fe_arg(pv, pk, 3, 1.0);
+			if need() {
 				var rg f32[>..] = [];
 				fe_regions("lids", rg);
 				fe_amounts(rg, crease as f32, edge as f32);
 				let ps = fe_prims(asset, false);
 				fe_soften(asset, ps, rg, passes as int, fill as f32);
 			}
-		} else if cmd == "clean" {
-			let amt = fe_num(nums, oks, 0, 1.0);
-			let rad = fe_num(nums, oks, 1, 7.0);
-			let keep = fe_num(nums, oks, 2, 0.85);
-			if eyes() {
+		} else if kw == "clean" {
+			let amt = fe_arg(pv, pk, 0, 1.0);
+			let rad = fe_arg(pv, pk, 1, 7.0);
+			let keep = fe_arg(pv, pk, 2, 0.85);
+			if need() {
 				reserve();
-				if frame() {
+				if fe_frame(asset) {
 					var rg f32[>..] = [];
 					fe_regions("lids", rg);
 					fe_clean(asset, rg, amt as f32, rad as int, keep as f32);
 				}
 			}
-		} else if cmd == "nose" {
-			let amt = fe_num(nums, oks, 0, 1.0);
-			let passes = fe_num(nums, oks, 1, 25.0);
-			let fill = fe_num(nums, oks, 2, 1.0);
-			if eyes() {
+		} else if kw == "nose" {
+			let amt = fe_arg(pv, pk, 0, 1.0);
+			let passes = fe_arg(pv, pk, 1, 25.0);
+			let fill = fe_arg(pv, pk, 2, 1.0);
+			if need() {
 				var rg f32[>..] = [];
 				fe_regions("nose", rg);
 				fe_amounts(rg, amt as f32, 0.0);
 				let ps = fe_prims(asset, false);
 				fe_soften(asset, ps, rg, passes as int, fill as f32);
 			}
-		} else if cmd == "smooth" {
-			let passes = fe_num(nums, oks, 1, 20.0);
-			var rg f32[>..] = [];
-			fe_row(rg, 0.0, 0.0, 1e5, 1e5, 0.0, 1.0);
-			let ps = fe_mesh_prims(asset, mesh);
+		} else if kw == "smooth" {
+			let passes = fe_arg(pv, pk, 1, 20.0);
+			let rg f32[6] = [0.0, 0.0, 1e5, 1e5, 0.0, 1.0];
+			let ps = fe_mesh_prims(asset, name);
 			fe_soften(asset, ps, rg, passes as int, 0.0);
-		} else if cmd == "hide" {
-			fe_hide(asset, mesh);
-		} else if cmd == "tint" {
-			let r = fe_num(nums, oks, 1, 1.0);
-			let g = fe_num(nums, oks, 2, 1.0);
-			let b = fe_num(nums, oks, 3, 1.0);
-			fe_tint(asset, mesh, float3 { r as f32, g as f32, b as f32 });
-		} else if cmd == "hair" {
-			let r = fe_num(nums, oks, 0, -1.0);
-			let g = fe_num(nums, oks, 1, -1.0);
-			let b = fe_num(nums, oks, 2, -1.0);
-			let gain = fe_num(nums, oks, 3, 1.0);
+		} else if kw == "hide" {
+			fe_hide(asset, name);
+		} else if kw == "tint" {
+			let r = fe_arg(pv, pk, 1, 1.0);
+			let g = fe_arg(pv, pk, 2, 1.0);
+			let b = fe_arg(pv, pk, 3, 1.0);
+			fe_tint(asset, name, float3 { r as f32, g as f32, b as f32 });
+		} else if kw == "hair" {
+			let r = fe_arg(pv, pk, 0, -1.0);
+			let g = fe_arg(pv, pk, 1, -1.0);
+			let b = fe_arg(pv, pk, 2, -1.0);
+			let gain = fe_arg(pv, pk, 3, 1.0);
 			fe_hair = float4 { r as f32, g as f32, b as f32, gain as f32 };
+		} else if kw == "do" {
+			fe_do.clear();
+			fe_do.append(rest);
+		} else if kw == "shade" {
+			fe_shade.clear();
+			fe_shade.append(rest);
 		}
 	}
 	return true;
