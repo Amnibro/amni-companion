@@ -1285,7 +1285,7 @@ fn fe_amounts(rg f32[>..]&, a f32, b f32) {
 		rg[i * 6 + 5] *= b;
 	}
 }
-=== 3363cabc56a6148d
+=== -7531626cf175c971
 fn fe_num(ws, idx int, def f32) f32 {
 	if idx < ws.len {
 		let v, ok = parse_flt(ws[idx]);
@@ -1397,6 +1397,13 @@ fn feature_setup(path const byte[:], asset int) bool {
 			if fe_at.len == 0 { fe_reserve(asset); }
 			let sd = hairdo::tone(fe_shade[..]);
 			fe_hairline(asset, float3 { sd.r, sd.g, sd.b });
+		}
+	} else if fe_hair.x >= 0.0 {
+		need_eyes();
+		if fe_r > 0.0 {
+			if fe_at.len == 0 { fe_reserve(asset); }
+			let k = 0.5 * fe_hair.w;
+			fe_hairline(asset, float3 { fe_hair.x * k, fe_hair.y * k, fe_hair.z * k });
 		}
 	}
 	return true;

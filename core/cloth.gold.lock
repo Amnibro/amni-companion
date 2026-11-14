@@ -156,7 +156,7 @@ fn mesh_verts(mesh int, out int[>..]&) {
 		for v in pr.vcount { out.push(pr.vfirst + v); }
 	}
 }
-=== -6125f7e33a1713e2
+=== -133d3169503d2e07
 fn hv_add(v int) int {
 	for k in h_v.len {
 		if h_v[k] == v { return k; }
@@ -398,6 +398,12 @@ fn setup_group(asset int, sim int[:], sim_class int[:], still int[:]) {
 	if sn >= 0 { mesh_verts(gltf::nodes[sn].mesh, sv); }
 	for k in still.len { mesh_verts(gltf::nodes[still[k]].mesh, stv); }
 	var pmd f32[>..] = [];
+	var ptop f32 = -1.0e30;
+	var plow f32 = 1.0e30;
+	for i in m {
+		ptop = max(ptop, cpos[i].y);
+		plow = min(plow, cpos[i].y);
+	}
 	var hv0 int[>..] = [];
 	var hv1 int[>..] = [];
 	for i in m {
@@ -418,7 +424,7 @@ fn setup_group(asset int, sim int[:], sim_class int[:], still int[:]) {
 			if d < gap { gap = d; }
 		}
 		let cl = cls[i];
-		pmd.push(min(f_swing[cl], f_gain[cl] * max(gap - 0.01, 0.0)));
+		pmd.push(if fabrics[cl].name == "loose" && c.y >= ptop - 0.1 * (ptop - plow) { 0.0 } else { min(f_swing[cl], f_gain[cl] * max(gap - 0.01, 0.0)) });
 		var h0 = -1;
 		var h1 = -1;
 		if ns >= 0 {

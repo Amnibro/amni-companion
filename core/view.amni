@@ -200,12 +200,13 @@ fn main() {
 			hair::grooms[hg].phys.bend = 0.25;
 			hair::follow(hg, item, head);
 		}
-		if fe_do.len > 0 || fe_shade.len > 0 {
+		if fe_do.len > 0 || fe_shade.len > 0 || fe_hair.x >= 0.0 {
 			let kc = hair::grooms[hg].look.color;
+			let kg = if fe_do.len == 0 && fe_shade.len == 0 { 0.5 * hair::grooms[hg].look.gain } else { 0.5 };
 			for m in mfirst..(mfirst + mcount) {
 				if gltf::text_of(gltf::materials[m].name) == "scalp" {
 					gltf::materials[m].base_tex = gltf::TexRef { -1, 0 };
-					gltf::materials[m].base = float4 { kc.x * 0.5, kc.y * 0.5, kc.z * 0.5, 1.0 };
+					gltf::materials[m].base = float4 { kc.x * kg, kc.y * kg, kc.z * kg, 1.0 };
 				}
 			}
 		}
