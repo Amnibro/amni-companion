@@ -103,7 +103,7 @@ class Avatar{
     this.blinkT-=dt;const bl=this.blinkT<0?Math.sin(Math.PI*Math.min(1,-this.blinkT/.16)):0;this.blinkT<-.16&&(this.blinkT=2+Math.random()*3.5)
     const mouth=this.talk?Math.max(0,.35+.35*Math.sin(this.time*17)+.2*Math.sin(this.time*29)):0
     for(const k of['smile','surprised','sad','wink'])this.face[k]=(this.face[k]||0)+((this.faceT[k]||0)-(this.face[k]||0))*Math.min(1,dt*8),this.setMorph(k,this.face[k])
-    this.setMorph('open',mouth);this.setMorph('blink',Math.max(bl,this.lid||0))
+    this.setMorph('open',mouth);this.setMorph('blink',Math.max(bl,this.face.wink>.5?0:0))
     const ak=this.ak;if(ak.jawOpen){const c=this.talk&&this.vis?.findLast(v=>v.t<=this.time),tg=c&&this.time<c.e?VIS[c.s]:{};this.vw=this.vw||{};for(const k of VK){this.vw[k]=(this.vw[k]||0)+((tg[k]||0)-(this.vw[k]||0))*Math.min(1,dt*22);this.setA(k,Math.min(1,(k.startsWith('mouthSmile')?this.face.smile||0:0)+this.vw[k]+(k==='jawOpen'&&!this.vis?.length?mouth:0)))}}
     if(ak.eyeLookUpLeft){this.sacT=(this.sacT??1)-dt;if(this.sacT<0){this.sacT=.4+Math.random()*2.2;this.sac=[(Math.random()-.5)*.5,(Math.random()-.5)*.32]}const e=this.eye=this.eye||[0,0],s=this.sac||[0,0];e[0]+=(s[0]-e[0])*Math.min(1,dt*35);e[1]+=(s[1]-e[1])*Math.min(1,dt*35);const[y,p]=e;this.setA('eyeLookOutLeft',Math.max(0,y));this.setA('eyeLookInLeft',Math.max(0,-y));this.setA('eyeLookInRight',Math.max(0,y));this.setA('eyeLookOutRight',Math.max(0,-y));for(const sd of['Left','Right']){this.setA('eyeLookUp'+sd,Math.max(0,p));this.setA('eyeLookDown'+sd,Math.max(0,-p))}p<0&&!bl&&this.setMorph('blink',-p*.35)}
     this.teeth()
