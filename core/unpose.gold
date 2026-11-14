@@ -255,6 +255,7 @@ fn up_head(asset int, src int, lo f32, hi f32, band const f32[:]) int {
 	}
 	for r in band.len / 12 {
 		let o = r * 12;
+		if band[o] > 1.5 { continue; }
 		let back = band[o] > 0.5;
 		let k = float3 { band[o + 1], band[o + 2], band[o + 3] };
 		let wide = band[o + 4] < lo - 0.03;
@@ -415,9 +416,106 @@ fn retone(asset int, src int, name const byte[:]) int {
 	print("unpose: ", name, " tone ", (sa[0] / sb[0]) as f32, " ", (sa[1] / sb[1]) as f32, " ", (sa[2] / sb[2]) as f32, " painted ", cnt, " of ", n);
 	done
 }
+fn up_tone(asset int, name const byte[:], band const f32[:]) int {
+	let mi = up_mesh(asset, name);
+	let ia = up_image(asset, name);
+	var any = false;
+	let top = if name == "skin" { 3.5 } else { 2.5 };
+	for r in band.len / 12 { if band[r * 12] > 1.5 && band[r * 12] < top { any = true; } }
+	if mi < 0 || ia < 0 || !any { return 0; }
+	let w = gltf::images[ia].width;
+	let h = gltf::images[ia].height;
+	let pf = gltf::images[ia].pixels.first;
+	var f f32[>..] = [];
+	var hit byte[>..] = [];
+	f.resize(w * h * 3, 1.0);
+	hit.resize(w * h, 0);
+	for j in gltf::meshes[mi].prims.count {
+		let pr = gltf::prims[gltf::meshes[mi].prims.first + j];
+		for t in pr.icount / 3 {
+			let i0 = pr.vfirst + gltf::indices[pr.ifirst + t * 3] as int;
+			let i1 = pr.vfirst + gltf::indices[pr.ifirst + t * 3 + 1] as int;
+			let i2 = pr.vfirst + gltf::indices[pr.ifirst + t * 3 + 2] as int;
+			let a = up_vp(i0, gltf::AT_POS);
+			let b = up_vp(i1, gltf::AT_POS);
+			let c = up_vp(i2, gltf::AT_POS);
+			var near = false;
+			for r in band.len / 12 { if band[r * 12] > 1.5 && band[r * 12] < top && up_band(a, band, r * 12) + up_band(b, band, r * 12) + up_band(c, band, r * 12) > 0.0 { near = true; } }
+			if !near { continue; }
+			let ua = up_vp(i0, gltf::AT_UV0);
+			let ub = up_vp(i1, gltf::AT_UV0);
+			let uc = up_vp(i2, gltf::AT_UV0);
+			let ax = ua.x * w as f32;
+			let ay = ua.y * h as f32;
+			let bx = ub.x * w as f32;
+			let by = ub.y * h as f32;
+			let cx = uc.x * w as f32;
+			let cy = uc.y * h as f32;
+			let ar = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+			if abs(ar) < 1e-9 { continue; }
+			let y0 = clamp(floor(min(ay, min(by, cy)) - 0.5), 0.0, (h - 1) as f32) as int;
+			let y1 = clamp(ceil(max(ay, max(by, cy)) - 0.5), 0.0, (h - 1) as f32) as int;
+			let x0 = clamp(floor(min(ax, min(bx, cx)) - 0.5), 0.0, (w - 1) as f32) as int;
+			let x1 = clamp(ceil(max(ax, max(bx, cx)) - 0.5), 0.0, (w - 1) as f32) as int;
+			for y in y0..y1 + 1 {
+				for x in x0..x1 + 1 {
+					let px = x as f32 + 0.5;
+					let py = y as f32 + 0.5;
+					let w0 = ((bx - px) * (cy - py) - (by - py) * (cx - px)) / ar;
+					let w1 = ((cx - px) * (ay - py) - (cy - py) * (ax - px)) / ar;
+					let w2 = 1.0 - w0 - w1;
+					if w0 < -0.03 || w1 < -0.03 || w2 < -0.03 { continue; }
+					let p = float3 { a.x * w0 + b.x * w1 + c.x * w2, a.y * w0 + b.y * w1 + c.y * w2, a.z * w0 + b.z * w1 + c.z * w2 };
+					let i = y * w + x;
+					for k in 3 { f[i * 3 + k] = 1.0; }
+					for r in band.len / 12 {
+						let o = r * 12;
+						if band[o] > 1.5 && band[o] < top {
+							let s = up_band(p, band, o);
+							for k in 3 { f[i * 3 + k] *= 1.0 + (band[o + 1 + k] - 1.0) * s; }
+						}
+					}
+					hit[i] = 1;
+				}
+			}
+		}
+	}
+	for k in 4 {
+		for y in 1..h - 1 {
+			for x in 1..w - 1 {
+				let i = y * w + x;
+				if hit[i] != 0 { continue; }
+				var m = 0;
+				var s float3 = float3 { 0.0, 0.0, 0.0 };
+				for d in 4 {
+					let q = i + (if d == 0 { -1 } else if d == 1 { 1 } else if d == 2 { -w } else { w });
+					if hit[q] != 0 && hit[q] as int <= k + 1 { m += 1; s = float3 { s.x + f[q * 3], s.y + f[q * 3 + 1], s.z + f[q * 3 + 2] }; }
+				}
+				if m > 0 {
+					f[i * 3] = s.x / m as f32;
+					f[i * 3 + 1] = s.y / m as f32;
+					f[i * 3 + 2] = s.z / m as f32;
+					hit[i] = (k + 2) as byte;
+				}
+			}
+		}
+	}
+	var done = 0;
+	for i in w * h {
+		if hit[i] != 0 && (f[i * 3] != 1.0 || f[i * 3 + 1] != 1.0 || f[i * 3 + 2] != 1.0) {
+			for k in 3 { gltf::pixels[pf + i * 4 + k] = clamp(gltf::pixels[pf + i * 4 + k] as f32 * f[i * 3 + k] + 0.5, 0.0, 255.0) as int as byte; }
+			done += 1;
+		}
+	}
+	if done > 0 {
+		if bk_changed.len < gltf::images.len { bk_changed.resize(gltf::images.len, 0); }
+		bk_changed[ia] = 1;
+	}
+	done
+}
 fn main() {
 	let a = args();
-	if a.len < 8 { print("usage: unpose <baked.glb> <source.glb> <out.glb> <left degrees> <right degrees> <fade top y, 0 skips body and tone> <fade bottom y> [head <fade bottom y> <fade top y> [push <dx> <dy> <dz> | back <fx> <fy> <fz>, then <y0> <y1> <y2> <y3> <x0> <x1> <z0> <z1>]...]"); return; }
+	if a.len < 8 { print("usage: unpose <baked.glb> <source.glb> <out.glb> <left degrees> <right degrees> <fade top y, 0 skips body and tone> <fade bottom y> [head <fade bottom y> <fade top y>] [push <dx> <dy> <dz> | back <fx> <fy> <fz> | tone <r> <g> <b> | neck <r> <g> <b>, then <y0> <y1> <y2> <y3> <x0> <x1> <z0> <z1>]..."); return; }
 	let asset = gltf::load(a[1]);
 	if asset < 0 { print("unpose: ", gltf::error()); return; }
 	let src = gltf::load(a[2]);
@@ -427,9 +525,11 @@ fn main() {
 	let body = if top > 0.0 { rebody(asset, src, top, up_num(a[7])) } else { 0 };
 	let tone = if top > 0.0 { retone(asset, src, "skin") } else { 0 };
 	var bd f32[>..] = [];
-	for i in 11..a.len { bd.push(if a[i] == "push" { 0.0 } else if a[i] == "back" { 1.0 } else { up_num(a[i]) }); }
-	let head = if a.len > 10 && a[8] == "head" { up_head(asset, src, up_num(a[9]), up_num(a[10]), bd[..]) } else { 0 };
+	let at = if a.len > 10 && a[8] == "head" { 11 } else { 8 };
+	for i in at..a.len { bd.push(if a[i] == "push" { 0.0 } else if a[i] == "back" { 1.0 } else if a[i] == "tone" { 2.0 } else if a[i] == "neck" { 3.0 } else { up_num(a[i]) }); }
+	let head = if at > 8 { up_head(asset, src, up_num(a[9]), up_num(a[10]), bd[..]) } else { 0 };
+	let paint = up_tone(asset, "face", bd[..]) + up_tone(asset, "skin", bd[..]);
 	bk_shape = true;
-	print("unpose: arms ", arms, " vertices, body ", body, " vertices, tone ", tone, " texels, head ", head, " vertices, saved ", bake_glb(asset, a[1], a[3], ""));
+	print("unpose: arms ", arms, " vertices, body ", body, " vertices, tone ", tone, " texels, head ", head, " vertices, paint ", paint, " texels, saved ", bake_glb(asset, a[1], a[3], ""));
 }
 ```
