@@ -8,6 +8,10 @@ import bake;
 var up_dj float3[>..];
 var up_jk int[>..];
 var up_pv = float3 { 0.0, 0.0, 0.0 };
+var up_or int[>..];
+var up_oa int[>..];
+var up_ur int[>..];
+var up_ua int[>..];
 fn up_under(n int, a int) bool {
 	var k = n;
 	while k >= 0 { if k == a { return true; } k = gltf::nodes[k].parent; }
@@ -188,7 +192,11 @@ fn up_peak(t const f32[:], ab int, yb int, wa int, wy int) f32 {
 	m
 }
 fn up_yoke(asset int, band const f32[:], o int, mv bool[>..]&) int {
-	let ms = up_mesh(asset, "skirt");
+	var cover = -1;
+	var only = -1;
+	for q in up_ur.len { if up_ur[q] == o / 12 { cover = up_ua[q]; } }
+	for q in up_or.len { if up_or[q] == o / 12 { only = up_oa[q]; } }
+	let ms = if cover >= 0 { up_mesh(asset, args()[cover]) } else { up_mesh(asset, "skirt") };
 	if ms < 0 { return 0; }
 	var e f32[>..] = [];
 	var u f32[>..] = [];
@@ -228,11 +236,36 @@ fn up_yoke(asset int, band const f32[:], o int, mv bool[>..]&) int {
 			let ab, yb, r = up_polar(p, cz);
 			if w <= 0.0 || yb < 0 || yb >= 100 || r <= 0.0 { continue; }
 			let un = up_peak(u[..], ab, yb, 6, 5);
-			let rn = max(r + max(0.0, up_peak(e[..], ab, yb, wa, 2) - r) * w * up_gate(p.y, band[o + 3] - 0.04, band[o + 3]), r + max(0.0, (if un > 0.0 { un + band[o + 1] } else { 0.0 }) - r) * w);
+			let rn = max(r + max(0.0, up_peak(e[..], ab, yb, wa, 1) - r) * w * up_gate(p.y, band[o + 3] - 0.04, band[o + 3]), r + max(0.0, (if un > 0.0 && band[o + 1] > 0.0 { un + band[o + 1] } else { 0.0 }) - r) * w);
 			if rn <= r { continue; }
 			up_set(g, gltf::AT_POS, float3 { p.x * rn / r, p.y, cz + (p.z - cz) * rn / r });
 			mv[g] = true;
 			n += 1;
+		}
+	}
+	if band[o + 1] >= 0.0 { return n; }
+	e.clear();
+	e.resize(18000, 0.0);
+	for i in 2 * gltf::assets[asset].meshes.count {
+		let ma = gltf::assets[asset].meshes.first + i % gltf::assets[asset].meshes.count;
+		let nm = gltf::text_of(gltf::meshes[ma].name);
+		if (ma != ms && (nm == "belt" || nm == "buckle" || (only >= 0 && nm != args()[only]))) || (i < gltf::assets[asset].meshes.count) != (ma == ms) { continue; }
+		for j in gltf::meshes[ma].prims.count {
+			let pr = gltf::prims[gltf::meshes[ma].prims.first + j];
+			for v in pr.vcount {
+				let g = pr.vfirst + v;
+				let p = up_vp(g, gltf::AT_POS);
+				let ab, yb, r = up_polar(p, cz);
+				if yb < 0 || yb >= 100 || r <= 0.0 { continue; }
+				if ma == ms { e[yb * 180 + ab] = max(e[yb * 180 + ab], 1.0 - r); continue; }
+				let w = up_band(p, band, o);
+				let pk = up_peak(e[..], ab, yb, 6, 5);
+				let rn = if pk > 0.0 && w > 0.0 && r <= 0.26 { min(r, r + (1.0 - pk + band[o + 1] - r) * w) } else { r };
+				if rn >= r { continue; }
+				up_set(g, gltf::AT_POS, float3 { p.x * rn / r, p.y, cz + (p.z - cz) * rn / r });
+				mv[g] = true;
+				n += 1;
+			}
 		}
 	}
 	n
@@ -324,12 +357,15 @@ fn up_head(asset int, src int, lo f32, hi f32, band const f32[:]) int {
 		let back = band[o] > 0.5 && band[o] < 1.5;
 		let k = float3 { band[o + 1], band[o + 2], band[o + 3] };
 		let wide = band[o + 4] < lo - 0.03;
+		var only = -1;
+		for q in up_or.len { if up_or[q] == r { only = up_oa[q]; } }
 		gp.clear();
 		gc.clear();
 		for pass in 2 {
 			for i in gltf::assets[asset].meshes.count {
 				let ma = gltf::assets[asset].meshes.first + i;
 				let nm = gltf::text_of(gltf::meshes[ma].name);
+				if only >= 0 && nm != args()[only] { continue; }
 				let mb = up_mesh(src, nm);
 				let outer = back && up_same(ma, mb) && (nm == "face" || nm == "skin" || nm == "scalp");
 				if (if back { (pass == 1) == outer } else { pass == 1 || (wide && (nm == "hair" || nm == "braid_hair")) }) { continue; }
@@ -802,7 +838,7 @@ fn up_hair(src const byte[:], out const byte[:], k f32) int {
 }
 fn main() {
 	let a = args();
-	if a.len < 8 { print("usage: unpose <baked.glb> <source.glb> <out.glb> <left degrees> <right degrees> <fade top y, 0 skips body and tone> <fade bottom y> [head <fade bottom y> <fade top y>] [push <dx> <dy> <dz> | back <fx> <fy> <fz> | tone <r> <g> <b> | neck <r> <g> <b>, then <y0> <y1> <y2> <y3> <x0> <x1> <z0> <z1> | span <dx> <dy> <dz> <y0> <y1> <y2> <y3> <x0> <x1> <x2> <x3> | clean <r> <g> <b> <y0> <y1> <y2> <y3> <x0> <x1> <x2> <x3> | yoke <clearance over what the skirt covers> <pleat window degrees> <pleats start below y> <y0> <y1> <y2> <y3> <x0> <x1> <x2> <x3>]...; put rig <head scale> <shoulder shift out> <shoulder shift up> <hair in or -> <hair out> before head to resize the head and move the shoulders last"); return; }
+	if a.len < 8 { print("usage: unpose <baked.glb> <source.glb> <out.glb> <left degrees> <right degrees> <fade top y, 0 skips body and tone> <fade bottom y> [head <fade bottom y> <fade top y>] [only <mesh name, the next record moves just that mesh>] [under <mesh name, the next yoke tucks under that mesh instead of the skirt>] [push <dx> <dy> <dz> | back <fx> <fy> <fz> | tone <r> <g> <b> | neck <r> <g> <b>, then <y0> <y1> <y2> <y3> <x0> <x1> <z0> <z1> | span <dx> <dy> <dz> <y0> <y1> <y2> <y3> <x0> <x1> <x2> <x3> | clean <r> <g> <b> <y0> <y1> <y2> <y3> <x0> <x1> <x2> <x3> | yoke <clearance over what the skirt covers> <pleat window degrees> <pleats start below y> <y0> <y1> <y2> <y3> <x0> <x1> <x2> <x3>]...; put rig <head scale> <shoulder shift out> <shoulder shift up> <hair in or -> <hair out> before head to resize the head and move the shoulders last"); return; }
 	let asset = gltf::load(a[1]);
 	if asset < 0 { print("unpose: ", gltf::error()); return; }
 	let src = gltf::load(a[2]);
@@ -815,7 +851,8 @@ fn main() {
 	let rg = a.len > 13 && a[8] == "rig";
 	let a0 = if rg { 14 } else { 8 };
 	let at = if a.len > a0 + 2 && a[a0] == "head" { a0 + 3 } else { a0 };
-	for i in at..a.len { bd.push(if a[i] == "push" { 0.0 } else if a[i] == "back" { 1.0 } else if a[i] == "tone" { 2.0 } else if a[i] == "neck" { 3.0 } else if a[i] == "span" { 4.0 } else if a[i] == "clean" { 5.0 } else if a[i] == "yoke" { 6.0 } else { up_num(a[i]) }); }
+	var skip = 0;
+	for i in at..a.len { if skip > 0 { skip -= 1; } else if a[i] == "only" { up_or.push(bd.len / 12); up_oa.push(i + 1); skip = 1; } else if a[i] == "under" { up_ur.push(bd.len / 12); up_ua.push(i + 1); skip = 1; } else { bd.push(if a[i] == "push" { 0.0 } else if a[i] == "back" { 1.0 } else if a[i] == "tone" { 2.0 } else if a[i] == "neck" { 3.0 } else if a[i] == "span" { 4.0 } else if a[i] == "clean" { 5.0 } else if a[i] == "yoke" { 6.0 } else { up_num(a[i]) }); } }
 	let head = if at > a0 { up_head(asset, src, up_num(a[a0 + 1]), up_num(a[a0 + 2]), bd[..]) } else { 0 };
 	let paint = up_tone(asset, src, "face", bd[..]) + up_tone(asset, src, "skin", bd[..]);
 	let rig = if rg { up_rig(asset, up_num(a[9]), up_num(a[10]), up_num(a[11])) } else { 0 };
