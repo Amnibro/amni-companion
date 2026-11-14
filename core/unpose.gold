@@ -91,6 +91,22 @@ fn unpose_arms(asset int, dl f32, dr f32) int {
 	}
 	moved
 }
+fn up_idw(sp const float3[:], sd const float3[:], p float3, eps real) float3 {
+	var wx real = 0.0;
+	var wy real = 0.0;
+	var wz real = 0.0;
+	var wt real = 0.0;
+	for k in sp.len {
+		let e = sp[k] - p;
+		let d2 = (e.x * e.x + e.y * e.y + e.z * e.z) as real + eps;
+		let w = 1.0 / (d2 * d2 * d2 * d2);
+		wx += w * (sd[k].x as real);
+		wy += w * (sd[k].y as real);
+		wz += w * (sd[k].z as real);
+		wt += w;
+	}
+	if wt <= 0.0 { float3 { 0.0, 0.0, 0.0 } } else { float3 { linalg::f(wx / wt), linalg::f(wy / wt), linalg::f(wz / wt) } }
+}
 fn rebody(asset int, src int, hi f32, lo f32) int {
 	let sa = up_mesh(asset, "skin");
 	let sb = up_mesh(src, "skin");
@@ -127,22 +143,170 @@ fn rebody(asset int, src int, hi f32, lo f32) int {
 					moved += 1;
 				} else {
 					if p.y > hi + 0.05 { continue; }
-					var wx real = 0.0;
-					var wy real = 0.0;
-					var wz real = 0.0;
-					var wt real = 0.0;
-					for k in sp.len {
-						let e = sp[k] - p;
-						let d2 = (e.x * e.x + e.y * e.y + e.z * e.z + 0.000001) as real;
-						let w = 1.0 / (d2 * d2 * d2 * d2);
-						wx += w * (sd[k].x as real);
-						wy += w * (sd[k].y as real);
-						wz += w * (sd[k].z as real);
-						wt += w;
-					}
-					up_set(pa.vfirst + v, gltf::AT_POS, p + float3 { linalg::f(wx / wt), linalg::f(wy / wt), linalg::f(wz / wt) });
+					up_set(pa.vfirst + v, gltf::AT_POS, p + up_idw(sp[..], sd[..], p, 0.000001));
 					moved += 1;
 				}
+			}
+		}
+	}
+	moved
+}
+fn up_area(asset int, rep const int[:], nn float3[>..]&) {
+	nn.clear();
+	nn.resize(gltf::verts.len / gltf::VERTEX_FLOATS, float3 { 0.0, 0.0, 0.0 });
+	for i in gltf::assets[asset].meshes.count {
+		let m = gltf::meshes[gltf::assets[asset].meshes.first + i];
+		for j in m.prims.count {
+			let pr = gltf::prims[m.prims.first + j];
+			for t in pr.icount / 3 {
+				let a = pr.vfirst + gltf::indices[pr.ifirst + t * 3] as int;
+				let b = pr.vfirst + gltf::indices[pr.ifirst + t * 3 + 1] as int;
+				let c = pr.vfirst + gltf::indices[pr.ifirst + t * 3 + 2] as int;
+				let pa = up_vp(a, gltf::AT_POS);
+				let n = linalg::cross3(up_vp(b, gltf::AT_POS) - pa, up_vp(c, gltf::AT_POS) - pa) * 1000000.0;
+				nn[rep[a]] = nn[rep[a]] + n;
+				nn[rep[b]] = nn[rep[b]] + n;
+				nn[rep[c]] = nn[rep[c]] + n;
+			}
+		}
+	}
+}
+fn up_gate(v f32, a f32, b f32) f32 { if b > a { 1.0 - up_fade(v, b, a) } else { up_fade(v, a, b) } }
+fn up_band(p float3, b const f32[:], o int) f32 { up_gate(p.y, b[o + 4], b[o + 5]) * up_gate(p.y, b[o + 7], b[o + 6]) * up_gate(abs(p.x), b[o + 8], b[o + 9]) * up_gate(p.z, b[o + 10], b[o + 11]) }
+fn up_head(asset int, src int, lo f32, hi f32, band const f32[:]) int {
+	let nv = gltf::verts.len / gltf::VERTEX_FLOATS;
+	var rep int[>..] = [];
+	var mv bool[>..] = [];
+	for v in nv { rep.push(v); }
+	mv.resize(nv, false);
+	var rg int[>..] = [];
+	for i in gltf::assets[asset].meshes.count {
+		let m = gltf::meshes[gltf::assets[asset].meshes.first + i];
+		for j in m.prims.count {
+			let pr = gltf::prims[m.prims.first + j];
+			if pr.vcount > 12000 { continue; }
+			rg.clear();
+			for v in pr.vcount {
+				let p = up_vp(pr.vfirst + v, gltf::AT_POS);
+				if p.y > lo - 0.06 && abs(p.x) < 0.16 { rg.push(pr.vfirst + v); }
+			}
+			for x in rg.len {
+				let p = up_vp(rg[x], gltf::AT_POS);
+				for y in x {
+					let q = up_vp(rg[y], gltf::AT_POS);
+					if p.x == q.x && p.y == q.y && p.z == q.z { rep[rg[x]] = rep[rg[y]]; break; }
+				}
+			}
+		}
+	}
+	var nb float3[>..] = [];
+	up_area(asset, rep[..], nb);
+	var sp float3[>..] = [];
+	var sd float3[>..] = [];
+	var sv int[>..] = [];
+	var gp float3[>..] = [];
+	var gc float3[>..] = [];
+	var moved = 0;
+	for i in gltf::assets[asset].meshes.count {
+		let ma = gltf::assets[asset].meshes.first + i;
+		let nm = gltf::text_of(gltf::meshes[ma].name);
+		let mb = up_mesh(src, nm);
+		if !up_same(ma, mb) || nm == "hair" || nm == "braid_hair" { continue; }
+		let outer = nm == "face" || nm == "skin" || nm == "scalp";
+		sp.clear();
+		sd.clear();
+		sv.clear();
+		for j in gltf::meshes[ma].prims.count {
+			let pa = gltf::prims[gltf::meshes[ma].prims.first + j];
+			let pb = gltf::prims[gltf::meshes[mb].prims.first + j];
+			for v in pa.vcount {
+				let q = up_vp(pb.vfirst + v, gltf::AT_POS);
+				if q.y < lo - 0.03 || abs(q.x) > 0.13 { continue; }
+				sp.push(q);
+				sd.push(up_vp(pa.vfirst + v, gltf::AT_POS) - q);
+				sv.push(pa.vfirst + v);
+			}
+		}
+		for k in sp.len {
+			let q = sp[k];
+			let m = up_idw(sp[..], sd[..], float3 { -q.x, q.y, q.z }, 0.0000001);
+			let c = (float3 { -m.x, m.y, m.z } - sd[k]) * (0.5 * (1.0 - up_fade(q.y, hi, lo)));
+			let p = q + sd[k];
+			up_set(sv[k], gltf::AT_POS, p + c);
+			mv[sv[k]] = true;
+			if outer { gp.push(p); gc.push(c); }
+			moved += 1;
+		}
+	}
+	for i in gltf::assets[asset].meshes.count {
+		let ma = gltf::assets[asset].meshes.first + i;
+		let nm = gltf::text_of(gltf::meshes[ma].name);
+		if gp.len == 0 || (up_same(ma, up_mesh(src, nm)) && nm != "hair" && nm != "braid_hair") { continue; }
+		for j in gltf::meshes[ma].prims.count {
+			let pa = gltf::prims[gltf::meshes[ma].prims.first + j];
+			for v in pa.vcount {
+				let p = up_vp(pa.vfirst + v, gltf::AT_POS);
+				if p.y < lo - 0.03 || abs(p.x) > 0.13 { continue; }
+				up_set(pa.vfirst + v, gltf::AT_POS, p + up_idw(gp[..], gc[..], p, 0.000001));
+				mv[pa.vfirst + v] = true;
+				moved += 1;
+			}
+		}
+	}
+	for r in band.len / 12 {
+		let o = r * 12;
+		let back = band[o] > 0.5;
+		let k = float3 { band[o + 1], band[o + 2], band[o + 3] };
+		let wide = band[o + 4] < lo - 0.03;
+		gp.clear();
+		gc.clear();
+		for pass in 2 {
+			for i in gltf::assets[asset].meshes.count {
+				let ma = gltf::assets[asset].meshes.first + i;
+				let nm = gltf::text_of(gltf::meshes[ma].name);
+				let mb = up_mesh(src, nm);
+				let outer = back && up_same(ma, mb) && (nm == "face" || nm == "skin" || nm == "scalp");
+				if (if back { (pass == 1) == outer } else { pass == 1 || (wide && (nm == "hair" || nm == "braid_hair")) }) { continue; }
+				for j in gltf::meshes[ma].prims.count {
+					let pa = gltf::prims[gltf::meshes[ma].prims.first + j];
+					for v in pa.vcount {
+						let g = pa.vfirst + v;
+						let p = up_vp(g, gltf::AT_POS);
+						if !wide && (p.y < lo - 0.03 || abs(p.x) > 0.13) { continue; }
+						var c = float3 { 0.0, 0.0, 0.0 };
+						if outer {
+							let q = up_vp(gltf::prims[gltf::meshes[mb].prims.first + j].vfirst + v, gltf::AT_POS);
+							let w = up_band(q, band, o);
+							c = float3 { (q.x - p.x) * k.x * w, (q.y - p.y) * k.y * w, (q.z - p.z) * k.z * w };
+							gp.push(p);
+							gc.push(c);
+						} else if back {
+							c = up_idw(gp[..], gc[..], p, 0.000001);
+						} else {
+							let w = up_band(p, band, o);
+							c = float3 { (if p.x < 0.0 { -k.x } else { k.x }) * w, k.y * w, k.z * w };
+						}
+						if linalg::length3(c) <= 0.0 { continue; }
+						up_set(g, gltf::AT_POS, p + c);
+						mv[g] = true;
+					}
+				}
+			}
+		}
+	}
+	var na float3[>..] = [];
+	up_area(asset, rep[..], na);
+	for i in gltf::assets[asset].meshes.count {
+		let m = gltf::meshes[gltf::assets[asset].meshes.first + i];
+		for j in m.prims.count {
+			let pr = gltf::prims[m.prims.first + j];
+			if pr.vcount > 12000 { continue; }
+			for v in pr.vcount {
+				let g = pr.vfirst + v;
+				let a = nb[rep[g]];
+				let b = na[rep[g]];
+				if !mv[g] || linalg::length3(a) <= 0.0 || linalg::length3(b) <= 0.0 { continue; }
+				up_set(g, gltf::AT_NRM, linalg::unit3(up_vp(g, gltf::AT_NRM) + linalg::unit3(b) - linalg::unit3(a)));
 			}
 		}
 	}
@@ -253,15 +417,19 @@ fn retone(asset int, src int, name const byte[:]) int {
 }
 fn main() {
 	let a = args();
-	if a.len < 8 { print("usage: unpose <baked.glb> <source.glb> <out.glb> <left degrees> <right degrees> <fade top y> <fade bottom y>"); return; }
+	if a.len < 8 { print("usage: unpose <baked.glb> <source.glb> <out.glb> <left degrees> <right degrees> <fade top y, 0 skips body and tone> <fade bottom y> [head <fade bottom y> <fade top y> [push <dx> <dy> <dz> | back <fx> <fy> <fz>, then <y0> <y1> <y2> <y3> <x0> <x1> <z0> <z1>]...]"); return; }
 	let asset = gltf::load(a[1]);
 	if asset < 0 { print("unpose: ", gltf::error()); return; }
 	let src = gltf::load(a[2]);
 	if src < 0 { print("unpose: ", gltf::error()); return; }
+	let top = up_num(a[6]);
 	let arms = unpose_arms(asset, up_num(a[4]), up_num(a[5]));
-	let body = rebody(asset, src, up_num(a[6]), up_num(a[7]));
-	let tone = retone(asset, src, "skin");
+	let body = if top > 0.0 { rebody(asset, src, top, up_num(a[7])) } else { 0 };
+	let tone = if top > 0.0 { retone(asset, src, "skin") } else { 0 };
+	var bd f32[>..] = [];
+	for i in 11..a.len { bd.push(if a[i] == "push" { 0.0 } else if a[i] == "back" { 1.0 } else { up_num(a[i]) }); }
+	let head = if a.len > 10 && a[8] == "head" { up_head(asset, src, up_num(a[9]), up_num(a[10]), bd[..]) } else { 0 };
 	bk_shape = true;
-	print("unpose: arms ", arms, " vertices, body ", body, " vertices, tone ", tone, " texels, saved ", bake_glb(asset, a[1], a[3], ""));
+	print("unpose: arms ", arms, " vertices, body ", body, " vertices, tone ", tone, " texels, head ", head, " vertices, saved ", bake_glb(asset, a[1], a[3], ""));
 }
 ```
