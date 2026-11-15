@@ -1,0 +1,797 @@
+import os;
+import math;
+import binary;
+import json;
+import gfx;
+import gfx.linalg;
+import bake;
+import gfx.codec_jpeg;
+import gfx.codec_jpeg_enc;
+var mh_p float3[>..];
+var mh_none int[>..];
+var mh_hq linalg::Quat[>..];
+var mh_hp float3[>..];
+var mh_hpar int[>..];
+var mh_sc f32 = 0.1;
+var mh_y0 f32 = 0.0;
+var mh_off = float3 { 0.0, 0.0, 0.0 };
+fn mh_tf(p float3) float3 { (p - float3 { 0.0, mh_y0, 0.0 }) * mh_sc + mh_off }
+fn mh_path(a const byte[:], b const byte[:], c const byte[:]) byte[>..] {
+	var p byte[>..] = [];
+	p.append(a);
+	p.append(b);
+	p.append(c);
+	p
+}
+fn mh_flt(s const byte[:]) f32 {
+	let v, _ = parse_flt(s);
+	v as f32
+}
+fn mh_u32(b const byte[:], at int) int { (b[at] as int) | ((b[at + 1] as int) << 8) | ((b[at + 2] as int) << 16) | ((b[at + 3] as int) << 24) }
+fn mh_f32(b const byte[:], at int) f32 { binary::f32_from_bits(mh_u32(b, at) as u32) }
+fn mh_ix(b const byte[:], at int, ct int, i int) int { if ct == 5125 { mh_u32(b, at + 4 * i) } else { if ct == 5123 { (b[at + 2 * i] as int) | ((b[at + 2 * i + 1] as int) << 8) } else { b[at + i] as int } } }
+fn mh_putf(b byte[>..]&, v f32) { bk_put32(b, binary::f32_bits(v) as int); }
+fn mh_el(d json::Doc&, n int, k int) f32 { bk_num(d, json::element(d, n, k)) as f32 }
+fn mh_name(d json::Doc&, n int) const byte[:] {
+	let s, _ = json::as_string(d, bk_mem(d, n, "name"));
+	s
+}
+fn mh_fv(s const byte[:], fv int[>..]&, ft int[>..]&) {
+	let p = split(s, '/');
+	let v, _ = parse_int(p[0]);
+	var u = 0;
+	if p.len > 1 && p[1].len > 0 { let w, _ = parse_int(p[1]); u = w; }
+	fv.push(v - 1);
+	ft.push(u - 1);
+}
+fn mh_joint(d json::Doc&, jn int, name const byte[:]) float3 {
+	let j = bk_mem(d, jn, name);
+	var s = float3 { 0.0, 0.0, 0.0 };
+	var n = 0;
+	json::each(d, j) { c => s = s + mh_p[bk_int(d, c, 0)]; n += 1; }
+	s * (1.0 / max(n, 1) as f32)
+}
+fn mh_bone(d json::Doc&, bn int, name const byte[:]) int {
+	var r = -1;
+	var k = 0;
+	json::each(d, bn) { c => if json::name_of(d, c) == name { r = k; } k += 1; }
+	r
+}
+fn mh_hnode(d json::Doc&, hn int, name const byte[:]) int {
+	var r = -1;
+	var k = 0;
+	json::each(d, hn) { c => if mh_name(d, c) == name { r = k; } k += 1; }
+	r
+}
+fn mh_cut(n const byte[:]) const byte[:] { if ends_with(n, ".L") || ends_with(n, ".R") { n[..n.len - 2] } else { n } }
+fn mh_limb(b const byte[:]) const byte[:] {
+	if starts_with(b, "toe") { return "ball"; }
+	if starts_with(b, "wrist") || starts_with(b, "metacarpal") { return "hand"; }
+	if starts_with(b, "upperarm") || starts_with(b, "shoulder") { return "upperarm"; }
+	if starts_with(b, "lowerarm") { return "lowerarm"; }
+	if starts_with(b, "upperleg") { return "thigh"; }
+	if starts_with(b, "lowerleg") { return "calf"; }
+	if b == "foot" || b == "clavicle" { return b; }
+	""
+}
+fn mh_holo(n const byte[:]) byte[>..] {
+	var o byte[>..] = [];
+	let b = mh_cut(n);
+	let sd = if ends_with(n, ".L") { "_l" } else { if ends_with(n, ".R") { "_r" } else { "" } };
+	if starts_with(b, "finger") && b.len >= 9 && sd.len > 0 {
+		let d = (b[6] as int) - ('1' as int);
+		o.append(if d == 0 { "thumb" } else { if d == 1 { "index" } else { if d == 2 { "middle" } else { if d == 3 { "ring" } else { "pinky" } } } });
+		o.append("_0");
+		o.push(b[8]);
+		o.append(sd);
+		return o;
+	}
+	let l = mh_limb(b);
+	if l.len > 0 && sd.len > 0 { o.append(l); o.append(sd); return o; }
+	o.append(if b == "pelvis" || b == "root" || b == "spine05" { "pelvis" } else { if b == "spine04" { "spine_01" } else { if b == "spine03" { "spine_02" } else { if b == "spine02" || b == "spine01" || b == "breast" { "spine_03" } else { if starts_with(b, "neck") { "neck_01" } else { "head" } } } } });
+	o
+}
+fn mh_src(n const byte[:]) bool {
+	let b = mh_cut(n);
+	starts_with(b, "finger") || b == "root" || b == "spine04" || b == "spine03" || b == "spine02" || b == "clavicle" || b == "upperarm01" || b == "lowerarm01" || b == "wrist" || b == "upperleg01" || b == "lowerleg01" || b == "foot" || b == "toe3-1"
+}
+recursive fn mh_world(d json::Doc&, hn int, i int, pq linalg::Quat, pp float3) {
+	let n = json::element(d, hn, i);
+	let t = bk_mem(d, n, "translation");
+	let r = bk_mem(d, n, "rotation");
+	mh_hq[i] = linalg::qmul(pq, if r >= 0 { linalg::Quat { mh_el(d, r, 0), mh_el(d, r, 1), mh_el(d, r, 2), mh_el(d, r, 3) } } else { linalg::quat_identity() });
+	mh_hp[i] = pp + linalg::qrotate(pq, if t >= 0 { float3 { mh_el(d, t, 0), mh_el(d, t, 1), mh_el(d, t, 2) } } else { float3 { 0.0, 0.0, 0.0 } });
+	json::each(d, bk_mem(d, n, "children")) { c => let k = bk_int(d, c, 0); mh_hpar[k] = i; mh_world(d, hn, k, mh_hq[i], mh_hp[i]); }
+}
+fn mh_accd(d json::Doc&, root int, ai int) int, int, int, int {
+	let ac = json::element(d, bk_mem(d, root, "accessors"), ai);
+	let bv = json::element(d, bk_mem(d, root, "bufferViews"), bk_int(d, bk_mem(d, ac, "bufferView"), 0));
+	return bk_int(d, bk_mem(d, bv, "byteOffset"), 0) + bk_int(d, bk_mem(d, ac, "byteOffset"), 0), bk_int(d, bk_mem(d, ac, "count"), 0), bk_int(d, bk_mem(d, ac, "componentType"), 0), bk_int(d, bk_mem(d, bv, "byteStride"), 0);
+}
+fn mh_view(vs byte[>..]&, at int, n int, tgt int) {
+	vs.append(",{\"buffer\":0,\"byteOffset\":");
+	json::format_int(vs, at);
+	vs.append(",\"byteLength\":");
+	json::format_int(vs, n);
+	if tgt > 0 { vs.append(",\"target\":"); json::format_int(vs, tgt); }
+	vs.push('}');
+}
+fn mh_acc(ac byte[>..]&, view int, ct int, n int, ty const byte[:], extra const byte[:]) {
+	ac.append(",{\"bufferView\":");
+	json::format_int(ac, view);
+	ac.append(",\"componentType\":");
+	json::format_int(ac, ct);
+	ac.append(",\"count\":");
+	json::format_int(ac, n);
+	ac.append(",\"type\":\"");
+	ac.append(ty);
+	ac.push('"');
+	ac.append(extra);
+	ac.push('}');
+}
+fn mh_vec(o byte[>..]&, v float3) {
+	o.push('[');
+	json::format_number(o, v.x as real);
+	o.push(',');
+	json::format_number(o, v.y as real);
+	o.push(',');
+	json::format_number(o, v.z as real);
+	o.push(']');
+}
+fn mh_obj(out byte[>..]&, d json::Doc&, n int, skip const byte[:], extra const byte[:]) {
+	out.push('{');
+	var first = true;
+	json::each(d, n) { c => if json::name_of(d, c) != skip { if !first { out.push(','); } first = false; json::format_key(out, json::name_of(d, c)); let _ = json::format_node(out, d, c); } }
+	if !first && extra.len > 0 { out.push(','); }
+	out.append(extra);
+	out.push('}');
+}
+fn mh_arr(out byte[>..]&, d json::Doc&, n int, extra const byte[:]) {
+	let _ = json::format_node(out, d, n);
+	if extra.len > 0 { let _ = out.pop(); if json::count(d, n) == 0 { out.append(extra[1..]); } else { out.append(extra); } out.push(']'); }
+}
+struct MhGrid { lo float3 = float3 { 0.0, 0.0, 0.0 }, c f32 = 0.04, nx int = 1, ny int = 1, nz int = 1, h int[>..] = [], it int[>..] = [], nxt int[>..] = [] }
+fn mh_ginit(g MhGrid&, lo float3, hi float3, c f32) {
+	g.lo = lo - float3 { c, c, c };
+	g.c = c;
+	g.nx = ((hi.x - lo.x) / c) as int + 3;
+	g.ny = ((hi.y - lo.y) / c) as int + 3;
+	g.nz = ((hi.z - lo.z) / c) as int + 3;
+	g.h.clear();
+	g.it.clear();
+	g.nxt.clear();
+	for _ in g.nx * g.ny * g.nz { g.h.push(-1); }
+}
+fn mh_gc(g MhGrid&, v f32, o f32, n int) int { clamp(((v - o) / g.c) as int, 0, n - 1) }
+fn mh_gadd(g MhGrid&, item int, lo float3, hi float3) {
+	for z in mh_gc(g, lo.z, g.lo.z, g.nz)..mh_gc(g, hi.z, g.lo.z, g.nz) + 1 { for y in mh_gc(g, lo.y, g.lo.y, g.ny)..mh_gc(g, hi.y, g.lo.y, g.ny) + 1 { for x in mh_gc(g, lo.x, g.lo.x, g.nx)..mh_gc(g, hi.x, g.lo.x, g.nx) + 1 {
+		let c = (z * g.ny + y) * g.nx + x;
+		g.it.push(item);
+		g.nxt.push(g.h[c]);
+		g.h[c] = g.it.len - 1;
+	} } }
+}
+fn mh_cpt(p float3, a float3, b float3, c float3) float3 {
+	let ab = b - a;
+	let ac = c - a;
+	let d1 = linalg::dot3(ab, p - a);
+	let d2 = linalg::dot3(ac, p - a);
+	if d1 <= 0.0 && d2 <= 0.0 { return a; }
+	let d3 = linalg::dot3(ab, p - b);
+	let d4 = linalg::dot3(ac, p - b);
+	if d3 >= 0.0 && d4 <= d3 { return b; }
+	let vc = d1 * d4 - d3 * d2;
+	if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 { return a + ab * (d1 / (d1 - d3)); }
+	let d5 = linalg::dot3(ab, p - c);
+	let d6 = linalg::dot3(ac, p - c);
+	if d6 >= 0.0 && d5 <= d6 { return c; }
+	let vb = d5 * d2 - d1 * d6;
+	if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 { return a + ac * (d2 / (d2 - d6)); }
+	let va = d3 * d6 - d5 * d4;
+	if va <= 0.0 && d4 - d3 >= 0.0 && d5 - d6 >= 0.0 { return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6))); }
+	let dn = 1.0 / (va + vb + vc);
+	a + ab * (vb * dn) + ac * (vc * dn)
+}
+fn mh_near(g MhGrid&, p float3, pts float3[:], ix int[:], isl int[:], want int) float3, float3, int {
+	var best f32 = 1000000.0;
+	var bt = -1;
+	var bq = p;
+	var bn = float3 { 0.0, 1.0, 0.0 };
+	let cx = mh_gc(g, p.x, g.lo.x, g.nx);
+	let cy = mh_gc(g, p.y, g.lo.y, g.ny);
+	let cz = mh_gc(g, p.z, g.lo.z, g.nz);
+	var r = 1;
+	while r < 5 && best > ((r - 1) as f32 * g.c) * ((r - 1) as f32 * g.c) {
+		for z in max(cz - r, 0)..min(cz + r + 1, g.nz) { for y in max(cy - r, 0)..min(cy + r + 1, g.ny) { for x in max(cx - r, 0)..min(cx + r + 1, g.nx) {
+			var k = g.h[(z * g.ny + y) * g.nx + x];
+			while k >= 0 {
+				let t = g.it[k];
+				if want >= 0 && isl[t] != want { k = g.nxt[k]; continue; }
+				let q = mh_cpt(p, pts[ix[t * 3]], pts[ix[t * 3 + 1]], pts[ix[t * 3 + 2]]);
+				let e = linalg::dot3(q - p, q - p);
+				if e < best { best = e; bt = t; bq = q; bn = linalg::unit3(linalg::cross3(pts[ix[t * 3 + 1]] - pts[ix[t * 3]], pts[ix[t * 3 + 2]] - pts[ix[t * 3]])); }
+				k = g.nxt[k];
+			}
+		} } }
+		r += 1;
+	}
+	return bq, bn, bt;
+}
+fn mh_field(g MhGrid&, p float3, at float3[:], dv float3[:]) float3 {
+	var s = float3 { 0.0, 0.0, 0.0 };
+	var w f32 = 0.0;
+	let cx = mh_gc(g, p.x, g.lo.x, g.nx);
+	let cy = mh_gc(g, p.y, g.lo.y, g.ny);
+	let cz = mh_gc(g, p.z, g.lo.z, g.nz);
+	for z in max(cz - 1, 0)..min(cz + 2, g.nz) { for y in max(cy - 1, 0)..min(cy + 2, g.ny) { for x in max(cx - 1, 0)..min(cx + 2, g.nx) {
+		var k = g.h[(z * g.ny + y) * g.nx + x];
+		while k >= 0 {
+			let e = at[g.it[k]] - p;
+			let f = exp(-(linalg::dot3(e, e) / (0.015 * 0.015)) as real) as f32;
+			s = s + dv[g.it[k]] * f;
+			w += f;
+			k = g.nxt[k];
+		}
+	} } }
+	if w > 0.000001 { s * (1.0 / w) } else { s }
+}
+fn mh_mode(n const byte[:]) int { if n == "shoes" { 1 } else { if n == "buckle" || n == "plate" || n == "chain" { 2 } else { if n == "tank" || n == "tank_hem" || n == "shorts" || n == "shorts_lace" || n == "skirt" || n == "belt" || n == "socks" || n == "stripes" || n == "gloves" || n == "choker" { 1 } else { 0 } } } }
+fn mh_jw(b const byte[:], ja int, jc int, wa int, wc int, i int, dj float3[:]) float3 {
+	var s = float3 { 0.0, 0.0, 0.0 };
+	for q in 4 {
+		let j = if jc == 5123 { mh_ix(b, ja + 8 * i, 5123, q) } else { b[ja + 4 * i + q] as int };
+		let w = if wc == 5126 { mh_f32(b, wa + 16 * i + 4 * q) } else { if wc == 5123 { mh_ix(b, wa + 8 * i, 5123, q) as f32 / 65535.0 } else { b[wa + 4 * i + q] as f32 / 255.0 } };
+		s = s + dj[j] * w;
+	}
+	s
+}
+fn mh_attr(d json::Doc&, root int, prim int, name const byte[:]) int, int, int {
+	let o, n, ct, _ = mh_accd(d, root, bk_int(d, bk_mem(d, bk_mem(d, prim, "attributes"), name), 0));
+	return o, n, ct;
+}
+fn mh_tex(px const byte[:], w int, h int, u f32, v f32) float3 {
+	let x = u * w as f32 - 0.5;
+	let y = v * h as f32 - 0.5;
+	let x0 = floor(x as real) as int;
+	let y0 = floor(y as real) as int;
+	let fx = x - x0 as f32;
+	let fy = y - y0 as f32;
+	var c = float3 { 0.0, 0.0, 0.0 };
+	for q in 4 {
+		let o = ((clamp(y0 + q / 2, 0, h - 1)) * w + clamp(x0 + q % 2, 0, w - 1)) * 4;
+		c = c + float3 { px[o] as f32, px[o + 1] as f32, px[o + 2] as f32 } * ((if q % 2 == 1 { fx } else { 1.0 - fx }) * (if q / 2 == 1 { fy } else { 1.0 - fy }));
+	}
+	c
+}
+fn mh_bary(p float3, a float3, b float3, c float3) float3 {
+	let v0 = b - a;
+	let v1 = c - a;
+	let v2 = p - a;
+	let d00 = linalg::dot3(v0, v0);
+	let d01 = linalg::dot3(v0, v1);
+	let d11 = linalg::dot3(v1, v1);
+	let d20 = linalg::dot3(v2, v0);
+	let d21 = linalg::dot3(v2, v1);
+	let dn = max(d00 * d11 - d01 * d01, 0.000000000001);
+	let v = (d11 * d20 - d01 * d21) / dn;
+	let w = (d00 * d21 - d01 * d20) / dn;
+	float3 { 1.0 - v - w, v, w }
+}
+fn mh_neck(b const byte[:], y f32, pts float3[:]) {
+	var lo = float3 { 1.0, 1.0, 1.0 };
+	var hi = float3 { -1.0, -1.0, -1.0 };
+	for p in pts { if abs(p.y - y) < 0.004 && abs(p.x) < 0.09 && abs(p.z) < 0.15 { lo = float3 { min(lo.x, p.x), min(lo.y, p.y), min(lo.z, p.z) }; hi = float3 { max(hi.x, p.x), max(hi.y, p.y), max(hi.z, p.z) }; } }
+	print(b, " neck at y ", y, ": width ", (hi.x - lo.x) * 1000.0, " mm, depth ", (hi.z - lo.z) * 1000.0, " mm, center z ", (hi.z + lo.z) * 500.0, " mm");
+}
+fn main() {
+	let a = args();
+	if a.len < 6 { print("usage: mhuman <makehuman data dir> <recipe> <holo.glb> <out.glb> <neck cut y>; recipe lines: <target file under targets/> <weight> | lap <meters the body runs on above the cut>"); return; }
+	let dir = a[1];
+	let cut = mh_flt(a[5]);
+	var rt byte[>..] = [];
+	if !read_file(a[2], rt) { print("no recipe ", a[2]); return; }
+	let rl = split(rt[..], '\n');
+	var lap f32 = 0.008;
+	for l in rl {
+		let t = words(l);
+		if t.len > 1 && t[0] == "lap" { lap = mh_flt(t[1]); }
+	}
+	var ot byte[>..] = [];
+	if !read_file(mh_path(dir, "/3dobjs/base.obj", "")[..], ot) { print("no base.obj under ", dir); return; }
+	var fv int[>..] = [];
+	var ft int[>..] = [];
+	var tu f32[>..] = [];
+	var tv f32[>..] = [];
+	var on = false;
+	for l in split(ot[..], '\n') {
+		let t = words(l);
+		if t.len < 2 { continue; }
+		if t[0] == "v" { mh_p.push(float3 { mh_flt(t[1]), mh_flt(t[2]), mh_flt(t[3]) }); }
+		if t[0] == "vt" { tu.push(mh_flt(t[1])); tv.push(1.0 - mh_flt(t[2])); }
+		if t[0] == "g" { on = t[1] == "body"; }
+		if t[0] == "f" && on { for k in 2..t.len - 1 { mh_fv(t[1], fv, ft); mh_fv(t[k], fv, ft); mh_fv(t[k + 1], fv, ft); } }
+	}
+	for l in rl {
+		let t = words(l);
+		if t.len != 2 || t[0][0] == '#' || t[0] == "lap" { continue; }
+		let w = mh_flt(t[1]);
+		var tt byte[>..] = [];
+		if !read_file(mh_path(dir, "/targets/", t[0])[..], tt) { print("missing target ", t[0]); continue; }
+		var n = 0;
+		for tl in split(tt[..], '\n') {
+			let q = words(tl);
+			if q.len < 4 || q[0][0] == '#' { continue; }
+			let vi, _ = parse_int(q[0]);
+			mh_p[vi] = mh_p[vi] + float3 { mh_flt(q[1]), mh_flt(q[2]), mh_flt(q[3]) } * w;
+			n += 1;
+		}
+		print("target ", t[0], " x ", w, ": ", n, " vertices");
+	}
+	mh_y0 = 1000000.0;
+	for v in fv { mh_y0 = min(mh_y0, mh_p[v].y); }
+	var st byte[>..] = [];
+	if !read_file(mh_path(dir, "/rigs/default.mhskel", "")[..], st) { print("no skeleton"); return; }
+	var sd json::Doc;
+	let sr, se = json::parse(st[..], sd);
+	if sr < 0 { print("skeleton: ", se); return; }
+	let jn = bk_mem(sd, sr, "joints");
+	let bn = bk_mem(sd, sr, "bones");
+	var bh float3[>..] = [];
+	var bnode int[>..] = [];
+	json::each(sd, bn) { c =>
+		bnode.push(c);
+		var hn byte[>..] = [];
+		let hs, _ = json::as_string(sd, bk_mem(sd, c, "head"));
+		hn.append(hs);
+		bh.push(mh_joint(sd, jn, hn[..]));
+	}
+	var wt byte[>..] = [];
+	if !read_file(mh_path(dir, "/rigs/default_weights.mhw", "")[..], wt) { print("no weights"); return; }
+	var wd json::Doc;
+	let wr, we = json::parse(wt[..], wd);
+	if wr < 0 { print("weights: ", we); return; }
+	var wj int[>..] = [];
+	var ww f32[>..] = [];
+	for _ in mh_p.len * 4 { wj.push(0); ww.push(0.0); }
+	json::each(wd, bk_mem(wd, wr, "weights")) { c =>
+		let b = mh_bone(sd, bn, json::name_of(wd, c));
+		if b >= 0 {
+			json::each(wd, c) { e =>
+				let vi = bk_int(wd, json::element(wd, e, 0), 0);
+				let w = bk_num(wd, json::element(wd, e, 1)) as f32;
+				var lo = 0;
+				for q in 1..4 { if ww[vi * 4 + q] < ww[vi * 4 + lo] { lo = q; } }
+				if w > ww[vi * 4 + lo] { ww[vi * 4 + lo] = w; wj[vi * 4 + lo] = b; }
+			}
+		}
+	}
+	var hb byte[>..] = [];
+	if !read_file(a[3], hb) { print("no ", a[3]); return; }
+	let jl = mh_u32(hb[..], 12);
+	var hd json::Doc;
+	let hr, he = json::parse(hb[20..20 + jl], hd);
+	if hr < 0 { print("holo json: ", he); return; }
+	let b0 = 20 + jl + 8;
+	let bl = mh_u32(hb[..], 20 + jl);
+	let hn = bk_mem(hd, hr, "nodes");
+	let nn = json::count(hd, hn);
+	for _ in nn { mh_hq.push(linalg::quat_identity()); mh_hp.push(float3 { 0.0, 0.0, 0.0 }); mh_hpar.push(-1); }
+	json::each(hd, bk_mem(hd, json::element(hd, bk_mem(hd, hr, "scenes"), 0), "nodes")) { c => mh_world(hd, hn, bk_int(hd, c, 0), linalg::quat_identity(), float3 { 0.0, 0.0, 0.0 }); }
+	let nk = mh_hnode(hd, hn, "neck_01");
+	let mn = mh_bone(sd, bn, "neck01");
+	mh_sc = 0.1 * mh_hp[nk].y / mh_tf(bh[mn]).y;
+	let t1 = mh_tf(bh[mn]);
+	mh_off = float3 { mh_hp[nk].x - t1.x, 0.0, mh_hp[nk].z - t1.z };
+	print("fit: scale ", mh_sc * 10.0, ", offset ", mh_off.x, " ", mh_off.z, ", height ", mh_tf(float3 { 0.0, 1000.0, 0.0 }).y - mh_tf(float3 { 0.0, 1000.0 - 1.0, 0.0 }).y);
+	var np float3[>..] = [];
+	for i in nn { np.push(mh_hp[i]); }
+	for k in bnode.len {
+		let nm = json::name_of(sd, bnode[k]);
+		if mh_src(nm) { let h = mh_hnode(hd, hn, mh_holo(nm)[..]); if h >= 0 { np[h] = mh_tf(bh[k]); } }
+	}
+	let hs = json::element(hd, bk_mem(hd, hr, "skins"), 0);
+	let sj = bk_mem(hd, hs, "joints");
+	var ji int[>..] = [];
+	for _ in nn { ji.push(-1); }
+	var jq = 0;
+	json::each(hd, sj) { c => ji[bk_int(hd, c, 0)] = jq; jq += 1; }
+	let hh = ji[mh_hnode(hd, hn, "head")];
+	var jm int[>..] = [];
+	for k in bnode.len { let h = mh_hnode(hd, hn, mh_holo(json::name_of(sd, bnode[k]))[..]); jm.push(if h >= 0 && ji[h] >= 0 { ji[h] } else { hh }); }
+	var oj int[>..] = [];
+	var ow f32[>..] = [];
+	for v in mh_p.len {
+		for _ in 4 { oj.push(0); ow.push(0.0); }
+		for s in 4 {
+			if ww[v * 4 + s] > 0.0 {
+				let j = jm[wj[v * 4 + s]];
+				var t = -1;
+				for u in 4 { if t < 0 && (ow[v * 4 + u] == 0.0 || oj[v * 4 + u] == j) { t = u; } }
+				oj[v * 4 + t] = j;
+				ow[v * 4 + t] = ow[v * 4 + t] + ww[v * 4 + s];
+			}
+		}
+	}
+	let hm = bk_mem(hd, hr, "meshes");
+	var sm = -1;
+	var mq = 0;
+	json::each(hd, hm) { c => if mh_name(hd, c) == "skin" { sm = mq; } mq += 1; }
+	let sp = json::element(hd, bk_mem(hd, json::element(hd, hm, sm), "primitives"), 0);
+	let po, pc, _, ps = mh_accd(hd, hr, bk_int(hd, bk_mem(hd, bk_mem(hd, sp, "attributes"), "POSITION"), 0));
+	let io, ic, ict, _ = mh_accd(hd, hr, bk_int(hd, bk_mem(hd, sp, "indices"), 0));
+	let pst = if ps > 0 { ps } else { 12 };
+	var hpts float3[>..] = [];
+	for v in pc { let o = b0 + po + v * pst; hpts.push(float3 { mh_f32(hb[..], o), mh_f32(hb[..], o + 4), mh_f32(hb[..], o + 8) }); }
+	var hi2 int[>..] = [];
+	for t in ic / 3 {
+		let i0 = mh_ix(hb[..], b0 + io, ict, t * 3);
+		let i1 = mh_ix(hb[..], b0 + io, ict, t * 3 + 1);
+		let i2 = mh_ix(hb[..], b0 + io, ict, t * 3 + 2);
+		if min(hpts[i0].y, min(hpts[i1].y, hpts[i2].y)) >= cut { hi2.push(i0); hi2.push(i1); hi2.push(i2); }
+	}
+	var dj float3[>..] = [];
+	json::each(hd, sj) { c => let i = bk_int(hd, c, 0); dj.push(np[i] - mh_hp[i]); }
+	let sja, _, sjc = mh_attr(hd, hr, sp, "JOINTS_0");
+	let swa, _, swc = mh_attr(hd, hr, sp, "WEIGHTS_0");
+	var sv1 float3[>..] = [];
+	var hy0 f32 = 1000.0;
+	for p in hpts { hy0 = min(hy0, p.y); }
+	var hall int[>..] = [];
+	for v in pc { sv1.push(hpts[v] + mh_jw(hb[..], b0 + sja, sjc, b0 + swa, swc, v, dj[..])); }
+	for t in ic { hall.push(mh_ix(hb[..], b0 + io, ict, t)); }
+	var hgr MhGrid;
+	mh_ginit(hgr, float3 { -1.0, -0.2, -0.7 }, float3 { 1.0, 1.9, 0.7 }, 0.035);
+	for t in ic / 3 {
+		let pa = sv1[hall[t * 3]];
+		let pb = sv1[hall[t * 3 + 1]];
+		let pq = sv1[hall[t * 3 + 2]];
+		mh_gadd(hgr, t, float3 { min(pa.x, min(pb.x, pq.x)), min(pa.y, min(pb.y, pq.y)), min(pa.z, min(pb.z, pq.z)) }, float3 { max(pa.x, max(pb.x, pq.x)), max(pa.y, max(pb.y, pq.y)), max(pa.z, max(pb.z, pq.z)) });
+	}
+	let uo, _, uct, us = mh_accd(hd, hr, bk_int(hd, bk_mem(hd, bk_mem(hd, sp, "attributes"), "TEXCOORD_0"), 0));
+	print("holo skin uv component type ", uct, ", stride ", us);
+	let ust = if us > 0 { us } else { 8 };
+	var rh int[>..] = [];
+	var nrm float3[>..] = [];
+	for _ in mh_p.len { rh.push(-1); nrm.push(float3 { 0.0, 0.0, 0.0 }); }
+	var rv int[>..] = [];
+	var rtx int[>..] = [];
+	var rn int[>..] = [];
+	var ix int[>..] = [];
+	for t in fv.len / 3 {
+		let p0 = mh_p[fv[t * 3]];
+		let fnm = linalg::cross3(mh_p[fv[t * 3 + 1]] - p0, mh_p[fv[t * 3 + 2]] - p0);
+		for q in 3 { nrm[fv[t * 3 + q]] = nrm[fv[t * 3 + q]] + fnm; }
+		let ty = max(mh_tf(p0).y, max(mh_tf(mh_p[fv[t * 3 + 1]]).y, mh_tf(mh_p[fv[t * 3 + 2]]).y));
+		if ty > cut + lap || ty < hy0 { continue; }
+		for q in 3 {
+			let c = t * 3 + q;
+			var k = rh[fv[c]];
+			while k >= 0 && rtx[k] != ft[c] { k = rn[k]; }
+			if k < 0 { k = rv.len; rv.push(fv[c]); rtx.push(ft[c]); rn.push(rh[fv[c]]); rh[fv[c]] = k; }
+			ix.push(k);
+		}
+	}
+	var bpts float3[>..] = [];
+	for v in rv { bpts.push(mh_tf(mh_p[v])); }
+	mh_neck("holo", cut, hpts[..]);
+	mh_neck("body", cut, bpts[..]);
+	let na = json::count(hd, bk_mem(hd, hr, "accessors"));
+	let nv = json::count(hd, bk_mem(hd, hr, "bufferViews"));
+	let bp4 = (bl + 3) / 4 * 4;
+	var bin byte[>..] = [];
+	var vs byte[>..] = [];
+	var ac byte[>..] = [];
+	var lo = float3 { 1000.0, 1000.0, 1000.0 };
+	var hi = float3 { -1000.0, -1000.0, -1000.0 };
+	var at = bin.len;
+	for p in bpts {
+		lo = float3 { min(lo.x, p.x), min(lo.y, p.y), min(lo.z, p.z) };
+		hi = float3 { max(hi.x, p.x), max(hi.y, p.y), max(hi.z, p.z) };
+		mh_putf(bin, p.x);
+		mh_putf(bin, p.y);
+		mh_putf(bin, p.z);
+	}
+	mh_view(vs, bp4 + at, bin.len - at, 34962);
+	var mm byte[>..] = [];
+	mm.append(",\"min\":");
+	mh_vec(mm, lo);
+	mm.append(",\"max\":");
+	mh_vec(mm, hi);
+	mh_acc(ac, nv, 5126, rv.len, "VEC3", mm[..]);
+	at = bin.len;
+	for v in rv { let n = linalg::unit3(nrm[v]); mh_putf(bin, n.x); mh_putf(bin, n.y); mh_putf(bin, n.z); }
+	mh_view(vs, bp4 + at, bin.len - at, 34962);
+	mh_acc(ac, nv + 1, 5126, rv.len, "VEC3", "");
+	at = bin.len;
+	for k in rv.len { mh_putf(bin, if rtx[k] >= 0 { tu[rtx[k]] } else { 0.0 }); mh_putf(bin, if rtx[k] >= 0 { tv[rtx[k]] } else { 0.0 }); }
+	mh_view(vs, bp4 + at, bin.len - at, 34962);
+	mh_acc(ac, nv + 2, 5126, rv.len, "VEC2", "");
+	at = bin.len;
+	for v in rv { for q in 4 { let j = oj[v * 4 + q]; bin.push((j & 255) as byte); bin.push(((j >> 8) & 255) as byte); } }
+	mh_view(vs, bp4 + at, bin.len - at, 34962);
+	mh_acc(ac, nv + 3, 5123, rv.len, "VEC4", "");
+	at = bin.len;
+	for v in rv {
+		let s = ow[v * 4] + ow[v * 4 + 1] + ow[v * 4 + 2] + ow[v * 4 + 3];
+		for q in 4 { mh_putf(bin, if s > 0.0 { ow[v * 4 + q] / s } else { if q == 0 { 1.0 } else { 0.0 } }); }
+	}
+	mh_view(vs, bp4 + at, bin.len - at, 34962);
+	mh_acc(ac, nv + 4, 5126, rv.len, "VEC4", "");
+	at = bin.len;
+	for i in ix { bk_put32(bin, i); }
+	mh_view(vs, bp4 + at, bin.len - at, 34963);
+	mh_acc(ac, nv + 5, 5125, ix.len, "SCALAR", "");
+	at = bin.len;
+	for i in hi2 { bk_put32(bin, i); }
+	mh_view(vs, bp4 + at, bin.len - at, 34963);
+	mh_acc(ac, nv + 6, 5125, hi2.len, "SCALAR", "");
+	let ibo, _, _, _ = mh_accd(hd, hr, bk_int(hd, bk_mem(hd, hs, "inverseBindMatrices"), 0));
+	var dmax f32 = 0.0;
+	at = bin.len;
+	var jk = 0;
+	json::each(hd, sj) { c =>
+		let i = bk_int(hd, c, 0);
+		let m = linalg::flat(linalg::inverse(linalg::compose(np[i], mh_hq[i], float3 { 1.0, 1.0, 1.0 })));
+		let o = linalg::flat(linalg::inverse(linalg::compose(mh_hp[i], mh_hq[i], float3 { 1.0, 1.0, 1.0 })));
+		for q in 16 { mh_putf(bin, m[q]); dmax = max(dmax, abs(o[q] - mh_f32(hb[..], b0 + ibo + jk * 64 + q * 4))); }
+		jk += 1;
+	}
+	print("inverse bind check against the source file (rest pose rebuilt from the nodes): max difference ", dmax);
+	mh_view(vs, bp4 + at, bin.len - at, 0);
+	mh_acc(ac, nv + 7, 5126, jk, "MAT4", "");
+	var bg MhGrid;
+	mh_ginit(bg, lo, hi, 0.03);
+	for t in ix.len / 3 {
+		let pa = bpts[ix[t * 3]];
+		let pb = bpts[ix[t * 3 + 1]];
+		let pc = bpts[ix[t * 3 + 2]];
+		mh_gadd(bg, t, float3 { min(pa.x, min(pb.x, pc.x)), min(pa.y, min(pb.y, pc.y)), min(pa.z, min(pb.z, pc.z)) }, float3 { max(pa.x, max(pb.x, pc.x)), max(pa.y, max(pb.y, pc.y)), max(pa.z, max(pb.z, pc.z)) });
+	}
+	var sdv float3[>..] = [];
+	var sg MhGrid;
+	mh_ginit(sg, lo - float3 { 0.1, 0.1, 0.1 }, hi + float3 { 0.1, 0.1, 0.1 }, 0.035);
+	for v in pc {
+		let p1 = sv1[v];
+		let q, _, _ = mh_near(bg, p1, bpts[..], ix[..], mh_none[..], -1);
+		sdv.push(if hpts[v].y < cut { q - p1 } else { float3 { 0.0, 0.0, 0.0 } });
+		mh_gadd(sg, v, p1, p1);
+	}
+	var gm int[>..] = [];
+	var mq2 = 0;
+	json::each(hd, hm) { m =>
+		let md = mh_mode(mh_name(hd, m));
+		if md > 0 {
+			let pr = json::element(hd, bk_mem(hd, m, "primitives"), 0);
+			let ga, gn, _ = mh_attr(hd, hr, pr, "POSITION");
+			let gja, _, gjc = mh_attr(hd, hr, pr, "JOINTS_0");
+			let gwa, _, gwc = mh_attr(hd, hr, pr, "WEIGHTS_0");
+			var gp float3[>..] = [];
+			var mean = float3 { 0.0, 0.0, 0.0 };
+			for v in gn {
+				let o = b0 + ga + v * 12;
+				let p1 = float3 { mh_f32(hb[..], o), mh_f32(hb[..], o + 4), mh_f32(hb[..], o + 8) } + mh_jw(hb[..], b0 + gja, gjc, b0 + gwa, gwc, v, dj[..]);
+				let f = if md < 3 { mh_field(sg, p1, sv1[..], sdv[..]) } else { float3 { 0.0, 0.0, 0.0 } };
+				mean = mean + f * (1.0 / gn as f32);
+				gp.push(if md == 1 { p1 + f } else { p1 });
+			}
+			var glo = float3 { 1000.0, 1000.0, 1000.0 };
+			var ghi = float3 { -1000.0, -1000.0, -1000.0 };
+			var pushed = 0;
+			let gnm = mh_name(hd, m);
+			let sh = gnm == "shorts" || gnm == "shorts_lace";
+			at = bin.len;
+			for v in gn {
+				var p = if md == 2 { gp[v] + mean } else { gp[v] };
+				if md == 1 {
+					let q, n, _ = mh_near(bg, p, bpts[..], ix[..], mh_none[..], -1);
+					let s = linalg::dot3(p - q, n);
+					let mg = if gnm == "skirt" { 0.018 } else { 0.005 };
+					if s < mg && linalg::length3(p - q) < 0.05 { p = q + n * mg; pushed += 1; }
+					if sh && s > 0.007 && linalg::length3(p - q) < 0.1 { p = p - n * (s - 0.007); }
+				}
+				glo = float3 { min(glo.x, p.x), min(glo.y, p.y), min(glo.z, p.z) };
+				ghi = float3 { max(ghi.x, p.x), max(ghi.y, p.y), max(ghi.z, p.z) };
+				mh_putf(bin, p.x);
+				mh_putf(bin, p.y);
+				mh_putf(bin, p.z);
+			}
+			mh_view(vs, bp4 + at, bin.len - at, 34962);
+			var gx byte[>..] = [];
+			gx.append(",\"min\":");
+			mh_vec(gx, glo);
+			gx.append(",\"max\":");
+			mh_vec(gx, ghi);
+			mh_acc(ac, nv + 8 + gm.len / 2, 5126, gn, "VEC3", gx[..]);
+			gm.push(mq2);
+			gm.push(na + 8 + gm.len / 2);
+			print("refit ", mh_name(hd, m), " (mode ", md, "): ", gn, " vertices, ", pushed, " pushed out of the body");
+		}
+		mq2 += 1;
+	}
+	let hmat = bk_int(hd, bk_mem(hd, sp, "material"), 0);
+	let hpbr = bk_mem(hd, json::element(hd, bk_mem(hd, hr, "materials"), hmat), "pbrMetallicRoughness");
+	let im0 = json::element(hd, bk_mem(hd, hr, "images"), bk_int(hd, bk_mem(hd, json::element(hd, bk_mem(hd, hr, "textures"), bk_int(hd, bk_mem(hd, bk_mem(hd, hpbr, "baseColorTexture"), "index"), 0)), "source"), 0));
+	let ibv = json::element(hd, bk_mem(hd, hr, "bufferViews"), bk_int(hd, bk_mem(hd, im0, "bufferView"), 0));
+	let iof = b0 + bk_int(hd, bk_mem(hd, ibv, "byteOffset"), 0);
+	var src byte[>..] = [];
+	let tw, th, tok = codec_jpeg::decode(hb[iof..iof + bk_int(hd, bk_mem(hd, ibv, "byteLength"), 0)], src);
+	if !tok { print("cannot decode the skin texture"); return; }
+	var dst byte[>..] = [];
+	dst.resize(tw * th * 4, 255);
+	var fill byte[>..] = [];
+	fill.resize(tw * th, 0);
+	var nfill = 0;
+	for t in ix.len / 3 {
+		if rtx[ix[t * 3]] < 0 || rtx[ix[t * 3 + 1]] < 0 || rtx[ix[t * 3 + 2]] < 0 { continue; }
+		var uv float3[3] = [float3 { 0.0, 0.0, 0.0 }; 3];
+		for c in 3 { let k = rtx[ix[t * 3 + c]]; uv[c] = float3 { tu[k] * tw as f32, tv[k] * th as f32, 0.0 }; }
+		for y in max(floor(min(uv[0].y, min(uv[1].y, uv[2].y)) as real) as int - 1, 0)..min(ceil(max(uv[0].y, max(uv[1].y, uv[2].y)) as real) as int + 1, th) {
+			for x in max(floor(min(uv[0].x, min(uv[1].x, uv[2].x)) as real) as int - 1, 0)..min(ceil(max(uv[0].x, max(uv[1].x, uv[2].x)) as real) as int + 1, tw) {
+				let w = mh_bary(float3 { x as f32 + 0.5, y as f32 + 0.5, 0.0 }, uv[0], uv[1], uv[2]);
+				if min(w.x, min(w.y, w.z)) < -0.03 || fill[y * tw + x] == 2 { continue; }
+				let inside = min(w.x, min(w.y, w.z)) >= 0.0;
+				let p = bpts[ix[t * 3]] * w.x + bpts[ix[t * 3 + 1]] * w.y + bpts[ix[t * 3 + 2]] * w.z;
+				let q, _, ht = mh_near(hgr, p, sv1[..], hall[..], mh_none[..], -1);
+				if ht < 0 { continue; }
+				let hw = mh_bary(q, sv1[hall[ht * 3]], sv1[hall[ht * 3 + 1]], sv1[hall[ht * 3 + 2]]);
+				var hu = float3 { 0.0, 0.0, 0.0 };
+				for c in 3 { let o = b0 + uo + hall[ht * 3 + c] * ust; hu = hu + float3 { mh_f32(hb[..], o), mh_f32(hb[..], o + 4), 0.0 } * (if c == 0 { hw.x } else { if c == 1 { hw.y } else { hw.z } }); }
+				let col = mh_tex(src[..], tw, th, hu.x, hu.y);
+				let o = (y * tw + x) * 4;
+				dst[o] = clamp((col.x + 0.5) as int, 0, 255) as byte;
+				dst[o + 1] = clamp((col.y + 0.5) as int, 0, 255) as byte;
+				dst[o + 2] = clamp((col.z + 0.5) as int, 0, 255) as byte;
+				if fill[y * tw + x] == 0 { nfill += 1; }
+				fill[y * tw + x] = if inside { 2 } else { 1 };
+			}
+		}
+	}
+	for _ in 7 {
+		var nf byte[>..] = [];
+		nf.append(fill);
+		for y in th { for x in tw {
+			if fill[y * tw + x] != 0 { continue; }
+			var c = float3 { 0.0, 0.0, 0.0 };
+			var n = 0;
+			for q in 4 {
+				let xx = x + (if q == 0 { -1 } else { if q == 1 { 1 } else { 0 } });
+				let yy = y + (if q == 2 { -1 } else { if q == 3 { 1 } else { 0 } });
+				if xx >= 0 && yy >= 0 && xx < tw && yy < th && fill[yy * tw + xx] != 0 { let o = (yy * tw + xx) * 4; c = c + float3 { dst[o] as f32, dst[o + 1] as f32, dst[o + 2] as f32 }; n += 1; }
+			}
+			if n > 0 { let o = (y * tw + x) * 4; dst[o] = (c.x / n as f32) as int as byte; dst[o + 1] = (c.y / n as f32) as int as byte; dst[o + 2] = (c.z / n as f32) as int as byte; nf[y * tw + x] = 1; }
+		} }
+		fill.clear();
+		fill.append(nf);
+	}
+	var jb byte[>..] = [];
+	if !codec_jpeg_enc::encode(dst[..], tw, th, 92, jb) { print("cannot encode the body texture"); return; }
+	at = bin.len;
+	bin.append(jb);
+	mh_view(vs, bp4 + at, bin.len - at, 0);
+	while bin.len % 4 != 0 { bin.push(0); }
+	print("body texture ", tw, "x", th, ": ", nfill, " texels baked, ", jb.len, " bytes");
+	let nm0 = json::count(hd, bk_mem(hd, hr, "materials"));
+	let ni0 = json::count(hd, bk_mem(hd, hr, "images"));
+	let nt0 = json::count(hd, bk_mem(hd, hr, "textures"));
+	var js byte[>..] = [];
+	js.push('{');
+	var first = true;
+	json::each(hd, hr) { c =>
+		let k = json::name_of(hd, c);
+		if !first { js.push(','); }
+		first = false;
+		json::format_key(js, k);
+		if k == "nodes" {
+			js.push('[');
+			for i in nn {
+				if i > 0 { js.push(','); }
+				let p = mh_hpar[i];
+				let moved = linalg::length3(np[i] - mh_hp[i]) > 0.000001 || (p >= 0 && linalg::length3(np[p] - mh_hp[p]) > 0.000001);
+				if moved {
+					var tr byte[>..] = [];
+					tr.append("\"translation\":");
+					mh_vec(tr, if p >= 0 { linalg::qrotate(linalg::Quat { -mh_hq[p].x, -mh_hq[p].y, -mh_hq[p].z, mh_hq[p].w }, np[i] - np[p]) } else { np[i] });
+					mh_obj(js, hd, json::element(hd, hn, i), "translation", tr[..]);
+				} else { let _ = json::format_node(js, hd, json::element(hd, hn, i)); }
+			}
+			js.push(']');
+		} else if k == "meshes" {
+			js.push('[');
+			var mi = 0;
+			json::each(hd, c) { m =>
+				if mi > 0 { js.push(','); }
+				if mi == sm {
+					var pr byte[>..] = [];
+					pr.append("\"primitives\":[{\"attributes\":");
+					let _ = json::format_node(pr, hd, bk_mem(hd, sp, "attributes"));
+					pr.append(",\"indices\":");
+					json::format_int(pr, na + 6);
+					pr.append(",\"material\":");
+					json::format_int(pr, bk_int(hd, bk_mem(hd, sp, "material"), 0));
+					pr.append("},{\"attributes\":{\"POSITION\":");
+					json::format_int(pr, na);
+					pr.append(",\"NORMAL\":");
+					json::format_int(pr, na + 1);
+					pr.append(",\"TEXCOORD_0\":");
+					json::format_int(pr, na + 2);
+					pr.append(",\"JOINTS_0\":");
+					json::format_int(pr, na + 3);
+					pr.append(",\"WEIGHTS_0\":");
+					json::format_int(pr, na + 4);
+					pr.append("},\"indices\":");
+					json::format_int(pr, na + 5);
+					pr.append(",\"material\":");
+					json::format_int(pr, nm0);
+					pr.append("}]");
+					mh_obj(js, hd, m, "primitives", pr[..]);
+				} else {
+					var ga = -1;
+					for q in gm.len / 2 { if gm[q * 2] == mi { ga = gm[q * 2 + 1]; } }
+					if ga >= 0 {
+						let pr = json::element(hd, bk_mem(hd, m, "primitives"), 0);
+						var pa byte[>..] = [];
+						pa.append("\"POSITION\":");
+						json::format_int(pa, ga);
+						var at2 byte[>..] = [];
+						at2.append("\"attributes\":");
+						mh_obj(at2, hd, bk_mem(hd, pr, "attributes"), "POSITION", pa[..]);
+						var pp byte[>..] = [];
+						pp.append("\"primitives\":[");
+						mh_obj(pp, hd, pr, "attributes", at2[..]);
+						pp.push(']');
+						mh_obj(js, hd, m, "primitives", pp[..]);
+					} else { let _ = json::format_node(js, hd, m); }
+				}
+				mi += 1;
+			}
+			js.push(']');
+		} else if k == "skins" {
+			js.push('[');
+			var ib byte[>..] = [];
+			ib.append("\"inverseBindMatrices\":");
+			json::format_int(ib, na + 7);
+			mh_obj(js, hd, hs, "inverseBindMatrices", ib[..]);
+			js.push(']');
+		} else if k == "accessors" { mh_arr(js, hd, c, ac[..]); }
+		else if k == "bufferViews" { mh_arr(js, hd, c, vs[..]); }
+		else if k == "buffers" { js.append("[{\"byteLength\":"); json::format_int(js, bp4 + bin.len); js.append("}]"); }
+		else if k == "images" {
+			var e byte[>..] = [];
+			e.append(",{\"bufferView\":");
+			json::format_int(e, nv + 8 + gm.len / 2);
+			e.append(",\"mimeType\":\"image/jpeg\",\"name\":\"body\"}");
+			mh_arr(js, hd, c, e[..]);
+		} else if k == "textures" {
+			var e byte[>..] = [];
+			e.append(",{\"sampler\":0,\"source\":");
+			json::format_int(e, ni0);
+			e.push('}');
+			mh_arr(js, hd, c, e[..]);
+		} else if k == "materials" {
+			var e byte[>..] = [];
+			e.append(",{\"name\":\"body\",\"pbrMetallicRoughness\":{\"baseColorFactor\":");
+			let _ = json::format_node(e, hd, bk_mem(hd, hpbr, "baseColorFactor"));
+			e.append(",\"metallicFactor\":0,\"roughnessFactor\":0.45,\"baseColorTexture\":{\"index\":");
+			json::format_int(e, nt0);
+			e.append("}},\"extras\":{\"amni\":\"skin\"}}");
+			mh_arr(js, hd, c, e[..]);
+		} else { let _ = json::format_node(js, hd, c); }
+	}
+	js.push('}');
+	while js.len % 4 != 0 { js.push(' '); }
+	var o byte[>..] = [];
+	o.append("glTF");
+	bk_put32(o, 2);
+	bk_put32(o, 12 + 8 + js.len + 8 + bp4 + bin.len);
+	bk_put32(o, js.len);
+	o.append("JSON");
+	o.append(js);
+	bk_put32(o, bp4 + bin.len);
+	o.append("BIN");
+	o.push(0);
+	o.append(hb[b0..b0 + bl]);
+	while o.len % 4 != 0 { o.push(0); }
+	o.append(bin);
+	write_file(a[4], o);
+	print("mhuman: body ", rv.len, " vertices, ", ix.len / 3, " triangles; head part of the old skin ", hi2.len / 3, " triangles -> ", a[4]);
+}
