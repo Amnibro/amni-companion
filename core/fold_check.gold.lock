@@ -531,11 +531,11 @@ fn find_clip(name const byte[:], n int) int {
 	}
 	return -1;
 }
-=== -332baee44330a789
+=== -26305f47312d8983
 fn main() {
 	let a = args();
 	if a.len < 3 {
-		print("usage: fold_check <model.glb> <clips.gltf> [mesh=skin] [move=joint:dx,dy,dz ...] [dump] [cor] [half]; counts folded, crushed and stretched triangles per body region in bind, idle, walk, dance and sit poses");
+		print("usage: fold_check <model.glb> <clips.gltf> [mesh=skin] [move=joint:dx,dy,dz ...] [dump] [cor] [half] [knee=k] [elbow=k]; counts folded, crushed and stretched triangles per body region in bind, idle, walk, dance and sit poses");
 		return;
 	}
 	clips::clips_lib(a[2]);
@@ -544,39 +544,67 @@ fn main() {
 		print("load fail");
 		return;
 	}
-	for s, i in a {
-		if i >= 3 && starts_with(s, "move=") {
-			move_joint(asset, s[5..]);
+	var half = false;
+	var ek f32 = 2.0;
+	var kk f32 = 3.0;
+	var mesh const byte[:] = "skin";
+	var have_mesh = false;
+	for x, i in a {
+		if i < 3 {
+			continue;
+		}
+		if starts_with(x, "move=") {
+			move_joint(asset, x[5..]);
+		} else if starts_with(x, "knee=") {
+			let v, ok = parse_flt(trim(x[5..]));
+			if ok {
+				kk = v as f32;
+			}
+		} else if starts_with(x, "elbow=") {
+			let v, ok = parse_flt(trim(x[6..]));
+			if ok {
+				ek = v as f32;
+			}
+		} else if x == "dump" {
+			dump = true;
+		} else if x == "cor" {
+			cor_on = true;
+		} else if x == "half" {
+			half = true;
+		} else if !have_mesh {
+			mesh = x;
+			have_mesh = true;
 		}
 	}
 	let it = s3d::add(asset);
 	let nlib = clips::clips_load(a[2], asset);
-	var half = false;
-	var mesh const byte[:] = "skin";
-	var have_mesh = false;
-	for s, i in a {
-		if i < 3 {
-			continue;
-		}
-		if s == "dump" {
-			dump = true;
-		} else if s == "cor" {
-			cor_on = true;
-		} else if s == "half" {
-			half = true;
-		} else if !starts_with(s, "move=") && !have_mesh {
-			mesh = s;
-			have_mesh = true;
-		}
-	}
 	var sl i32[22];
 	let first = gltf::assets[asset].nodes.first;
 	for i in 22 {
 		sl[i] = if clips::kc_slot[i] < 0 { -1 } else { (clips::kc_slot[i] as int - first) as i32 };
 	}
 	if half {
-		var hk int[4] = [clips::kc_slot[14] as int, clips::kc_slot[18] as int, clips::kc_slot[8] as int, clips::kc_slot[12] as int];
-		let hr = half_joints(asset, hk[..]);
+		var hk int[6];
+		hk[0] = clips::kc_slot[14] as int;
+		hk[1] = clips::kc_slot[18] as int;
+		hk[2] = clips::kc_slot[8] as int;
+		hk[3] = clips::kc_slot[12] as int;
+		hk[4] = clips::kc_slot[15] as int;
+		hk[5] = clips::kc_slot[19] as int;
+		var hs f32[6];
+		hs[0] = 0.0;
+		hs[1] = 0.0;
+		hs[2] = ek;
+		hs[3] = ek;
+		hs[4] = -kk;
+		hs[5] = -kk;
+		if kk < 0.0 {
+			hk[4] = -1;
+			hk[5] = -1;
+			hs[4] = 0.0;
+			hs[5] = 0.0;
+		}
+		let hr = half_joints(asset, hk[..], hs[..]);
 		print("half joints ", hr);
 	}
 	mix_open(asset, it, sl[..]);
@@ -614,9 +642,8 @@ fn main() {
 			var tag byte[>..] = [];
 			tag.append(names[ci]);
 			tag.push(' ');
-			let ts = str(target);
-			tag.append(ts);
-			measure(it, tag[..]);
+			tag.append(str(target));
+			measure(it, tag);
 		}
 	}
 }
