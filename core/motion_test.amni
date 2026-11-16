@@ -59,50 +59,49 @@ fn showq(label const byte[:], a real[:], k int, o int) {
 	}
 	print(s);
 }
-fn packed(pos real[:]) real[264] {
-	var r real[264] = [0.0; 264];
-	pack_rest(pos, r);
-	r
+fn id_frames() real[91] {
+	var f real[91] = [0.0; 91];
+	for k in 22 { f[4 * k + 3] = 1.0; }
+	f[88] = 0.0;
+	f[89] = 1.0;
+	f[90] = 0.0;
+	f
 }
-fn ident_slots() i32[22] {
-	var s i32[22] = [0 as i32; 22];
-	for k in 22 { s[k] = k as i32; }
-	s
+fn put_q(f real[:], k int, q qm::Q4) {
+	f[4 * k] = q.x;
+	f[4 * k + 1] = q.y;
+	f[4 * k + 2] = q.z;
+	f[4 * k + 3] = q.w;
 }
-fn lmset(lm real[:], i int, x real, y real, z real) {
+fn set_lm(lm real[:], i int, x real, y real, z real) {
 	lm[4 * i] = x;
 	lm[4 * i + 1] = y;
 	lm[4 * i + 2] = z;
 	lm[4 * i + 3] = 1.0;
 }
-fn make_lm() real[132] {
-	var lm real[132] = [0.0; 132];
-	lmset(lm, 23, 0.1, 0.0, 0.0);
-	lmset(lm, 24, -0.1, 0.0, 0.0);
-	lmset(lm, 11, 0.18, -0.45, 0.0);
-	lmset(lm, 12, -0.18, -0.45, 0.0);
-	lmset(lm, 13, 0.18, -0.15, 0.0);
-	lmset(lm, 15, 0.18, 0.1, 0.0);
-	lmset(lm, 14, -0.45, -0.45, 0.0);
-	lmset(lm, 16, -0.7, -0.45, 0.0);
-	lm
-}
-fn frame_id() real[91] {
-	var f real[91] = [0.0; 91];
-	for k in 22 { f[4 * k + 3] = 1.0; }
-	f[89] = 1.0;
-	f
-}
-fn run_retarget(trest real[:], f real[:]) real[91] {
-	let slot = ident_slots();
-	let srest = packed(test_pos());
+fn run_target(label const byte[:], slot i32[:], srest real[:], tpos real[:], frames real[:], a int, b int, hips bool) {
+	var trest real[264] = [0.0; 264];
+	pack_rest(tpos, trest);
 	var out real[91] = [0.0; 91];
-	kin::retarget_clip(slot, srest, slot, trest, 1, f, out);
-	out
+	kin::retarget_clip(slot, srest, slot, trest, 1, frames, out);
+	showq(label, out, a, 4 * a);
+	showq(label, out, b, 4 * b);
+	if hips {
+		var s byte[>..] = [];
+		s.append("hips");
+		for i in 3 {
+			s.push(' ');
+			f4(s, out[88 + i]);
+		}
+		print(s);
+	}
 }
 fn main() {
-	let slot = ident_slots();
-	let rest = packed(test_pos());
+	var slot i32[22] = [0; 22];
+	for k in 22 { slot[k] = k as i32; }
+	var pos = test_pos();
+	var rest real[264] = [0.0; 264];
+	pack_rest(pos, rest);
 	var want real[110] = [0.0; 110];
 	var out real[110] = [0.0; 110];
 	kin::solve_local(slot, rest, want, out);
@@ -110,63 +109,58 @@ fn main() {
 	for k in 22 {
 		for i in 4 {
 			let e = if i == 3 { 1.0 } else { 0.0 };
-			if abs(out[5 * k + i] - e) > 0.000000001 { good = false; }
+			if abs(out[5 * k + i] - e) > 1e-9 { good = false; }
 		}
 	}
-	if good { print("rest ok"); } else { print("rest bad"); }
+	print(if good { "rest ok" } else { "rest bad" });
+	for i in 110 { want[i] = 0.0; out[i] = 0.0; }
 	want[35] = 0.0;
 	want[36] = -1.0;
 	want[37] = 0.0;
-	want[38] = 0.0;
 	want[39] = 2.0;
-	var out2 real[110] = [0.0; 110];
-	kin::solve_local(slot, rest, want, out2);
-	showq("", out2, 7, 35);
-	showq("", out2, 8, 40);
-	let lm = make_lm();
-	var pout real[110] = [0.0; 110];
-	kin::pose_reset();
-	let n = kin::pose_solve(lm, false, slot, rest, pout);
+	kin::solve_local(slot, rest, want, out);
+	showq("", out, 7, 35);
+	showq("", out, 8, 40);
+	var lm real[132] = [0.0; 132];
+	set_lm(lm, 23, 0.1, 0.0, 0.0);
+	set_lm(lm, 24, -0.1, 0.0, 0.0);
+	set_lm(lm, 11, 0.18, -0.45, 0.0);
+	set_lm(lm, 12, -0.18, -0.45, 0.0);
+	set_lm(lm, 13, 0.18, -0.15, 0.0);
+	set_lm(lm, 15, 0.18, 0.1, 0.0);
+	set_lm(lm, 14, -0.45, -0.45, 0.0);
+	set_lm(lm, 16, -0.7, -0.45, 0.0);
+	for i in 110 { out[i] = 0.0; }
+	let n = kin::pose_solve(lm, false, slot, rest, out);
 	print("count ", n);
-	showq("pose", pout, 7, 35);
-	showq("pose", pout, 11, 55);
-	var mout real[110] = [0.0; 110];
-	kin::pose_reset();
-	let n2 = kin::pose_solve(lm, true, slot, rest, mout);
-	showq("mirror", mout, 11, 55);
-	showq("mirror", mout, 7, 35);
+	showq("pose", out, 7, 35);
+	showq("pose", out, 11, 55);
+	for i in 110 { out[i] = 0.0; }
+	kin::pose_solve(lm, true, slot, rest, out);
+	showq("mirror", out, 11, 55);
+	showq("mirror", out, 7, 35);
 	let h = 0.70710678;
-	var t5 real[66] = test_pos();
+	var t5 = test_pos();
 	setp(t5, 8, 0.15 + 0.25 * h, 1.4 - 0.25 * h, 0.0);
 	setp(t5, 9, 0.15 + 0.5 * h, 1.4 - 0.5 * h, 0.0);
-	let r5 = run_retarget(packed(t5), frame_id());
-	showq("retarget", r5, 7, 28);
-	showq("retarget", r5, 8, 32);
-	var hs byte[>..] = [];
-	hs.append("hips");
-	for i in 3 {
-		hs.push(' ');
-		f4(hs, r5[88 + i]);
-	}
-	print(hs);
-	var t6 real[66] = test_pos();
+	var fr = id_frames();
+	run_target("retarget", slot, rest, t5, fr, 7, 8, true);
+	var t6 = test_pos();
 	setp(t6, 15, 0.2, 0.5, 0.0);
 	setp(t6, 16, 0.3, 0.08, 0.0);
-	let r6 = run_retarget(packed(t6), frame_id());
-	showq("legs", r6, 14, 56);
-	showq("legs", r6, 15, 60);
-	var t7 real[66] = test_pos();
+	run_target("legs", slot, rest, t6, fr, 14, 15, false);
+	var t7 = test_pos();
 	setp(t7, 16, 0.1, 0.12, 0.0);
 	setp(t7, 20, -0.1, 0.12, 0.0);
 	setp(t7, 17, 0.1, 0.04, 0.12);
 	setp(t7, 21, -0.1, 0.04, 0.12);
-	var f7 real[91] = frame_id();
-	let ang = -0.52359878;
-	f7[56] = sin(ang / 2.0);
-	f7[57] = 0.0;
-	f7[58] = 0.0;
-	f7[59] = cos(ang / 2.0);
-	let r7 = run_retarget(packed(t7), f7);
-	showq("ik", r7, 14, 56);
-	showq("ik", r7, 15, 60);
+	var f7 = id_frames();
+	put_q(f7, 14, qm::q_axis_angle(qm::v3(1.0, 0.0, 0.0), -0.52359878));
+	run_target("ik", slot, rest, t7, f7, 14, 15, false);
+	var t8 = test_pos();
+	setp(t8, 2, 0.0, 1.12, 0.0);
+	setp(t8, 3, 0.0, 1.16, 0.0);
+	var f8 = id_frames();
+	put_q(f8, 3, qm::q_axis_angle(qm::v3(1.0, 0.0, 0.0), 0.52359878));
+	run_target("spine", slot, rest, t8, f8, 2, 3, false);
 }

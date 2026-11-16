@@ -48,24 +48,24 @@ fn solve_local(slot i32[:], rest real[:], want real[:], out real[:]) {
 		out[5 * k + 4] = if used { 1.0 } else { 0.0 };
 	}
 }
-=== 2f1ddc22eb3f7391
+=== 750fbc6bddfca541
+fn rc_arm(k int) bool {
+	return k == 7 || k == 8 || k == 9 || k == 11 || k == 12 || k == 13;
+}
 fn retarget_corr(sslot i32[:], srest real[:], tslot i32[:], trest real[:], corr real[:]) {
 	for k in 22 {
-		var q = qid();
-		let both = sslot[k] >= 0 && tslot[k] >= 0;
-		if both && k != 0 && (k < 14 || k > 21) {
-			let cs = rig::eff_child(sslot, k);
-			let ct = rig::eff_child(tslot, k);
-			if cs >= 0 && ct >= 0 {
-				let td = qm::v_norm(qm::v_sub(rest_p0(trest, ct), rest_p0(trest, k)));
-				let sd = qm::v_norm(qm::v_sub(rest_p0(srest, cs), rest_p0(srest, k)));
-				q = qm::q_from_to(td, sd);
-			} else {
-				let tp = rig::eff_parent(tslot, k);
-				if tp >= 0 { q = qm::q_get(corr, 4 * tp); }
-			}
+		qm::q_put(corr, 4 * k, qid());
+		if !rc_arm(k) || sslot[k] < 0 || tslot[k] < 0 { continue; }
+		let cs = rig::eff_child(sslot, k);
+		let ct = rig::eff_child(tslot, k);
+		if cs >= 0 && ct >= 0 {
+			let tv = qm::v_norm(qm::v_sub(rest_p0(trest, ct), rest_p0(trest, k)));
+			let sv = qm::v_norm(qm::v_sub(rest_p0(srest, cs), rest_p0(srest, k)));
+			qm::q_put(corr, 4 * k, qm::q_from_to(tv, sv));
+		} else {
+			let ep = rig::eff_parent(tslot, k);
+			if ep >= 0 { qm::q_put(corr, 4 * k, qm::q_get(corr, 4 * ep)); }
 		}
-		qm::q_put(corr, 4 * k, q);
 	}
 }
 === -64c3670e3fbf9488
@@ -144,36 +144,106 @@ fn retarget_frame(sslot i32[:], srest real[:], tslot i32[:], trest real[:], corr
 	rf_leg(sslot, srest, tslot, trest, corr, sw, want, 14, 15, 16);
 	rf_leg(sslot, srest, tslot, trest, corr, sw, want, 18, 19, 20);
 }
-=== 7648d959fc713478
+=== 35074a76a66b4a6a
+fn sp_chain(slot i32[:], j int[:]) int {
+	var n = 0;
+	for s in 1..4 {
+		if slot[s] >= 0 {
+			j[n] = s;
+			n++;
+		}
+	}
+	j[n] = 4;
+	return n + 1;
+}
+fn sp_params(rest real[:], j int[:], m int, p real[:]) bool {
+	p[0] = 0.0;
+	for i in m - 1 {
+		p[i + 1] = p[i] + rf_len(qm::v_sub(rest_p0(rest, j[i + 1]), rest_p0(rest, j[i])));
+	}
+	let total = p[m - 1];
+	if total < 1e-6 { return false; }
+	for i in m { p[i] = p[i] / total; }
+	return true;
+}
+fn sp_seg(p real[:], ns int, u real) int {
+	for i in ns {
+		if u <= p[i + 1] { return i; }
+	}
+	return ns - 1;
+}
+fn sp_point(p real[:], x qm::V3[:], ns int, u real) qm::V3 {
+	let uc = clamp(u, 0.0, 1.0);
+	let i = sp_seg(p, ns, uc);
+	let span = p[i + 1] - p[i];
+	let f = if span < 1e-9 { 0.0 } else { (uc - p[i]) / span };
+	var s = qm::v3(0.0, 0.0, 0.0);
+	for k in i { s = qm::v_add(s, x[k]); }
+	return qm::v_add(s, qm::v_scale(x[i], f));
+}
+fn rf_spine(sslot i32[:], srest real[:], tslot i32[:], trest real[:], sw real[:], want real[:]) {
+	if sslot[0] < 0 || sslot[4] < 0 || tslot[0] < 0 || tslot[4] < 0 { return; }
+	var sj int[4] = [0; 4];
+	var tj int[4] = [0; 4];
+	let sm = sp_chain(sslot, sj);
+	let tm = sp_chain(tslot, tj);
+	if sm < 2 || tm < 2 { return; }
+	let ns = sm - 1;
+	var r qm::V3[3] = [qm::v3(0.0, 0.0, 0.0); 3];
+	var c qm::V3[3] = [qm::v3(0.0, 0.0, 0.0); 3];
+	var dd qm::Q4[3] = [qid(); 3];
+	for i in ns {
+		r[i] = qm::v_sub(rest_p0(srest, sj[i + 1]), rest_p0(srest, sj[i]));
+		dd[i] = rf_d(sw, srest, sj[i]);
+		c[i] = qm::q_rot(dd[i], r[i]);
+	}
+	var p real[4] = [0.0; 4];
+	var tp real[4] = [0.0; 4];
+	if !sp_params(srest, sj, sm, p) { return; }
+	if !sp_params(trest, tj, tm, tp) { return; }
+	for k in tm - 1 {
+		let kk = tj[k];
+		let a = tp[k];
+		let b = tp[k + 1];
+		let v0 = qm::v_sub(sp_point(p, r, ns, b), sp_point(p, r, ns, a));
+		let v1 = qm::v_sub(sp_point(p, c, ns, b), sp_point(p, c, ns, a));
+		let dm = dd[sp_seg(p, ns, (a + b) / 2.0)];
+		var delta = dm;
+		if rf_len(v0) > 1e-9 && rf_len(v1) > 1e-9 {
+			delta = qm::q_mul(qm::q_from_to(qm::v_norm(qm::q_rot(dm, v0)), qm::v_norm(v1)), dm);
+		}
+		qm::q_put(want, 5 * kk, qm::q_mul(delta, rest_w0(trest, kk)));
+		want[5 * kk + 4] = 1.0;
+	}
+}
+=== -7ebfe83f736f8059
 fn retarget_clip(sslot i32[:], srest real[:], tslot i32[:], trest real[:], nf int, frames real[:], out real[:]) {
 	var corr real[88] = [0.0; 88];
 	retarget_corr(sslot, srest, tslot, trest, corr);
 	let ratio = leg_ratio(sslot, srest, tslot, trest);
-	var sw real[88] = [0.0; 88];
 	var want real[110] = [0.0; 110];
 	var loc real[110] = [0.0; 110];
+	let sp0 = rest_p0(srest, 0);
+	let tp0 = rest_p0(trest, 0);
 	for f in nf {
 		let base = 91 * f;
-		for i in 88 { sw[i] = frames[base + i]; }
+		let sw = frames[base..base + 88];
 		retarget_frame(sslot, srest, tslot, trest, corr, sw, want);
+		rf_spine(sslot, srest, tslot, trest, sw, want);
 		solve_local(tslot, trest, want, loc);
 		for k in 22 {
-			var neg = false;
+			for c in 4 { out[base + 4 * k + c] = loc[5 * k + c]; }
 			if f > 0 {
-				let pb = 91 * (f - 1) + 4 * k;
-				let dt = out[pb] * loc[5 * k] + out[pb + 1] * loc[5 * k + 1] + out[pb + 2] * loc[5 * k + 2] + out[pb + 3] * loc[5 * k + 3];
-				neg = dt < 0.0;
-			}
-			for c in 4 {
-				let v = loc[5 * k + c];
-				out[base + 4 * k + c] = if neg { -v } else { v };
+				var d = 0.0;
+				for c in 4 { d += out[base + 4 * k + c] * out[base - 91 + 4 * k + c]; }
+				if d < 0.0 {
+					for c in 4 { out[base + 4 * k + c] = -out[base + 4 * k + c]; }
+				}
 			}
 		}
-		let sp = qm::v_get(frames, base + 88);
-		let hp = qm::v_add(rest_p0(trest, 0), qm::v_scale(qm::v_sub(sp, rest_p0(srest, 0)), ratio));
-		out[base + 88] = hp.x;
-		out[base + 89] = hp.y;
-		out[base + 90] = hp.z;
+		out[base + 88] = tp0.x + (frames[base + 88] - sp0.x) * ratio;
+		out[base + 89] = tp0.y + (frames[base + 89] - sp0.y) * ratio;
+		out[base + 90] = tp0.z + (frames[base + 90] - sp0.z) * ratio;
 	}
 }
 === -18876e3fb95b51bd
