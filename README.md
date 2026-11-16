@@ -60,6 +60,7 @@ When the camera is on and you ask what it sees, the connected brain gets a singl
 ```bash
 tools/build.sh   # rebuild core/*.amni from Gold (if installed) and web/companion.wasm
 tools/test.sh    # build and run the core tests natively, then rebuild the wasm
+node tools/apptest.mjs   # drive the built app in headless Chrome (WebGPU): models, chat, panels, Camera AR
 tools/stock.sh   # rebuild Holo and Dex from art/*.json (needs AMNI_SCIENT, see below)
 ```
 

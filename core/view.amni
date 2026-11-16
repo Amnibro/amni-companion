@@ -322,6 +322,10 @@ export fn hv_cloth() {
 export fn hv_hair_probe(k i32) f32 {
 	return hair::probe(hg, k as int);
 }
+export fn hv_through(on i32) {
+	s3d::see_through = on != 0;
+	s3d::temporal_reset = true;
+}
 export fn hv_stop() {
 	web::frames(false);
 }
@@ -428,6 +432,7 @@ export fn he_frame(t real) {
 	if s3d::render_begin() {
 		if hg >= 0 {
 			hair::draw(dt as f32);
+			s3d::matte_layer = hair::hairt;
 		}
 		s3d::render_end(gfx::screen());
 	}
