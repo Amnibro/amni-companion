@@ -1,6 +1,6 @@
 # Amni-Companion
 
-**A 3D AI companion that lives in your browser.** Bring your own model and your own AI key, talk to it by voice or text, and see it standing over your camera or in your room with body tracking and gesture recognition. Everything runs on your device.
+**A 3D AI companion that lives in your browser.** Bring your own model and your own AI key, talk to it by voice or text, and see it standing over your camera with body tracking and gesture recognition. Everything runs on your device.
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](./LICENSE)
 
@@ -19,7 +19,7 @@
 - **It moves when it talks.** Replies can carry tags like `[[emote:wave]]`, `[[anim:dance]]`, `[[walk:user]]`, `[[look:left]]` and `[[face:smile]]`, so the companion waves, dances, walks over, looks around and changes expression.
 - **Camera AR with body tracking.** The companion stands over your camera feed and can mirror your body like a reflection.
 - **It notices you.** On-device recognition of waves, claps, hands up, pointing, crossed arms, T-poses, approaching and backing away; hand signs (thumbs up and down, peace, love, fist, open palm, pointing up); smiles, surprise, frowns, winks, nods and head shakes; and everyday objects you hold up. It reacts out loud if you let it.
-- **Room AR.** On WebXR-capable phones and headsets, place the companion on your floor and have it walk to you.
+- **Room AR** (WebXR floor placement) is not in the 1.4 builds: the Helium renderer does not draw in WebXR sessions yet.
 - **Voice.** Speech recognition and synthesis through the browser, with on-device recognition where the browser supports it.
 - **Private by design.** No accounts, no servers, no analytics. Settings, keys, models and conversation history live only in your browser, and **Erase everything** wipes them.
 
@@ -31,7 +31,7 @@ The app is static files. Serve the `web/` folder over HTTP:
 tools/serve.sh            # http://127.0.0.1:7437
 ```
 
-Camera, microphone and WebXR need a secure context: `localhost` works, and other hosts need HTTPS.
+Camera and microphone need a secure context: `localhost` works, and other hosts need HTTPS.
 
 ## Bring your own model
 
@@ -60,7 +60,7 @@ When the camera is on and you ask what it sees, the connected brain gets a singl
 ```bash
 tools/build.sh   # rebuild core/*.amni from Gold (if installed) and web/companion.wasm
 tools/test.sh    # build and run the core tests natively, then rebuild the wasm
-node tools/apptest.mjs   # drive the built app in headless Chrome (WebGPU): models, chat, panels, Camera AR
+node tools/apptest.mjs   # drive the built app in headless Chrome (WebGPU): models, your own .glb, chat, panels, Camera AR
 tools/stock.sh   # rebuild Holo and Dex from art/*.json (needs AMNI_SCIENT, see below)
 ```
 

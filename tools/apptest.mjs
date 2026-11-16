@@ -35,12 +35,13 @@ try{
   await p.click('#say');await p.keyboard.type('hello there');await p.click('#send');ok(await shown('#bubble'),'typed message gets a reply')
   ok(await panel('models')&&await pick('Holo'),'back to Holo');await close('models')
   ok(await panel('settings'),'Settings panel opens');await close('settings');ok(await panel('brain'),'AI brain panel opens');await close('brain')
-  await p.click('#camBtn');ok(await mode(true),'Camera AR starts');await p.waitForTimeout(8000)
-  const solo=await p.addStyleTag({content:'body>*:not(#cam):not(#hestage){visibility:hidden!important}'});await p.waitForTimeout(400)
-  const both=await p.screenshot(),hide=await p.addStyleTag({content:'#hestage{visibility:hidden!important}'});await p.waitForTimeout(400)
-  const bare=await p.screenshot(),f=differ(both,bare);await hide.evaluate(e=>e.remove());await solo.evaluate(e=>e.remove())
-  ok(f>0.004&&f<0.5,'companion stands over the camera picture',(100*f).toFixed(1)+' % of the screen')
-  await p.click('#camBtn');ok(await mode(false),'Camera AR stops')
+  const over=async()=>{const solo=await p.addStyleTag({content:'body>*:not(#cam):not(#hestage){visibility:hidden!important}'});await p.waitForTimeout(400);const both=await p.screenshot(),hide=await p.addStyleTag({content:'#hestage{visibility:hidden!important}'});await p.waitForTimeout(400);const f=differ(both,await p.screenshot());await hide.evaluate(e=>e.remove());await solo.evaluate(e=>e.remove());return f}
+  const ar=async m=>{await p.click('#camBtn');ok(await mode(true),'Camera AR starts'+m);await p.waitForTimeout(8000);const f=await over();ok(f>0.004&&f<0.5,'companion stands over the camera picture'+m,(100*f).toFixed(1)+' % of the screen');await p.click('#camBtn');ok(await mode(false),'Camera AR stops'+m)}
+  await ar('')
+  ok(await panel('models'),'Models panel reopens');const[fc]=await Promise.all([p.waitForEvent('filechooser'),p.click('label.file')])
+  await fc.setFiles({name:'my model.glb',mimeType:'model/gltf-binary',buffer:fs.readFileSync(path.join(root,'models/dex.glb'))});await p.waitForTimeout(1500)
+  const mine=await settled()&&(await p.locator('#mine .item span').allTextContents()).join();ok(mine==='my model.glb','your own .glb loads',String(mine));await close('models');await p.waitForTimeout(4000)
+  await ar(', your own model')
   const real=errs.filter(e=>!/favicon|Failed to load resource|TensorFlow Lite|NotAllowedError|Permission|speech|SpeechSynthesis|getUserMedia/i.test(e))
   ok(real.length===0,'no page errors',real.slice(0,4).join(' | ').slice(0,400))
 }finally{await b.close();srv.close();fs.rmSync(tmp,{recursive:true,force:true})}
