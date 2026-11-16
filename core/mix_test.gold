@@ -1,0 +1,17 @@
+use std
+
+The program tests inertialized clip transitions in the mixer on Holo. Imports: gfx, math, gfx.linalg, gfx.gltf, gfx.scene3d, clips and mix (local modules; the mixer's functions and state, such as `mix_open`, `mix_clip`, `mix_play`, `mix_advance`, `sample`, `cur_q` and `slot_node`, are used unqualified). Set up exactly as the relax tool does: `let asset = gltf::load("../web/models/holo.glb")`, `let it = s3d::add(asset)`, `let nlib = clips::clips_load("../web/anim/AnimationLibrary_Godot_Standard.gltf", asset)`, then `var sl i32[22]; let first = gltf::assets[asset].nodes.first; for i in 22 { sl[i] = if clips::kc_slot[i] < 0 { -1 } else { (clips::kc_slot[i] as int - first) as i32 }; }`, `mix_open(asset, it, sl[..])` and `for c in nlib { mix_clip(clips::kc_nf[c], clips::kc_loop[c], clips::clips_frames(c)); }`. Find the clip indices of "Idle_Loop" and "Walk_Formal_Loop" by comparing `clips::clips_name(k, nb)` (it fills a byte buffer nb) for k below nlib.
+
+`ang(a linalg::Quat, b linalg::Quat) f32` is the angle between two rotations in degrees: 2·acos(min(1, |a·b|))·57.29578 using the 4-component dot product. `pose_diff(a linalg::Quat[22]) f32` is the largest `ang(a[k], cur_q[k])` over slots k with `slot_node[k] >= 0`. Keep a `var snap = linalg::Quat[22]` copied from `cur_q` when needed. All steps advance with dt = 1/30.
+
+1. Hard cut: `mix_play(idle, 0.0)`, advance 30 frames, copy cur_q into snap, `mix_play(walk, 0.0)`, advance 1 frame; cut = pose_diff(snap).
+2. The walk clip's own speed: `mix_play(walk, 0.0)`, advance 1 frame, then for 10 frames copy snap, advance 1 frame and track own = the largest pose_diff(snap).
+3. Inertialized: `mix_play(idle, 0.0)`, advance 30 frames, copy snap, `mix_play(walk, 0.3)`, advance 1 frame; jump = pose_diff(snap). The offset of slot k after frame i is `off(k, i) = ang(cur_q[k], sample(walk, i / 30.0, k))` (the clip time is i/30 after i frames); keep `prev f32[22]` with off(k, 1) after that first frame and x0 = its largest value. Then for frames i from 2 to 10: advance 1 frame and for each slot with `slot_node[k] >= 0`, `o = off(k, i)`, track step = the largest |o − prev[k]| and grow = the largest o − prev[k], then prev[k] = o. After frame 10 (past the 0.3 s blend) settle = the largest prev[k].
+
+Print `cut ok` when cut > 10 else `cut bad`; `jump ok` when jump < own else `jump bad` (the switch moves no faster than the clip itself); `decay ok` when step < 0.25·x0 and grow < 0.5 else `decay bad` (a quintic over 9 frames moves at most 0.208 of the offset per frame and never overshoots); `settle ok` when settle < 0.01 else `settle bad`.
+
+expect:
+cut ok
+jump ok
+decay ok
+settle ok

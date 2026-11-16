@@ -1,0 +1,98 @@
+=== 72145a238dda473b
+import gfx;
+import math;
+import gfx.linalg;
+import gfx.gltf;
+import gfx.scene3d;
+import clips;
+import mix;
+fn setup() int, int {
+	let asset = gltf::load("../web/models/holo.glb");
+	let it = s3d::add(asset);
+	let nlib = clips::clips_load("../web/anim/AnimationLibrary_Godot_Standard.gltf", asset);
+	var sl i32[22];
+	let first = gltf::assets[asset].nodes.first;
+	for i in 22 { sl[i] = if clips::kc_slot[i] < 0 { -1 } else { (clips::kc_slot[i] as int - first) as i32 }; }
+	mix_open(asset, it, sl[..]);
+	for c in nlib { mix_clip(clips::kc_nf[c], clips::kc_loop[c], clips::clips_frames(c)); }
+	var idle = -1;
+	var walk = -1;
+	var nb byte[>..] = [];
+	for k in nlib {
+		nb.clear();
+		clips::clips_name(k, nb);
+		if nb == "Idle_Loop" { idle = k; }
+		if nb == "Walk_Formal_Loop" { walk = k; }
+	}
+	return idle, walk;
+}
+=== 3a7eec6d71b4f8d5
+let DT f32 = 1.0 / 30.0;
+var snap linalg::Quat[22];
+fn ang(a linalg::Quat, b linalg::Quat) f32 {
+	let d = abs(a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w) as real;
+	(2.0 * acos(min(1.0, d)) * 57.29578) as f32
+}
+fn pose_diff(a linalg::Quat[22]) f32 {
+	var m f32 = 0.0;
+	for k in 22 { if slot_node[k] >= 0 { m = max(m, ang(a[k], cur_q[k])); } }
+	m
+}
+fn adv(n int) { for i in n { mix_advance(DT); } }
+=== 421ef067fd6c3d4e
+fn off(walk int, k int, i int) f32 { ang(cur_q[k], sample(walk, (i as real / 30.0) as f32, k)) }
+fn run(idle int, walk int) f32, f32, f32, f32, f32, f32, f32 {
+	mix_play(idle, 0.0);
+	adv(30);
+	snap = cur_q;
+	mix_play(walk, 0.0);
+	adv(1);
+	let cut = pose_diff(snap);
+	mix_play(walk, 0.0);
+	adv(1);
+	var own f32 = 0.0;
+	for f in 10 {
+		snap = cur_q;
+		adv(1);
+		own = max(own, pose_diff(snap));
+	}
+	mix_play(idle, 0.0);
+	adv(30);
+	snap = cur_q;
+	mix_play(walk, 0.3);
+	adv(1);
+	let jump = pose_diff(snap);
+	var prev f32[22] = [0.0; 22];
+	var x0 f32 = 0.0;
+	for k in 22 {
+		if slot_node[k] >= 0 {
+			prev[k] = off(walk, k, 1);
+			x0 = max(x0, prev[k]);
+		}
+	}
+	var step f32 = 0.0;
+	var grow f32 = -1000000000.0;
+	for i in 2..11 {
+		adv(1);
+		for k in 22 {
+			if slot_node[k] >= 0 {
+				let o = off(walk, k, i);
+				step = max(step, abs(o - prev[k]));
+				grow = max(grow, o - prev[k]);
+				prev[k] = o;
+			}
+		}
+	}
+	var settle f32 = 0.0;
+	for k in 22 { if slot_node[k] >= 0 { settle = max(settle, prev[k]); } }
+	return cut, own, jump, x0, step, grow, settle;
+}
+=== -6a145a8002a14077
+fn main() {
+	let idle, walk = setup();
+	let cut, own, jump, x0, step, grow, settle = run(idle, walk);
+	print(if cut > 10.0 { "cut ok" } else { "cut bad" });
+	print(if jump < own { "jump ok" } else { "jump bad" });
+	print(if step < 0.25 * x0 && grow < 0.5 { "decay ok" } else { "decay bad" });
+	print(if settle < 0.01 { "settle ok" } else { "settle bad" });
+}
