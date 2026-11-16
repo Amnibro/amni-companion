@@ -531,49 +531,57 @@ fn find_clip(name const byte[:], n int) int {
 	}
 	return -1;
 }
-=== 27f37aed0882b482
+=== -332baee44330a789
 fn main() {
 	let a = args();
 	if a.len < 3 {
-		print("usage: fold_check <model.glb> <clips.gltf> [mesh=skin] [move=joint:dx,dy,dz ...] [dump] [cor]; counts folded, crushed and stretched triangles per body region in bind, idle, walk, dance and sit poses");
+		print("usage: fold_check <model.glb> <clips.gltf> [mesh=skin] [move=joint:dx,dy,dz ...] [dump] [cor] [half]; counts folded, crushed and stretched triangles per body region in bind, idle, walk, dance and sit poses");
 		return;
 	}
+	clips::clips_lib(a[2]);
 	let asset = gltf::load(a[1]);
 	if asset < 0 {
 		print("load fail");
 		return;
 	}
-	for arg, i in a {
-		if i >= 3 && starts_with(arg, "move=") {
-			move_joint(asset, arg[5..]);
+	for s, i in a {
+		if i >= 3 && starts_with(s, "move=") {
+			move_joint(asset, s[5..]);
 		}
 	}
 	let it = s3d::add(asset);
 	let nlib = clips::clips_load(a[2], asset);
+	var half = false;
+	var mesh const byte[:] = "skin";
+	var have_mesh = false;
+	for s, i in a {
+		if i < 3 {
+			continue;
+		}
+		if s == "dump" {
+			dump = true;
+		} else if s == "cor" {
+			cor_on = true;
+		} else if s == "half" {
+			half = true;
+		} else if !starts_with(s, "move=") && !have_mesh {
+			mesh = s;
+			have_mesh = true;
+		}
+	}
 	var sl i32[22];
 	let first = gltf::assets[asset].nodes.first;
 	for i in 22 {
 		sl[i] = if clips::kc_slot[i] < 0 { -1 } else { (clips::kc_slot[i] as int - first) as i32 };
 	}
+	if half {
+		var hk int[4] = [clips::kc_slot[14] as int, clips::kc_slot[18] as int, clips::kc_slot[8] as int, clips::kc_slot[12] as int];
+		let hr = half_joints(asset, hk[..]);
+		print("half joints ", hr);
+	}
 	mix_open(asset, it, sl[..]);
 	for c in nlib {
 		mix_clip(clips::kc_nf[c], clips::kc_loop[c], clips::clips_frames(c));
-	}
-	var mesh byte[>..] = [];
-	mesh.append("skin");
-	var have_mesh = false;
-	for arg, i in a {
-		if i >= 3 {
-			if arg == "dump" {
-				dump = true;
-			} else if arg == "cor" {
-				cor_on = true;
-			} else if !starts_with(arg, "move=") && !have_mesh {
-				mesh.clear();
-				mesh.append(arg);
-				have_mesh = true;
-			}
-		}
 	}
 	gather(asset, mesh);
 	if bt.len == 0 {
@@ -584,8 +592,8 @@ fn main() {
 	}
 	print("skin tris ", bt.len / 3, " height ", h0, " to ", h1, " clips ", nlib);
 	measure(it, "bind");
-	let names = ["Idle_Loop", "Walk_Formal_Loop", "Dance_Loop", "Sitting_Idle_Loop"];
-	let at = [[1.0, 0.0, 0.0, 0.0], [0.5, 1.0, 0.0, 0.0], [0.7, 1.4, 2.1, 2.8], [1.0, 2.0, 3.0, 0.0]];
+	let names const byte[:][4] = ["Idle_Loop", "Walk_Formal_Loop", "Dance_Loop", "Sitting_Idle_Loop"];
+	let at f32[4][4] = [[1.0, 0.0, 0.0, 0.0], [0.5, 1.0, 0.0, 0.0], [0.7, 1.4, 2.1, 2.8], [1.0, 2.0, 3.0, 0.0]];
 	for ci in 4 {
 		let c = find_clip(names[ci], nlib);
 		if c < 0 {
@@ -606,8 +614,9 @@ fn main() {
 			var tag byte[>..] = [];
 			tag.append(names[ci]);
 			tag.push(' ');
-			tag.append(str(target));
-			measure(it, tag);
+			let ts = str(target);
+			tag.append(ts);
+			measure(it, tag[..]);
 		}
 	}
 }
