@@ -8,7 +8,7 @@ fn run(n int) {
 		life::life_step(inp, out);
 	}
 }
-fn check(name const byte[:], c bool) {
+fn report(name const byte[:], c bool) {
 	print(name, if c { " ok" } else { " bad" });
 }
 fn main() {
@@ -26,36 +26,35 @@ fn main() {
 		if prev < 0.5 && out[0] >= 0.5 { blinks++; }
 		prev = out[0];
 	}
-	check("blinks", blinks >= 16 && blinks <= 48);
+	report("blinks", blinks >= 16 && blinks <= 48);
 	life::life_reset(7);
 	run(60);
 	inp[2] = 0.5;
-	var c = 0;
-	while c < 60 {
+	var cnt = 0;
+	while cnt < 60 {
 		run(1);
-		c++;
+		cnt++;
 		if abs(out[14] - 0.5) < 0.06 { break; }
 	}
-	check("saccade", c >= 4 && c <= 9);
-	var within = true;
+	report("saccade", cnt >= 4 && cnt <= 9);
+	var lim = true;
 	for f in 90 {
 		run(1);
-		if abs(out[12]) > 0.21 + 1e-9 { within = false; }
+		if abs(out[12]) > 0.21 + 1e-9 { lim = false; }
 	}
-	check("eye limit", within && out[10] > 0.25);
+	report("eye limit", lim && out[10] > 0.25);
 	life::life_reset(7);
 	inp[2] = 0.0;
 	run(120);
 	inp[2] = 0.6;
 	run(7);
 	let h0 = out[10];
-	var err = 0.0;
+	var dev = 0.0;
 	for f in 23 {
 		run(1);
-		err = max(err, abs(out[14] - 0.6));
+		dev = max(dev, abs(out[14] - 0.6));
 	}
-	let h1 = out[10];
-	check("vor", h1 - h0 > 0.03 && err < 0.08);
+	report("vor", out[10] - h0 > 0.03 && dev <= 0.08);
 	life::life_reset(7);
 	inp[2] = 0.0;
 	inp[4] = 0.3;
@@ -64,15 +63,15 @@ fn main() {
 	inp[4] = 3.0;
 	run(120);
 	let v2 = out[30];
-	check("vergence", v1 > 0.08 && v2 < 0.03);
+	report("vergence", v1 > 0.08 && v2 < 0.03);
 	life::life_reset(7);
 	life::life_say("map", 0.0, 1.0);
 	inp[7] = 0.0325;
 	run(1);
-	check("closure", out[19] >= 0.45 && out[16] <= 0.12);
+	report("closure", out[19] >= 0.45 && out[16] <= 0.12);
 	inp[7] = 0.114;
 	run(1);
-	check("open", out[16] >= 0.4);
+	report("open", out[16] >= 0.4);
 	life::life_say("oo", 0.5, 1.0);
 	inp[7] = 0.42;
 	run(1);
@@ -80,41 +79,39 @@ fn main() {
 	inp[7] = 0.2;
 	run(1);
 	let b = out[18];
-	check("anticipation", a > 0.1 && a < 0.8 && b < 0.05);
+	report("anticipation", a > 0.1 && a < 0.8 && b < 0.05);
 	inp[7] = 3.0;
 	run(1);
 	var quiet = true;
 	for k in 16..28 {
 		if out[k] >= 0.01 { quiet = false; }
 	}
-	check("rest", quiet);
+	report("rest", quiet);
 	var p real[1512] = [0.0; 1512];
 	var d real[1512] = [0.0; 1512];
-	let cs = cos(0.25);
-	let sn = sin(0.25);
-	var k = 0;
+	var idx = 0;
 	for i in 21 {
 		for j in 24 {
 			let pa = 1.92 * i / 20.0;
 			let pb = 2.0 * PI * j / 24.0;
-			let ox = 0.012 * sin(pa) * cos(pb);
-			let oy = 0.012 * sin(pa) * sin(pb);
-			let oz = 0.012 * cos(pa);
-			p[3 * k] = 0.03 + ox;
-			p[3 * k + 1] = 1.5 + oy;
-			p[3 * k + 2] = 0.1 + oz;
-			let ry = oy * cs + oz * sn;
-			let rz = oz * cs - oy * sn;
-			d[3 * k] = 0.0;
-			d[3 * k + 1] = ry - oy;
-			d[3 * k + 2] = rz - oz;
-			k++;
+			let x = 0.012 * sin(pa) * cos(pb);
+			let y = 0.012 * sin(pa) * sin(pb);
+			let z = 0.012 * cos(pa);
+			p[3 * idx] = 0.03 + x;
+			p[3 * idx + 1] = 1.5 + y;
+			p[3 * idx + 2] = 0.1 + z;
+			let ry = y * cos(0.25) + z * sin(0.25);
+			let rz = z * cos(0.25) - y * sin(0.25);
+			d[3 * idx] = 0.0;
+			d[3 * idx + 1] = ry - y;
+			d[3 * idx + 2] = rz - z;
+			idx++;
 		}
 	}
 	let u = life::life_eye_cal(p, d, 504, 1);
-	for q in 1512 { d[q] = -d[q]; }
+	for k in 1512 { d[k] = -d[k]; }
 	let w = life::life_eye_cal(p, d, 504, 1);
-	check("calibration", abs(u - 0.25) < 0.02 && abs(w + 0.25) < 0.02);
+	report("calibration", abs(u - 0.25) < 0.02 && abs(w + 0.25) < 0.02);
 	life::life_reset(7);
 	inp[1] = 1.0;
 	inp[2] = 0.0;
@@ -123,34 +120,30 @@ fn main() {
 	inp[5] = 0.0;
 	inp[7] = 0.0;
 	var breaths = 0;
-	var mn = 1e30;
-	var mx = -1e30;
+	var lo = 1e30;
+	var hi = -1e30;
 	var bp = out[32];
 	for f in 3600 {
 		run(1);
-		let v = out[32];
-		if bp < 0.5 && v >= 0.5 { breaths++; }
-		mn = min(mn, v);
-		mx = max(mx, v);
-		bp = v;
+		if bp < 0.5 && out[32] >= 0.5 { breaths++; }
+		bp = out[32];
+		lo = min(lo, out[32]);
+		hi = max(hi, out[32]);
 	}
-	check("breath idle", breaths >= 10 && breaths <= 18 && mn >= 0.0 && mx <= 1.25);
+	report("breath idle", breaths >= 10 && breaths <= 18 && lo >= 0.0 && hi <= 1.25);
 	life::life_reset(7);
 	inp[5] = 1.0;
 	life::life_say("one two three four, five six seven eight.", 0.5, 1.0);
 	var pause = false;
 	var mid = false;
-	var sp = out[32];
 	for f in 1..301 {
 		inp[7] = f / 60.0;
+		let before = out[32];
 		run(1);
-		let v = out[32];
-		if v > sp {
-			let t = inp[7];
-			if t >= 1.52 && t <= 1.76 { pause = true; }
-			if t >= 0.75 && t <= 1.2 { mid = true; }
+		if out[32] > before {
+			if inp[7] >= 1.52 && inp[7] <= 1.76 { pause = true; }
+			if inp[7] >= 0.75 && inp[7] <= 1.2 { mid = true; }
 		}
-		sp = v;
 	}
-	check("breath speech", pause && !mid);
+	report("breath speech", pause && !mid);
 }
