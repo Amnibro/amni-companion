@@ -1,0 +1,366 @@
+import os;
+import gfx;
+import math;
+import gfx.linalg;
+import gfx.gltf;
+import gfx.motion;
+import gfx.scene3d;
+import clips;
+import mix;
+fn vp(g int) float3 {
+	let b = g * gltf::VERTEX_FLOATS;
+	float3 { gltf::verts[b], gltf::verts[b + 1], gltf::verts[b + 2] }
+}
+fn vn(g int) float3 {
+	let b = g * gltf::VERTEX_FLOATS;
+	float3 { gltf::verts[b + 3], gltf::verts[b + 4], gltf::verts[b + 5] }
+}
+fn skp(g int, m gfx::mat4[:]) float3 {
+	let b = g * gltf::VERTEX_FLOATS;
+	var s = float3 { 0.0, 0.0, 0.0 };
+	for q in 4 {
+		let w = gltf::verts[b + 22 + q];
+		if w > 0.0 {
+			s = s + linalg::point(m[gltf::verts[b + 18 + q] as int], vp(g)) * w;
+		}
+	}
+	s
+}
+fn skn(g int, m gfx::mat4[:]) float3 {
+	let b = g * gltf::VERTEX_FLOATS;
+	let p = vp(g);
+	let n = vn(g);
+	var s = float3 { 0.0, 0.0, 0.0 };
+	for q in 4 {
+		let w = gltf::verts[b + 22 + q];
+		if w > 0.0 {
+			let mm = m[gltf::verts[b + 18 + q] as int];
+			s = s + (linalg::point(mm, p + n) - linalg::point(mm, p)) * w;
+		}
+	}
+	linalg::unit3(s)
+}
+var bt int[>..];
+var ra f32[>..];
+var rb int[>..];
+let NB = 8;
+var h0 f32 = 1.0e30;
+var h1 f32 = -1.0e30;
+var pal gfx::mat4[>..];
+var sk_i = -1;
+var dump = false;
+fn region(name const byte[:]) int {
+	if starts_with(name, "pelvis") || starts_with(name, "thigh") {
+		return 0;
+	}
+	if starts_with(name, "calf") || starts_with(name, "foot") || starts_with(name, "ball") {
+		return 1;
+	}
+	if starts_with(name, "spine") {
+		return 2;
+	}
+	if starts_with(name, "clavicle") || starts_with(name, "upperarm") {
+		return 3;
+	}
+	if starts_with(name, "lowerarm") {
+		return 4;
+	}
+	if starts_with(name, "hand") || starts_with(name, "index") || starts_with(name, "middle") || starts_with(name, "pinky") || starts_with(name, "ring") || starts_with(name, "thumb") {
+		return 5;
+	}
+	if starts_with(name, "neck") || starts_with(name, "head") {
+		return 6;
+	}
+	7
+}
+fn rname(r int) const byte[:] {
+	match r {
+		0 => "hips+thighs",
+		1 => "legs",
+		2 => "torso",
+		3 => "shoulders",
+		4 => "forearms",
+		5 => "hands",
+		6 => "neck+head",
+		_ => "other",
+	}
+}
+fn tri_cross(u float3, v float3) float3 {
+	float3 { u.y * v.z - u.z * v.y, u.z * v.x - u.x * v.z, u.x * v.y - u.y * v.x }
+}
+fn gather(asset int, name const byte[:]) {
+	let nd = gltf::find_node(asset, name);
+	if nd < 0 {
+		print("no node ", name);
+		return;
+	}
+	sk_i = gltf::nodes[nd].skin as int;
+	let ms = gltf::meshes[gltf::nodes[nd].mesh as int];
+	for pi in ms.prims.count as int {
+		let pr = gltf::prims[ms.prims.first as int + pi];
+		let vf = pr.vfirst as int;
+		for v in pr.vcount as int {
+			let y = vp(vf + v).y;
+			h0 = min(h0, y);
+			h1 = max(h1, y);
+		}
+		for q in pr.icount as int {
+			bt.push(vf + gltf::indices[pr.ifirst as int + q] as int);
+		}
+	}
+	let jfirst = gltf::skins[sk_i].joints.first as int;
+	for t in ra.len..bt.len / 3 {
+		let i0 = bt[3 * t];
+		let i1 = bt[3 * t + 1];
+		let i2 = bt[3 * t + 2];
+		let a = vp(i0);
+		let b = vp(i1);
+		let c = vp(i2);
+		ra.push(0.5 * linalg::length3(tri_cross(b - a, c - a)));
+		var js int[..12] = [];
+		var ws f32[..12] = [];
+		let cs int[3] = [i0, i1, i2];
+		for g in cs {
+			let base = g * gltf::VERTEX_FLOATS;
+			for k in 4 {
+				let j = gltf::verts[base + gltf::AT_JOINT + k] as int;
+				let w = gltf::verts[base + gltf::AT_WEIGHT + k];
+				var found = false;
+				for e in js.len {
+					if js[e] == j {
+						ws[e] += w;
+						found = true;
+					}
+				}
+				if !found {
+					js.push(j);
+					ws.push(w);
+				}
+			}
+		}
+		var best = 0;
+		for e in js.len {
+			if ws[e] > ws[best] {
+				best = e;
+			}
+		}
+		let slot = js[best];
+		let node = gltf::ints[jfirst + slot] as int;
+		rb.push(region(gltf::text_of(gltf::nodes[node].name)));
+	}
+}
+fn measure(it int, tag const byte[:]) {
+	s3d::pose(it);
+	motion::joints(sk_i, pal);
+	var fo int[>..] = [];
+	fo.resize(NB, 0);
+	var cr int[>..] = [];
+	cr.resize(NB, 0);
+	var st int[>..] = [];
+	st.resize(NB, 0);
+	var F = 0;
+	var C = 0;
+	var X = 0;
+	for t in bt.len / 3 {
+		if ra[t] > 1.0e-10 {
+			let i0 = bt[3 * t];
+			let i1 = bt[3 * t + 1];
+			let i2 = bt[3 * t + 2];
+			let pa = skp(i0, pal[..]);
+			let pb = skp(i1, pal[..]);
+			let pc = skp(i2, pal[..]);
+			let ng = tri_cross(pb - pa, pc - pa);
+			let area = 0.5 * linalg::length3(ng);
+			let nr = skn(i0, pal[..]) + skn(i1, pal[..]) + skn(i2, pal[..]);
+			let folded = linalg::dot3(ng, nr) < 0.0;
+			let crushed = area < 0.3 * ra[t];
+			let stretched = area > 2.5 * ra[t];
+			let r = rb[t];
+			if folded {
+				fo[r] += 1;
+				F += 1;
+			}
+			if crushed {
+				cr[r] += 1;
+				C += 1;
+			}
+			if stretched {
+				st[r] += 1;
+				X += 1;
+			}
+			if dump && starts_with(tag, "Sitting_Idle_Loop 2") && r == 0 && (folded || crushed) {
+				let a = vp(i0);
+				let b = vp(i1);
+				let c = vp(i2);
+				let cx = (a.x + b.x + c.x) / 3.0;
+				let cy = (a.y + b.y + c.y) / 3.0;
+				let cz = (a.z + b.z + c.z) / 3.0;
+				let mark = if folded { "F " } else { "C " };
+				print(mark, cx, " ", cy, " ", cz);
+			}
+		}
+	}
+	print(tag, " folded ", F, " crushed ", C, " stretched ", X, " of ", bt.len / 3);
+	for k in NB {
+		if fo[k] + cr[k] + st[k] > 0 {
+			print("  ", rname(k), " folded ", fo[k], " crushed ", cr[k], " stretched ", st[k]);
+		}
+	}
+}
+fn world_rot(nd int) linalg::Quat {
+	var q = gltf::nodes[nd].r;
+	var k = gltf::nodes[nd].parent as int;
+	while k >= 0 {
+		q = linalg::qmul(gltf::nodes[k].r, q);
+		k = gltf::nodes[k].parent as int;
+	}
+	q
+}
+fn quat_conj(q linalg::Quat) linalg::Quat {
+	var r = q;
+	r.x = -q.x;
+	r.y = -q.y;
+	r.z = -q.z;
+	r
+}
+fn move_joint(asset int, spec const byte[:]) {
+	var ci = -1;
+	for ch, i in spec {
+		if ch == ':' && ci < 0 {
+			ci = i;
+		}
+	}
+	guard ci >= 0 else {
+		print("no joint ", spec);
+		return;
+	}
+	let name = spec[..ci];
+	let rest = spec[ci + 1..];
+	var v real[3] = [0.0; 3];
+	var n = 0;
+	let parts = split(rest, ',');
+	for p in parts {
+		if n < 3 {
+			let x, ok = parse_flt(trim(p));
+			if ok {
+				v[n] = x;
+			}
+			n += 1;
+		}
+	}
+	let nd = gltf::find_node(asset, name);
+	if nd < 0 {
+		print("no joint ", name);
+		return;
+	}
+	let d = float3 { v[0] as f32, v[1] as f32, v[2] as f32 };
+	let parent = gltf::nodes[nd].parent as int;
+	if parent < 0 {
+		gltf::nodes[nd].t = gltf::nodes[nd].t + d;
+	} else {
+		gltf::nodes[nd].t = gltf::nodes[nd].t + linalg::qrotate(quat_conj(world_rot(parent)), d);
+	}
+	let dl = linalg::qrotate(quat_conj(world_rot(nd)), d);
+	let chs = gltf::nodes[nd].children;
+	for k in chs.count {
+		let c = gltf::ints[chs.first + k] as int;
+		gltf::nodes[c].t = gltf::nodes[c].t - dl;
+	}
+	let zero = float3 { 0.0, 0.0, 0.0 };
+	let sks = gltf::assets[asset].skins;
+	for k in sks.count {
+		let s = sks.first + k;
+		let jt = gltf::skins[s].joints;
+		for j in jt.count {
+			if gltf::ints[jt.first + j] as int == nd {
+				let mi = gltf::skins[s].inverse_binds.first + j;
+				let m = gltf::matrices[mi];
+				gltf::matrices[mi] = gfx::mul(gfx::translate(zero - (linalg::point(m, d) - linalg::point(m, zero))), m);
+			}
+		}
+	}
+	print("moved ", name);
+}
+fn find_clip(name const byte[:], n int) int {
+	var buf byte[>..] = [];
+	for c in n {
+		buf.clear();
+		clips::clips_name(c, buf);
+		if buf == name {
+			return c;
+		}
+	}
+	return -1;
+}
+fn main() {
+	let a = args();
+	if a.len < 3 {
+		print("usage: fold_check <model.glb> <clips.gltf> [mesh=skin] [move=joint:dx,dy,dz ...] [dump]; counts folded, crushed and stretched triangles per body region in bind, idle, walk, dance and sit poses");
+		return;
+	}
+	let asset = gltf::load(a[1]);
+	if asset < 0 {
+		print("load fail");
+		return;
+	}
+	for i in 3..a.len {
+		let arg = a[i];
+		if starts_with(arg, "move=") {
+			move_joint(asset, arg[5..]);
+		}
+	}
+	let it = s3d::add(asset);
+	let nlib = clips::clips_load(a[2], asset);
+	var sl i32[22];
+	let first = gltf::assets[asset].nodes.first;
+	for i in 22 {
+		sl[i] = if clips::kc_slot[i] < 0 { -1 } else { (clips::kc_slot[i] as int - first) as i32 };
+	}
+	mix_open(asset, it, sl[..]);
+	for c in nlib {
+		mix_clip(clips::kc_nf[c], clips::kc_loop[c], clips::clips_frames(c));
+	}
+	var mesh const byte[:] = "skin";
+	var have_mesh = false;
+	for i in 3..a.len {
+		let arg = a[i];
+		if arg == "dump" {
+			dump = true;
+		} else if !starts_with(arg, "move=") && !have_mesh {
+			mesh = arg;
+			have_mesh = true;
+		}
+	}
+	gather(asset, mesh);
+	if bt.len == 0 {
+		return;
+	}
+	print("skin tris ", bt.len / 3, " height ", h0, " to ", h1, " clips ", nlib);
+	measure(it, "bind");
+	let names const byte[:][4] = ["Idle_Loop", "Walk_Formal_Loop", "Dance_Loop", "Sitting_Idle_Loop"];
+	let at f32[4][4] = [[1.0, 0.0, 0.0, 0.0], [0.5, 1.0, 0.0, 0.0], [0.7, 1.4, 2.1, 2.8], [1.0, 2.0, 3.0, 0.0]];
+	for ci in 4 {
+		let c = find_clip(names[ci], nlib);
+		if c < 0 {
+			print("no clip ", names[ci]);
+			continue;
+		}
+		mix_play(c, 0.0);
+		var t f32 = 0.0;
+		for si in 4 {
+			let target = at[ci][si];
+			if target <= 0.0 {
+				continue;
+			}
+			while t + 0.0001 < target {
+				mix_advance(1.0 / 60.0);
+				t += 1.0 / 60.0;
+			}
+			var tag byte[>..] = [];
+			tag.append(names[ci]);
+			tag.push(' ');
+			tag.append(str(target));
+			measure(it, tag[..]);
+		}
+	}
+}

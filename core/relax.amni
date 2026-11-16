@@ -1,0 +1,923 @@
+import os;
+import math;
+import binary;
+import json;
+import bake;
+import gfx;
+import gfx.linalg;
+import gfx.gltf;
+import gfx.motion;
+import gfx.scene3d;
+import clips;
+import mix;
+fn rx_u16(b const byte[:], at int) int {
+	(b[at] as int) | ((b[at + 1] as int) << 8)
+}
+fn rx_u32(b const byte[:], at int) int {
+	(b[at] as int) | ((b[at + 1] as int) << 8) | ((b[at + 2] as int) << 16) | ((b[at + 3] as int) << 24)
+}
+fn rx_f32(b const byte[:], at int) f32 {
+	binary::f32_from_bits(rx_u32(b, at) as u32)
+}
+fn rx_w16(b byte[>..]&, at int, v int) {
+	b[at] = (v & 255) as byte;
+	b[at + 1] = ((v >> 8) & 255) as byte;
+}
+fn rx_w32(b byte[>..]&, at int, v int) {
+	b[at] = (v & 255) as byte;
+	b[at + 1] = ((v >> 8) & 255) as byte;
+	b[at + 2] = ((v >> 16) & 255) as byte;
+	b[at + 3] = ((v >> 24) & 255) as byte;
+}
+fn rx_nth(d json::Doc&, arr int, i int) int {
+	if arr < 0 { return -1; }
+	var k = 0;
+	json::each(d, arr) { c =>
+		if k == i { return c; }
+		k++;
+	};
+	return -1;
+}
+fn rx_acc(d json::Doc&, root int, ai int) int, int, int, int {
+	let ac = rx_nth(d, bk_mem(d, root, "accessors"), ai);
+	let vi = bk_int(d, bk_mem(d, ac, "bufferView"), 0);
+	let bv = rx_nth(d, bk_mem(d, root, "bufferViews"), vi);
+	let off = bk_int(d, bk_mem(d, bv, "byteOffset"), 0) + bk_int(d, bk_mem(d, ac, "byteOffset"), 0);
+	let cnt = bk_int(d, bk_mem(d, ac, "count"), 0);
+	let ct = bk_int(d, bk_mem(d, ac, "componentType"), 0);
+	let st = bk_int(d, bk_mem(d, bv, "byteStride"), 0);
+	return off, cnt, ct, st;
+}
+var P float3[>..];
+var VM int[>..];
+var J int[>..];
+var W f32[>..];
+var JO int[>..];
+var JC int[>..];
+var WO int[>..];
+var WC int[>..];
+var EA int[>..];
+var EB int[>..];
+var EK int[>..];
+var TR int[>..];
+var RO int[>..];
+var RC int[>..];
+var G int[>..];
+var SP float3[>..];
+var SJ int[>..];
+var SW f32[>..];
+fn rx_wsize(ct int) int {
+	if ct == 5121 { 1 } else if ct == 5123 { 2 } else { 4 }
+}
+fn rx_gather(d json::Doc&, root int, buf const byte[:], b0 int, name const byte[:], mi int, src bool) int {
+	var mesh = -1;
+	let nodes = bk_mem(d, root, "nodes");
+	if nodes >= 0 {
+		json::each(d, nodes) { nd =>
+			if mesh < 0 {
+				let nm = bk_mem(d, nd, "name");
+				if nm >= 0 && json::as_string(d, nm) == name {
+					let me = bk_mem(d, nd, "mesh");
+					if me >= 0 { mesh = bk_int(d, me, -1); }
+				}
+			}
+		};
+	}
+	if mesh < 0 {
+		print("no mesh ", name);
+		return 0;
+	}
+	let ms = rx_nth(d, bk_mem(d, root, "meshes"), mesh);
+	let prims = bk_mem(d, ms, "primitives");
+	if prims < 0 { return 0; }
+	var added = 0;
+	json::each(d, prims) { pr =>
+		let at = bk_mem(d, pr, "attributes");
+		let pa = bk_int(d, bk_mem(d, at, "POSITION"), -1);
+		let ja = bk_int(d, bk_mem(d, at, "JOINTS_0"), -1);
+		let wa = bk_int(d, bk_mem(d, at, "WEIGHTS_0"), -1);
+		let ia = bk_int(d, bk_mem(d, pr, "indices"), -1);
+		if pa >= 0 && ja >= 0 && wa >= 0 {
+			let po, pc, pct, ps = rx_acc(d, root, pa);
+			let jo, jcn, jct, js = rx_acc(d, root, ja);
+			let wo, wcn, wct, ws = rx_acc(d, root, wa);
+			let base = P.len;
+			let pstep = if ps > 0 { ps } else { 12 };
+			let jsz = rx_wsize(jct);
+			let jstep = if js > 0 { js } else { 4 * jsz };
+			let wsz = rx_wsize(wct);
+			let wstep = if ws > 0 { ws } else { 4 * wsz };
+			for v in pc {
+				let pp = b0 + po + pstep * v;
+				let pos = float3 { rx_f32(buf, pp), rx_f32(buf, pp + 4), rx_f32(buf, pp + 8) };
+				let jp = b0 + jo + jstep * v;
+				let wp = b0 + wo + wstep * v;
+				if src {
+					SP.push(pos);
+				} else {
+					P.push(pos);
+					VM.push(mi);
+				}
+				for k in 4 {
+					let jv = if jct == 5121 { buf[jp + k] as int } else { rx_u16(buf, jp + jsz * k) };
+					let wv = if wct == 5126 { rx_f32(buf, wp + 4 * k) } else if wct == 5121 { ((buf[wp + k] as real) / 255.0) as f32 } else { ((rx_u16(buf, wp + 2 * k) as real) / 65535.0) as f32 };
+					if src {
+						SJ.push(jv);
+						SW.push(wv);
+					} else {
+						J.push(jv);
+						W.push(wv);
+					}
+				}
+				if src == false {
+					JO.push(jp);
+					JC.push(jct);
+					WO.push(wp);
+					WC.push(wct);
+				}
+				added++;
+			}
+			if src == false && ia >= 0 {
+				let io, ic, ict, ist = rx_acc(d, root, ia);
+				let isz = if ict == 5123 { 2 } else if ict == 5125 { 4 } else { 1 };
+				for t in ic / 3 {
+					var ix int[3] = [0, 0, 0];
+					for c in 3 {
+						let p = b0 + io + isz * (3 * t + c);
+						ix[c] = if ict == 5123 { rx_u16(buf, p) } else if ict == 5125 { rx_u32(buf, p) } else { buf[p] as int };
+					}
+					for c in 3 { TR.push(base + ix[c]); }
+					for c in 3 {
+						EA.push(base + ix[c]);
+						EB.push(base + ix[(c + 1) % 3]);
+						EK.push(0);
+					}
+				}
+			}
+		}
+	};
+	added
+}
+fn rx_cell(x f32) int {
+	floor((x as real) / 0.02) as int
+}
+fn rx_key(cx int, cy int, cz int) int {
+	(((cx + 1048576) & 2097151) << 42) | (((cy + 1048576) & 2097151) << 21) | ((cz + 1048576) & 2097151)
+}
+fn rx_lb(sk const int[:], key int) int {
+	var lo = 0;
+	var hi = sk.len;
+	while lo < hi {
+		let m = (lo + hi) / 2;
+		if sk[m] < key { lo = m + 1; } else { hi = m; }
+	}
+	lo
+}
+fn rx_link(weld f32, reach f32) int, int {
+	let n = P.len;
+	var keys int[>..] = [];
+	var ord int[>..] = [];
+	for i in n {
+		keys.push(rx_key(rx_cell(P[i].x), rx_cell(P[i].y), rx_cell(P[i].z)));
+		ord.push(i);
+	}
+	sort(ord) { a, b => if keys[a] != keys[b] { keys[a] < keys[b] } else { a < b } };
+	var sk int[>..] = [];
+	for i in n { sk.push(keys[ord[i]]); }
+	let wd = weld as real;
+	let rd = reach as real;
+	var nw = 0;
+	var nc = 0;
+	for v in n {
+		let cx = rx_cell(P[v].x);
+		let cy = rx_cell(P[v].y);
+		let cz = rx_cell(P[v].z);
+		var best = -1;
+		var bd = 0.0;
+		for dx in -1..2 {
+			for dy in -1..2 {
+				for dz in -1..2 {
+					let key = rx_key(cx + dx, cy + dy, cz + dz);
+					var i = rx_lb(sk, key);
+					while i < n {
+						if sk[i] != key { break; }
+						let u = ord[i];
+						i++;
+						if u == v { continue; }
+						let ex = (P[u].x as real) - (P[v].x as real);
+						let ey = (P[u].y as real) - (P[v].y as real);
+						let ez = (P[u].z as real) - (P[v].z as real);
+						let dd = sqrt(ex * ex + ey * ey + ez * ez);
+						if u > v && dd < wd {
+							EA.push(v);
+							EB.push(u);
+							EK.push(1);
+							nw++;
+						}
+						if VM[u] != VM[v] && dd < rd && (best < 0 || dd < bd) {
+							best = u;
+							bd = dd;
+						}
+					}
+				}
+			}
+		}
+		if best >= 0 {
+			EA.push(v);
+			EB.push(best);
+			EK.push(2);
+			nc++;
+		}
+	}
+	return nw, nc;
+}
+fn rx_mask(v int, lo f32, hi f32) f32 {
+	let y = P[v].y as real;
+	let l = lo as real;
+	let h = hi as real;
+	let hr = if y < l { max(1.0 - (l - y) / 0.03, 0.0) } else if y > h { max(1.0 - (y - h) / 0.03, 0.0) } else { 1.0 };
+	let ax = abs(P[v].x as real);
+	let sr = if ax <= 0.24 { 1.0 } else { max(1.0 - (ax - 0.24) / 0.03, 0.0) };
+	(hr * sr) as f32
+}
+fn rx_add(sums real[:], seen bool[:], touched int[>..<]&, j int, w real) {
+	if j < 0 || j > 255 { return; }
+	if seen[j] == false {
+		seen[j] = true;
+		touched.push(j);
+	}
+	sums[j] += w;
+}
+fn rx_pick(v int, sums real[:], seen bool[:], touched int[>..<]&) bool {
+	var bj int[4] = [0, 0, 0, 0];
+	var bw real[4] = [0.0, 0.0, 0.0, 0.0];
+	var nb = 0;
+	for t in touched {
+		let s = sums[t];
+		if s > 0.0 {
+			var p = nb;
+			while p > 0 && (s > bw[p - 1] || (s == bw[p - 1] && t < bj[p - 1])) { p--; }
+			if p < 4 {
+				var q = min(nb, 3);
+				while q > p {
+					bj[q] = bj[q - 1];
+					bw[q] = bw[q - 1];
+					q--;
+				}
+				bj[p] = t;
+				bw[p] = s;
+				if nb < 4 { nb++; }
+			}
+		}
+		sums[t] = 0.0;
+		seen[t] = false;
+	}
+	touched.clear();
+	var tot = 0.0;
+	for k in nb { tot += bw[k]; }
+	if tot <= 0.0 { return false; }
+	for k in 4 {
+		if k < nb {
+			J[4 * v + k] = bj[k];
+			W[4 * v + k] = (bw[k] / tot) as f32;
+		} else {
+			J[4 * v + k] = 0;
+			W[4 * v + k] = 0.0 as f32;
+		}
+	}
+	true
+}
+fn rx_transfer(lo f32, hi f32) int {
+	let n = SP.len;
+	var keys int[>..] = [];
+	var ord int[>..] = [];
+	for i in n {
+		keys.push(rx_key(rx_cell(SP[i].x), rx_cell(SP[i].y), rx_cell(SP[i].z)));
+		ord.push(i);
+	}
+	sort(ord) { a, b => if keys[a] != keys[b] { keys[a] < keys[b] } else { a < b } };
+	var sk int[>..] = [];
+	for i in n { sk.push(keys[ord[i]]); }
+	var sums real[256] = [0.0; 256];
+	var seen bool[256] = [false; 256];
+	var touched int[>..<] = [];
+	var done = 0;
+	for v in P.len {
+		let m = rx_mask(v, lo, hi) as real;
+		if m <= 0.0 { continue; }
+		let cx = rx_cell(P[v].x);
+		let cy = rx_cell(P[v].y);
+		let cz = rx_cell(P[v].z);
+		var best = -1;
+		var bd = 0.0;
+		var r = 1;
+		while r <= 3 && best < 0 {
+			for dx in -r..r + 1 {
+				for dy in -r..r + 1 {
+					for dz in -r..r + 1 {
+						let key = rx_key(cx + dx, cy + dy, cz + dz);
+						var i = rx_lb(sk, key);
+						while i < n {
+							if sk[i] != key { break; }
+							let u = ord[i];
+							i++;
+							let ex = (SP[u].x as real) - (P[v].x as real);
+							let ey = (SP[u].y as real) - (P[v].y as real);
+							let ez = (SP[u].z as real) - (P[v].z as real);
+							let dd = sqrt(ex * ex + ey * ey + ez * ez);
+							if best < 0 || dd < bd {
+								bd = dd;
+								best = u;
+							}
+						}
+					}
+				}
+			}
+			r++;
+		}
+		if best < 0 { continue; }
+		for k in 4 {
+			rx_add(sums, seen, touched, J[4 * v + k], (W[4 * v + k] as real) * (1.0 - m));
+			rx_add(sums, seen, touched, SJ[4 * best + k], (SW[4 * best + k] as real) * m);
+		}
+		if rx_pick(v, sums, seen, touched) { done++; }
+	}
+	done
+}
+fn rx_rows(cross bool) {
+	let n = P.len;
+	RO.clear();
+	RO.resize(n + 1, 0);
+	for e in EA.len {
+		if EK[e] == 2 && cross == false { continue; }
+		RO[EA[e] + 1] += 1;
+		RO[EB[e] + 1] += 1;
+	}
+	for v in n { RO[v + 1] += RO[v]; }
+	RC.clear();
+	RC.resize(RO[n], 0);
+	var cur int[>..] = [];
+	for v in n { cur.push(RO[v]); }
+	for e in EA.len {
+		if EK[e] == 2 && cross == false { continue; }
+		let x = EA[e];
+		let y = EB[e];
+		RC[cur[x]] = y;
+		cur[x] += 1;
+		RC[cur[y]] = x;
+		cur[y] += 1;
+	}
+}
+fn rx_smooth(src const float3[:], out float3[>..]&, n int) {
+	out.clear();
+	out.append(src);
+	var prev float3[>..] = [];
+	for r in n {
+		prev.clear();
+		prev.append(out[..]);
+		for v in prev.len {
+			let a = RO[v];
+			let b = RO[v + 1];
+			if b > a {
+				var sx = 0.0;
+				var sy = 0.0;
+				var sz = 0.0;
+				for k in a..b {
+					let u = RC[k];
+					sx += prev[u].x as real;
+					sy += prev[u].y as real;
+					sz += prev[u].z as real;
+				}
+				let c = (b - a) as real;
+				out[v] = float3 { (0.5 * (prev[v].x as real) + 0.5 * sx / c) as f32, (0.5 * (prev[v].y as real) + 0.5 * sy / c) as f32, (0.5 * (prev[v].z as real) + 0.5 * sz / c) as f32 };
+			}
+		}
+	}
+}
+fn rx_len(q float3) real {
+	sqrt((q.x as real) * (q.x as real) + (q.y as real) * (q.y as real) + (q.z as real) * (q.z as real))
+}
+fn rx_cross(a float3, b float3) float3 {
+	float3 { a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x }
+}
+fn rx_frames(s const float3[:], fnm float3[>..]&, ft float3[>..]&, fb float3[>..]&) {
+	let n = s.len;
+	fnm.clear();
+	ft.clear();
+	fb.clear();
+	for v in n { fnm.push(float3 { 0.0, 0.0, 0.0 }); }
+	for t in TR.len / 3 {
+		let a = TR[3 * t];
+		let b = TR[3 * t + 1];
+		let c = TR[3 * t + 2];
+		let cr = rx_cross(s[b] - s[a], s[c] - s[a]);
+		fnm[a] = fnm[a] + cr;
+		fnm[b] = fnm[b] + cr;
+		fnm[c] = fnm[c] + cr;
+	}
+	for v in n {
+		let q = fnm[v];
+		fnm[v] = if rx_len(q) < 1.0e-12 { float3 { 0.0, 1.0, 0.0 } } else { linalg::unit3(q) };
+	}
+	for v in n {
+		let nv = fnm[v];
+		var tg = float3 { 0.0, 0.0, 0.0 };
+		var found = false;
+		for k in RO[v]..RO[v + 1] {
+			if found == false {
+				let u = RC[k];
+				let e = s[u] - s[v];
+				let pp = e - nv * linalg::dot3(e, nv);
+				if rx_len(pp) > 1.0e-9 {
+					tg = linalg::unit3(pp);
+					found = true;
+				}
+			}
+		}
+		if found == false {
+			let c1 = rx_cross(nv, float3 { 1.0, 0.0, 0.0 });
+			tg = if rx_len(c1) > 1.0e-6 { linalg::unit3(c1) } else { linalg::unit3(rx_cross(nv, float3 { 0.0, 0.0, 1.0 })) };
+		}
+		ft.push(tg);
+		fb.push(rx_cross(nv, tg));
+	}
+}
+fn rx_lbs(pm const gfx::mat4[:], out float3[>..]&) {
+	out.clear();
+	out.resize(P.len, float3 { 0.0, 0.0, 0.0 });
+	for v in P.len {
+		var acc = float3 { 0.0, 0.0, 0.0 };
+		for k in 4 {
+			let w = W[4 * v + k];
+			let j = J[4 * v + k];
+			if w > 0.0 && j >= 0 && j < pm.len {
+				acc = acc + linalg::point(pm[j], P[v]) * w;
+			}
+		}
+		out[v] = acc;
+	}
+}
+fn rx_dot(a float3, b float3) real {
+	(a.x as real) * (b.x as real) + (a.y as real) * (b.y as real) + (a.z as real) * (b.z as real)
+}
+fn rx_d2(a float3, b float3) real {
+	let ex = (a.x as real) - (b.x as real);
+	let ey = (a.y as real) - (b.y as real);
+	let ez = (a.z as real) - (b.z as real);
+	ex * ex + ey * ey + ez * ez
+}
+fn rx_rn(pal const gfx::mat4[:], v int, oj const int[:], ow const f32[:]) float3 {
+	let g = G[v] * gltf::VERTEX_FLOATS;
+	let nv = float3 { gltf::verts[g + 3], gltf::verts[g + 4], gltf::verts[g + 5] };
+	let p = P[v];
+	var acc = float3 { 0.0, 0.0, 0.0 };
+	for k in 4 {
+		let w = ow[4 * v + k];
+		let j = oj[4 * v + k];
+		if w > 0.0 && j >= 0 && j < pal.len {
+			acc = acc + (linalg::point(pal[j], p + nv) - linalg::point(pal[j], p)) * w;
+		}
+	}
+	acc
+}
+fn rx_folds(q const float3[:], pal const gfx::mat4[:], oj const int[:], ow const f32[:], mk const f32[:]) int {
+	var f = 0;
+	for t in TR.len / 3 {
+		let a = TR[3 * t];
+		let b = TR[3 * t + 1];
+		let c = TR[3 * t + 2];
+		if mk[a] >= 0.5 && mk[b] >= 0.5 && mk[c] >= 0.5 {
+			let r = rx_rn(pal, a, oj, ow) + rx_rn(pal, b, oj, ow) + rx_rn(pal, c, oj, ow);
+			let cr = rx_cross(q[b] - q[a], q[c] - q[a]);
+			if rx_dot(cr, r) < 0.0 { f++; }
+		}
+	}
+	f
+}
+fn rx_proj(y real[:]) {
+	let k = y.len;
+	var u real[8] = [0.0; 8];
+	for i in k { u[i] = y[i]; }
+	sort(u[0..k]) { a, b => a > b };
+	var cs = 0.0;
+	var th = 0.0;
+	for r in k {
+		cs += u[r];
+		let t = (cs - 1.0) / ((r + 1) as real);
+		if u[r] - t > 0.0 { th = t; }
+	}
+	for i in k { y[i] = max(y[i] - th, 0.0); }
+}
+fn rx_clipname(i int) const byte[:] {
+	match i {
+		0 => "Idle_Loop",
+		1 => "Walk_Formal_Loop",
+		2 => "Dance_Loop",
+		_ => "Sitting_Idle_Loop",
+	}
+}
+fn rx_mush(glb const byte[:], lib const byte[:], lo f32, hi f32, n int) int {
+	let asset = gltf::load(glb);
+	if asset < 0 {
+		print("load fail");
+		return 0;
+	}
+	let it = s3d::add(asset);
+	let nlib = clips::clips_load(lib, asset);
+	var sl i32[22];
+	let first = gltf::assets[asset].nodes.first;
+	for i in 22 { sl[i] = if clips::kc_slot[i] < 0 { -1 } else { (clips::kc_slot[i] as int - first) as i32 }; }
+	mix_open(asset, it, sl[..]);
+	for c in nlib { mix_clip(clips::kc_nf[c], clips::kc_loop[c], clips::clips_frames(c)); }
+	G.clear();
+	var sk i32 = -1;
+	var got = false;
+	let av = args();
+	for k in 6..av.len {
+		let ar = av[k];
+		if starts_with(ar, "from=") || starts_with(ar, "mush=") { continue; }
+		let nd = gltf::find_node(asset, ar);
+		if nd < 0 { continue; }
+		if got == false {
+			sk = gltf::nodes[nd].skin as i32;
+			got = true;
+		}
+		let ms = gltf::meshes[gltf::nodes[nd].mesh];
+		for pi in ms.prims.count {
+			let pr = gltf::prims[ms.prims.first + pi];
+			for v in pr.vcount { G.push(pr.vfirst + v); }
+		}
+	}
+	if G.len != P.len {
+		print("vertex map mismatch ", G.len, " ", P.len);
+		return 0;
+	}
+	rx_rows(false);
+	let nv = P.len;
+	var OJ int[>..] = [];
+	OJ.append(J[..]);
+	var OW f32[>..] = [];
+	OW.append(W[..]);
+	var s0 float3[>..] = [];
+	rx_smooth(P[..], s0, n);
+	var fn0 float3[>..] = [];
+	var ft0 float3[>..] = [];
+	var fb0 float3[>..] = [];
+	rx_frames(s0[..], fn0, ft0, fb0);
+	var D float3[>..] = [];
+	var MK f32[>..] = [];
+	for v in nv {
+		let e = P[v] - s0[v];
+		D.push(float3 { rx_dot(e, ft0[v]) as f32, rx_dot(e, fb0[v]) as f32, rx_dot(e, fn0[v]) as f32 });
+		MK.push(rx_mask(v, lo, hi));
+	}
+	var pal gfx::mat4[>..] = [];
+	var pm gfx::mat4[>..] = [];
+	var xt float3[>..] = [];
+	var l float3[>..] = [];
+	var s float3[>..] = [];
+	var fq float3[>..] = [];
+	var tq float3[>..] = [];
+	var bq float3[>..] = [];
+	var jc = 0;
+	var np = 0;
+	var e0 = 0.0;
+	var e1 = 0.0;
+	var fl = 0;
+	var fx = 0;
+	var fw = 0;
+	var ll = 0;
+	var lx = 0;
+	var lw = 0;
+	fn capture() {
+		s3d::pose(it);
+		pal.clear();
+		motion::joints(sk, pal);
+		jc = pal.len;
+		pm.append(pal[..]);
+		rx_lbs(pal[..], l);
+		rx_smooth(l[..], s, n);
+		rx_frames(s[..], fq, tq, bq);
+		for v in nv {
+			let d = D[v];
+			let x = l[v] + (s[v] + tq[v] * d.x + bq[v] * d.y + fq[v] * d.z - l[v]) * MK[v];
+			xt.push(x);
+			if MK[v] > 0.0 { e0 += rx_d2(l[v], x); }
+		}
+		let f0 = rx_folds(l[..], pal[..], OJ[..], OW[..], MK[..]);
+		let f1 = rx_folds(xt[np * nv..np * nv + nv], pal[..], OJ[..], OW[..], MK[..]);
+		fl += f0;
+		fx += f1;
+		ll = f0;
+		lx = f1;
+		np++;
+	}
+	capture();
+	let times real[32] = [0.5, 1.0, 1.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.25, 0.5, 0.75, 1.0, 0.0, 0.0, 0.0, 0.0, 0.35, 0.7, 1.05, 1.4, 1.75, 2.1, 2.45, 2.8, 0.5, 1.0, 1.5, 2.0, 0.0, 0.0, 0.0, 0.0];
+	var nb byte[>..] = [];
+	for ci in 4 {
+		let name = rx_clipname(ci);
+		var cl = -1;
+		for c in nlib {
+			nb.clear();
+			clips::clips_name(c, nb);
+			if cl < 0 && nb[..] == name { cl = c; }
+		}
+		if cl < 0 {
+			print("no clip ", name);
+			continue;
+		}
+		mix_play(cl, 0.0);
+		var t = 0.0;
+		for q in 8 {
+			let target = times[8 * ci + q];
+			if target <= 0.0 { continue; }
+			while t + 0.0001 < target {
+				mix_advance(1.0 / 60.0);
+				t += 1.0 / 60.0;
+			}
+			capture();
+		}
+	}
+	var nm = 0;
+	var sums real[256] = [0.0; 256];
+	var seen bool[256] = [false; 256];
+	var touched int[>..<] = [];
+	for v in nv {
+		if MK[v] <= 0.0 { continue; }
+		nm++;
+		for k in 4 {
+			if OW[4 * v + k] > 0.0 { rx_add(sums, seen, touched, OJ[4 * v + k], OW[4 * v + k] as real); }
+		}
+		for q in RO[v]..RO[v + 1] {
+			let u = RC[q];
+			for k in 4 {
+				if OW[4 * u + k] > 0.0 { rx_add(sums, seen, touched, OJ[4 * u + k], OW[4 * u + k] as real); }
+			}
+		}
+		var cand int[8] = [0; 8];
+		var cs real[8] = [0.0; 8];
+		var nk = 0;
+		for t in touched {
+			let sv = sums[t];
+			if sv > 0.0 && t < jc {
+				var p = nk;
+				while p > 0 && (sv > cs[p - 1] || (sv == cs[p - 1] && t < cand[p - 1])) { p--; }
+				if p < 8 {
+					var q = min(nk, 7);
+					while q > p {
+						cand[q] = cand[q - 1];
+						cs[q] = cs[q - 1];
+						q--;
+					}
+					cand[p] = t;
+					cs[p] = sv;
+					if nk < 8 { nk++; }
+				}
+			}
+			sums[t] = 0.0;
+			seen[t] = false;
+		}
+		touched.clear();
+		if nk == 0 { continue; }
+		var w0 real[8] = [0.0; 8];
+		for i in nk {
+			for k in 4 {
+				if OJ[4 * v + k] == cand[i] { w0[i] += OW[4 * v + k] as real; }
+			}
+		}
+		var A real[64] = [0.0; 64];
+		var ar float3[8] = [float3 { 0.0, 0.0, 0.0 }; 8];
+		for p in np {
+			let tx = xt[p * nv + v];
+			for i in nk { ar[i] = linalg::point(pm[p * jc + cand[i]], P[v]) - tx; }
+			for i in nk {
+				for k in nk { A[8 * i + k] += rx_dot(ar[i], ar[k]); }
+			}
+		}
+		var tr = 0.0;
+		for i in nk { tr += A[9 * i]; }
+		let mu = 0.01 * tr / (nk as real) + 1.0e-12;
+		for i in nk { A[9 * i] += mu; }
+		var bvv real[8] = [0.0; 8];
+		for i in nk { bvv[i] = mu * w0[i]; }
+		var lip = 0.0;
+		for i in nk {
+			var rs = 0.0;
+			for k in nk { rs += abs(A[8 * i + k]); }
+			lip = max(lip, rs);
+		}
+		let step = 1.0 / lip;
+		var w real[8] = [0.0; 8];
+		for i in nk { w[i] = w0[i]; }
+		var y real[8] = [0.0; 8];
+		for it2 in 400 {
+			for i in nk {
+				var g = -bvv[i];
+				for k in nk { g += A[8 * i + k] * w[k]; }
+				y[i] = w[i] - step * g;
+			}
+			rx_proj(y[0..nk]);
+			for i in nk { w[i] = y[i]; }
+		}
+		var tj int[4] = [0, 0, 0, 0];
+		var tw real[4] = [0.0, 0.0, 0.0, 0.0];
+		var nt = 0;
+		for i in nk {
+			let sv = w[i];
+			let jj = cand[i];
+			if sv > 0.0 {
+				var p = nt;
+				while p > 0 && (sv > tw[p - 1] || (sv == tw[p - 1] && jj < tj[p - 1])) { p--; }
+				if p < 4 {
+					var q = min(nt, 3);
+					while q > p {
+						tj[q] = tj[q - 1];
+						tw[q] = tw[q - 1];
+						q--;
+					}
+					tj[p] = jj;
+					tw[p] = sv;
+					if nt < 4 { nt++; }
+				}
+			}
+		}
+		var tot = 0.0;
+		for k in nt { tot += tw[k]; }
+		if tot > 0.0 {
+			for k in 4 {
+				if k < nt {
+					J[4 * v + k] = tj[k];
+					W[4 * v + k] = (tw[k] / tot) as f32;
+				} else {
+					J[4 * v + k] = 0;
+					W[4 * v + k] = 0.0 as f32;
+				}
+			}
+		}
+	}
+	for pass in 2 {
+		for e in EA.len {
+			if EK[e] != 1 { continue; }
+			let ea = EA[e];
+			let eb = EB[e];
+			if MK[ea] <= 0.0 || MK[eb] <= 0.0 { continue; }
+			for k in 4 {
+				rx_add(sums, seen, touched, J[4 * ea + k], (W[4 * ea + k] as real) * 0.5);
+				rx_add(sums, seen, touched, J[4 * eb + k], (W[4 * eb + k] as real) * 0.5);
+			}
+			if rx_pick(ea, sums, seen, touched) {
+				for k in 4 {
+					J[4 * eb + k] = J[4 * ea + k];
+					W[4 * eb + k] = W[4 * ea + k];
+				}
+			}
+		}
+	}
+	for p in np {
+		rx_lbs(pm[p * jc..(p + 1) * jc], l);
+		for v in nv {
+			if MK[v] > 0.0 { e1 += rx_d2(l[v], xt[p * nv + v]); }
+		}
+		let f2 = rx_folds(l[..], pm[p * jc..(p + 1) * jc], OJ[..], OW[..], MK[..]);
+		fw += f2;
+		lw = f2;
+	}
+	let den = max((np * nm) as real, 1.0);
+	print("mush: ", np, " poses, ", nm, " masked, rms to target ", sqrt(e0 / den) * 1000.0, " mm before, ", sqrt(e1 / den) * 1000.0, " mm after");
+	print("mush folds (all poses): ", fl, " -> ", fx, " -> ", fw, " | last pose: ", ll, " -> ", lx, " -> ", lw);
+	nm
+}
+fn rx_relax(lo f32, hi f32, iters int, a f32) int {
+	rx_rows(true);
+	let n = P.len;
+	var sums real[256] = [0.0; 256];
+	var seen bool[256] = [false; 256];
+	var touched int[>..<] = [];
+	var cj int[>..] = [];
+	var cw f32[>..] = [];
+	var mv bool[>..] = [];
+	mv.resize(n, false);
+	for r in iters {
+		cj.clear();
+		cj.append(J[..]);
+		cw.clear();
+		cw.append(W[..]);
+		for v in n {
+			let m = rx_mask(v, lo, hi) as real;
+			let r0 = RO[v];
+			let r1 = RO[v + 1];
+			if m <= 0.0 || r1 <= r0 { continue; }
+			let am = (a as real) * m;
+			let deg = (r1 - r0) as real;
+			for k in 4 { rx_add(sums, seen, touched, cj[4 * v + k], (cw[4 * v + k] as real) * (1.0 - am)); }
+			for q in r0..r1 {
+				let u = RC[q];
+				for k in 4 { rx_add(sums, seen, touched, cj[4 * u + k], (cw[4 * u + k] as real) * am / deg); }
+			}
+			rx_pick(v, sums, seen, touched);
+			mv[v] = true;
+		}
+	}
+	var moved = 0;
+	for v in n {
+		if mv[v] { moved++; }
+	}
+	moved
+}
+fn rx_store(buf byte[>..]&) {
+	for v in P.len {
+		let jo = JO[v];
+		let jc = JC[v];
+		for k in 4 {
+			if jc == 5121 {
+				buf[jo + k] = (J[4 * v + k] & 255) as byte;
+			} else {
+				rx_w16(buf, jo + 2 * k, J[4 * v + k]);
+			}
+		}
+		let wo = WO[v];
+		let wc = WC[v];
+		if wc == 5126 {
+			for k in 4 { rx_w32(buf, wo + 4 * k, binary::f32_bits(W[4 * v + k]) as int); }
+		} else {
+			let full = if wc == 5121 { 255 } else { 65535 };
+			var q int[4] = [0, 0, 0, 0];
+			var s = 0;
+			var big = 0;
+			for k in 4 {
+				q[k] = round((W[4 * v + k] as real) * (full as real)) as int;
+				s += q[k];
+				if q[k] > q[big] { big = k; }
+			}
+			q[big] += full - s;
+			for k in 4 {
+				if wc == 5121 {
+					buf[wo + k] = (q[k] & 255) as byte;
+				} else {
+					rx_w16(buf, wo + 2 * k, q[k]);
+				}
+			}
+		}
+	}
+}
+fn main() {
+	let a = args();
+	if a.len < 7 {
+		print("usage: relax <in.glb> <out.glb> <y low> <y high> <iterations> <mesh> [mesh ...] [from=<body.glb>] [mush=<clips.gltf>]; smooths skin weights of the named meshes inside the height band, welded across seams and linked across meshes; from= first copies weights from the nearest vertex of that file's full skin; mush= then bakes Delta Mush over that clip library's poses into the band's weights");
+		return;
+	}
+	var buf byte[>..] = [];
+	if read_file(a[1], buf) == false {
+		print("no ", a[1]);
+		return;
+	}
+	let jl = rx_u32(buf[..], 12);
+	var doc = json::Doc { .. };
+	let root, jerr = json::parse(buf[20..20 + jl], doc);
+	if root < 0 {
+		print("bad json: ", jerr);
+		return;
+	}
+	let b0 = 20 + jl + 8;
+	let lo0, lok = parse_flt(a[3]);
+	let hi0, hok = parse_flt(a[4]);
+	let iters, iok = parse_int(a[5]);
+	let lo = lo0 as f32;
+	let hi = hi0 as f32;
+	var mush byte[>..] = [];
+	var has_mush = false;
+	var sbuf byte[>..] = [];
+	var sdoc = json::Doc { .. };
+	for k in 6..a.len {
+		let ar = a[k];
+		if starts_with(ar, "from=") {
+			if read_file(ar[5..], sbuf) == false {
+				print("no ", ar[5..]);
+				continue;
+			}
+			let sl = rx_u32(sbuf[..], 12);
+			let sroot, serr = json::parse(sbuf[20..20 + sl], sdoc);
+			if sroot < 0 {
+				print("bad json: ", serr);
+				return;
+			}
+			rx_gather(sdoc, sroot, sbuf[..], 20 + sl + 8, "skin", 0, true);
+			print("source skin ", SP.len);
+		} else if starts_with(ar, "mush=") {
+			mush.clear();
+			mush.append(ar[5..]);
+			has_mush = true;
+		} else {
+			let c = rx_gather(doc, root, buf[..], b0, ar, k - 6, false);
+			print(ar, " ", c);
+		}
+	}
+	let nw, nc = rx_link(0.0005, 0.015);
+	if SP.len > 0 { print("transferred ", rx_transfer(lo, hi)); }
+	let moved = rx_relax(lo, hi, iters, 0.5);
+	if has_mush { rx_mush(a[1], mush[..], lo, hi, 10); }
+	rx_store(buf);
+	write_file(a[2], buf[..]);
+	print("relax: ", P.len, " vertices, ", moved, " moved, ", EA.len, " edges, ", nw, " welds, ", nc, " cross-mesh links -> ", a[2]);
+}
