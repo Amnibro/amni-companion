@@ -1,0 +1,29 @@
+use companion
+
+The program tests `life`. Arrays: `inp real[11]` and `out real[33]`, all zero to start; inp[0] = 1/60 every frame. A helper `run(n int)` calls `life::life_step(inp, out)` n times. Print exactly the lines below, each followed by `ok` when its check holds and `bad` when not (for example `blinks ok`).
+1. `blinks`: `life::life_reset(7)`; target on (inp[1] = 1), yaw and pitch 0, distance 0.8, engaged, not talking; run 7200 frames (120 s) counting the frames where out[0] goes from below 0.5 to 0.5 or above. Holds when the count is from 16 to 48.
+2. `saccade`: `life::life_reset(7)`, same inputs, run 60 frames; then set the target yaw to 0.5 and count frames until |out[14] − 0.5| < 0.06 (stop at 60). Holds when the count is from 4 to 9 (a 28 degree shift lasts about 84 ms).
+3. `eye limit`: keep running 90 frames; holds when |out[12]| never exceeds 0.21 + 1e-9 over those frames and out[10] (head yaw) is above 0.25 at the end.
+4. `vor`: `life::life_reset(7)`, target yaw 0, run 120 frames, set yaw 0.6, run 7 frames (the saccade has landed); record h0 = out[10]; then run 23 more frames tracking the largest |out[14] − 0.6| over them and the final out[10]. Holds when the head moved (final out[10] − h0 > 0.03) while the gaze stayed within 0.08 of 0.6.
+5. `vergence`: `life::life_reset(7)`, yaw 0, distance 0.3, run 120 frames, keep v1 = out[30]; then distance 3, run 120 frames, keep v2 = out[30]. Holds when v1 > 0.08 and v2 < 0.03.
+6. `closure`: `life::life_reset(7)`, `life::life_say("map", 0.0, 1.0)` (m at 0 to 0.065, a to 0.1625, p to 0.2275); set inp[7] = 0.0325 and run 1 frame: holds when out[19] ≥ 0.45 and out[16] ≤ 0.12.
+7. `open`: inp[7] = 0.114, run 1 frame: holds when out[16] ≥ 0.4.
+8. `anticipation`: `life::life_say("oo", 0.5, 1.0)`; inp[7] = 0.42, run 1 frame, keep a = out[18]; inp[7] = 0.2, run 1 frame, keep b = out[18]. Holds when a > 0.1, a < 0.8 and b < 0.05.
+9. `rest`: inp[7] = 3, run 1 frame: holds when out[16] through out[27] are all below 0.01.
+10. `calibration`: build a partial eyeball of radius 0.012 centered at (0.03, 1.5, 0.1) with no back: for i from 0 to 20 and j below 24, polar angle a = 1.92·i/20 from +z and azimuth b = 2π·j/24, the offset (0.012 sin a cos b, 0.012 sin a sin b, 0.012 cos a); rest position = center + offset. Rotating the offset (x, y, z) up by 0.25 rad gives (x, y cos 0.25 + z sin 0.25, z cos 0.25 − y sin 0.25); its delta is that minus the offset. Fill `real[1512]` arrays p and d with the 504 triples. u = `life::life_eye_cal(p, d, 504, 1)` and, with every delta negated, w = the same call. Holds when |u − 0.25| < 0.02 and |w + 0.25| < 0.02.
+11. `breath idle`: `life::life_reset(7)`, target on, yaw and pitch 0, distance 0.8, not talking (inp[5] = 0), inp[7] = 0; run 3600 frames counting the frames where out[32] goes from below 0.5 to 0.5 or above, and tracking the smallest and largest out[32]. Holds when the count is from 10 to 18, the smallest is at least 0 and the largest at most 1.25.
+12. `breath speech`: `life::life_reset(7)`, talking (inp[5] = 1), `life::life_say("one two three four, five six seven eight.", 0.5, 1.0)`; then for frames f from 1 to 300 set inp[7] = f/60, run 1 frame, and call the frame rising when out[32] is above the value the frame before. Holds when some rising frame has inp[7] from 1.52 to 1.76 (the comma pause) and no rising frame has inp[7] from 0.75 to 1.2 (mid phrase).
+
+expect:
+blinks ok
+saccade ok
+eye limit ok
+vor ok
+vergence ok
+closure ok
+open ok
+anticipation ok
+rest ok
+calibration ok
+breath idle ok
+breath speech ok

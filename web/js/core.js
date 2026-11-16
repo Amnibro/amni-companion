@@ -8,7 +8,7 @@ export async function loadCore(src){
   ex.he_start(0n);ex.cv_init()
   const F=()=>new Float64Array(mem.buffer,V[0][0],V[0][1]),I=()=>new Int32Array(mem.buffer,V[1][0],V[1][1]),T=()=>new Uint8Array(mem.buffer,V[2][0],V[2][1]),O=()=>new Uint8Array(mem.buffer,V[3][0],V[3][1])
   const put=s=>{const b=te.encode(s).subarray(0,69999);T().set(b);return b.length},out=(n,at=0)=>td.decode(O().subarray(at,at+n))
-  const L={par:0,slot:4096,slot2:4128,ev:4160,pos:0,rest:200000,rest2:200300,want:200600,res:200800,lm:201000,pose:201200,hands:201400,face:201420,objs:201500,frames:0}
+  const L={par:0,slot:4096,slot2:4128,ev:4160,pos:0,rest:200000,rest2:200300,want:200600,res:200800,lm:201000,pose:201200,hands:201400,face:201420,objs:201500,lin:201600,lout:201620,frames:0}
   return{
     F,I,mem,
     rig(names,parents,pos){const n=Math.min(names.length,1024),i=I(),f=F();for(let k=0;k<n;k++){i[L.par+k]=parents[k];f[L.pos+3*k]=pos[3*k];f[L.pos+3*k+1]=pos[3*k+1];f[L.pos+3*k+2]=pos[3*k+2]}const len=put(names.slice(0,n).join('\n')),count=ex.cv_rig(n,len,L.par,L.pos,L.slot),slot=Array.from(I().subarray(L.slot,L.slot+22));return{slot,count,humanoid:!!ex.cv_humanoid(L.slot)}},
@@ -18,6 +18,11 @@ export async function loadCore(src){
     poseReset(){ex.cv_pose_reset()},
     sense(t,pose,hands,face,objs){const f=F();f.set(pose,L.pose);f.set(hands,L.hands);f.set(face,L.face);f.set(objs,L.objs);const n=ex.cv_sense(t,L.pose,L.hands,L.face,L.objs,L.ev),i=I(),r=[];for(let k=0;k<n;k++)r.push({code:i[L.ev+2*k],arg:i[L.ev+2*k+1],name:out(ex.cv_sense_name(i[L.ev+2*k]))});return r},
     senseReset(){ex.cv_sense_reset()},
+    lifeReset(seed){ex.cv_life_reset(seed|0)},
+    life(inp){F().set(inp,L.lin);ex.cv_life(L.lin,L.lout);return F().slice(L.lout,L.lout+33)},
+    eyeCal(p,d,ax){const n=p.length/3;if(6*n>200000)return 0;F().set(p,0);F().set(d,3*n);ex.cv_eye_cal(0,3*n,n,ax,L.lout+40);return F()[L.lout+40]},
+    say(text,t,rate=1){ex.cv_say(put(text),t,rate)},
+    lip(word,t,rate=1){ex.cv_lip(put(word),t,rate)},
     tags(text){const n=ex.cv_tags(put(text)),i=I(),clean=out(i[8190]),tags=out(i[8191],35000).split('\n').filter(Boolean).map(l=>{const k=l.indexOf(':');return k<0?{kind:l,arg:''}:{kind:l.slice(0,k),arg:l.slice(k+1)}});return{clean,tags,n}},
     reply(ctx,utter){const h=Object.entries(ctx).map(([k,v])=>`${k}=${String(v??'').replace(/\n/g,' ')}`).join('\n');return out(ex.cv_reply(put(h+'\n\n'+utter)))}
   }

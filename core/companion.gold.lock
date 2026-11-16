@@ -1,13 +1,14 @@
-=== 1b5e69b0425bbc96
+=== -1780bf6cb833a69c
 import cv.qm;
 import cv.rig;
 import cv.kin;
 import cv.sense;
 import cv.talk;
-var F real[300000];
-var I i32[8192];
-var T byte[70000];
-var O byte[70000];
+import cv.life;
+var F real[300000] = [0.0; 300000];
+var I i32[8192] = [0; 8192];
+var T byte[70000] = [0; 70000];
+var O byte[70000] = [0; 70000];
 fn main() {}
 === -5fa6a5c2f0a113ca
 export fn cv_init() {
@@ -64,4 +65,20 @@ export fn cv_tags(tlen i32) i32 {
 }
 export fn cv_reply(tlen i32) i32 {
 	return talk::brain_reply(T[0..tlen], O[..]) as i32;
+}
+=== 7062a3765cf0e431
+export fn cv_life_reset(seed i32) {
+	life::life_reset(seed as int);
+}
+export fn cv_life(in_at i32, out_at i32) {
+	life::life_step(F[in_at..in_at + 11], F[out_at..out_at + 33]);
+}
+export fn cv_say(tlen i32, t real, rate real) {
+	life::life_say(T[0..tlen], t, rate);
+}
+export fn cv_lip(tlen i32, t real, rate real) {
+	life::life_lip(T[0..tlen], t, rate);
+}
+export fn cv_eye_cal(p_at i32, d_at i32, n i32, ax i32, out_at i32) {
+	F[out_at] = life::life_eye_cal(F[p_at..p_at + 3 * n], F[d_at..d_at + 3 * n], n as int, ax as int);
 }

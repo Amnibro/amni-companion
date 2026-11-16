@@ -1,7 +1,7 @@
 use companion
 into companion.amni
 
-The WebAssembly entry points of the companion core, called from JavaScript. JavaScript reads and writes four fixed module arrays directly: `F real[300000]`, `I i32[8192]`, `T byte[70000]` (text in) and `O byte[70000]` (text out). Every export takes only i32 or real arguments (offsets into those arrays) and returns i32 or nothing; out-of-range offsets are the caller's bug. Import the modules qm, rig, motion, sense and talk from `cv`, and keep a global `fn main() {}`.
+The WebAssembly entry points of the companion core, called from JavaScript. JavaScript reads and writes four fixed module arrays directly: `F real[300000]`, `I i32[8192]`, `T byte[70000]` (text in) and `O byte[70000]` (text out). Every export takes only i32 or real arguments (offsets into those arrays) and returns i32 or nothing; out-of-range offsets are the caller's bug. Import the modules qm, rig, motion, sense, talk and life from `cv`, and keep a global `fn main() {}`.
 
 ```amni
 extern fn cv_view(id i32, xs real[:]);
@@ -22,3 +22,5 @@ extern fn cv_bytes(id i32, xs byte[:]);
 `export fn cv_sense(t real, pose_at i32, hands_at i32, face_at i32, objs_at i32, ev_at i32) i32` returns `sense::sense_frame(t, F[pose_at..+134], F[hands_at..+4], F[face_at..+55], F[objs_at..+17], I[ev_at..+34])`. `export fn cv_sense_name(code i32) i32` copies `sense::sense_name(code)` into O and returns its length. `export fn cv_sense_reset()` calls `sense::sense_reset`.
 
 `export fn cv_tags(tlen i32) i32` runs `talk::tags_split(T[0..tlen], O[0..35000], O[35000..70000], I[8190..8192])` and returns the tag count (JavaScript reads the clean length at I[8190] and the tags length at I[8191]). `export fn cv_reply(tlen i32) i32` returns `talk::brain_reply(T[0..tlen], O[..])`.
+
+`export fn cv_life_reset(seed i32)` calls `life::life_reset(seed as int)`. `export fn cv_life(in_at i32, out_at i32)` runs `life::life_step(F[in_at..in_at+11], F[out_at..out_at+33])`. `export fn cv_say(tlen i32, t real, rate real)` runs `life::life_say(T[0..tlen], t, rate)`, and `export fn cv_lip(tlen i32, t real, rate real)` runs `life::life_lip(T[0..tlen], t, rate)`. `export fn cv_eye_cal(p_at i32, d_at i32, n i32, ax i32, out_at i32)` sets `F[out_at] = life::life_eye_cal(F[p_at..p_at + 3*n], F[d_at..d_at + 3*n], n as int, ax as int)`.

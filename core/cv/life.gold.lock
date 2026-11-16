@@ -1,0 +1,539 @@
+=== -19c0b3649b5abb5d
+import math;
+=== -592647c1601f9537
+var LR int = 2463534242;
+var LT real = 0.0;
+var GY real = 0.0;
+var GP real = 0.0;
+var SA bool = false;
+var S0Y real = 0.0;
+var S0P real = 0.0;
+var S1Y real = 0.0;
+var S1P real = 0.0;
+var ST real = 0.0;
+var SD real = 0.0;
+var FY real = 0.0;
+var FP real = 0.0;
+var FT real = 0.0;
+var AV bool = false;
+var AVF bool = false;
+var PT bool = false;
+var HY real = 0.0;
+var HP real = 0.0;
+var HVY real = 0.0;
+var HVP real = 0.0;
+var VG real = 0.0;
+var BT real = -1.0;
+var BA real = 0.0;
+var BC real = 0.0;
+var BH real = 0.0;
+var BO real = 0.0;
+var BL real = 0.0;
+var LB real = -10.0;
+var BN real = 2.0;
+var BV real = 0.0;
+var BS real = 0.0;
+var BK real = 0.0;
+var BP real = 0.0;
+var BD real = 1.0;
+var BI bool = false;
+var BE bool = false;
+var VC i32[512] = [0; 512];
+var V0 real[512] = [0.0; 512];
+var V1 real[512] = [0.0; 512];
+var VN int = 0;
+=== 4caa1c94a6ca8d67
+fn rnd() real {
+	var x = LR;
+	x = (x ^ (x << 13)) & 0xFFFFFFFF;
+	x = (x ^ (x >> 17)) & 0xFFFFFFFF;
+	x = (x ^ (x << 5)) & 0xFFFFFFFF;
+	LR = x;
+	return (x & 0xFFFFFF) as real / 16777216.0;
+}
+=== -421807e701ad06ef
+fn smooth(u real) real {
+	let c = clamp(u, 0.0, 1.0);
+	c * c * (3.0 - 2.0 * c)
+}
+fn minjerk(u real) real {
+	let c = clamp(u, 0.0, 1.0);
+	c * c * c * (10.0 - 15.0 * c + 6.0 * c * c)
+}
+=== 034c9c04d5a64a2a
+fn blink_gap(rate real) real {
+	0.5 + (-log(1.0 - 0.999 * rnd())) * max(60.0 / rate - 0.5, 0.2)
+}
+=== -4e42696eac2492e1
+fn start_blink(rate real) {
+	BT = 0.0;
+	if rnd() < 0.15 { BA = 0.55 + 0.25 * rnd(); } else { BA = 1.0; }
+	BC = 0.075 + 0.02 * rnd();
+	BH = 0.02 + 0.03 * rnd();
+	BO = 0.16 + 0.08 * rnd();
+	BL = 0.006 * rnd();
+	LB = LT;
+	BN = blink_gap(rate);
+}
+=== -45ebc3b81681eef1
+fn blink_val(t real) real {
+	if t < 0.0 { return 0.0; }
+	if t < BC { return BA * smooth(t / BC); }
+	if t < BC + BH { return BA; }
+	let u = (t - BC - BH) / BO;
+	if u < 1.0 { return BA * (1.0 - u) * (1.0 - u); }
+	return 0.0;
+}
+=== 717b56e9c2c8147d
+fn start_saccade(y real, p real, rate real) {
+	let a = sqrt((y - GY) * (y - GY) + (p - GP) * (p - GP));
+	let deg = a * 57.29578;
+	S0Y = GY;
+	S0P = GP;
+	S1Y = y;
+	S1P = p;
+	SD = 0.021 + 0.0022 * deg;
+	ST = 0.0;
+	SA = true;
+	if deg > 15.0 && BT < 0.0 && LT - LB > 0.35 {
+		if rnd() < min(1.0, (deg - 15.0) / 30.0) { start_blink(rate); }
+	}
+}
+=== 4a567d44e74a4bbe
+fn pick_fix(on bool, talk bool, dist real) {
+	if on {
+		if AVF || (talk && rnd() < 0.3) {
+			let mag = 0.14 + 0.17 * rnd();
+			let sgn = if rnd() < 0.5 { -1.0 } else { 1.0 };
+			FY = mag * sgn;
+			FP = -0.09 + 0.23 * rnd();
+			FT = 0.6 + rnd();
+			AV = true;
+		} else {
+			let d = if dist > 0.2 { dist } else { 1.0 };
+			let e = atan2(0.032, d);
+			let m = atan2(0.07, d);
+			let r = rnd();
+			if r < 0.4 {
+				FY = e;
+				FP = 0.3 * e;
+			} else if r < 0.8 {
+				FY = -e;
+				FP = 0.3 * e;
+			} else {
+				FY = 0.0;
+				FP = -m;
+			}
+			if talk { FT = 0.3 + 0.6 * rnd(); } else { FT = 0.35 + 0.9 * rnd(); }
+			AV = false;
+		}
+	} else {
+		FY = -0.35 + 0.7 * rnd();
+		FP = -0.17 + 0.27 * rnd();
+		FT = 0.8 + 1.8 * rnd();
+		AV = false;
+	}
+	AVF = false;
+}
+=== 10d46af5d4f0644c
+fn spring(x real&, v real&, goal real, w real, dt real) {
+	let d = x - goal;
+	let k = v + w * d;
+	let e = exp(-w * dt);
+	x = goal + (d + k * dt) * e;
+	v = (v - w * k * dt) * e;
+}
+=== 688f5754b99735ab
+fn protrusion(c int) bool { c == 7 || c == 8 || c == 12 || c == 13 }
+=== -1e89d28a7bec92d0
+fn mouth(t real, out real[:]) {
+	var sj = 0.0;
+	var sl = 0.0;
+	var jaw = 0.0;
+	var lips real[12] = [0.0; 12];
+	var P = 0.0;
+	var F = 0.0;
+	for s in VN {
+		let c = VC[s] as int;
+		if c <= 0 { continue; }
+		let a = V0[s];
+		let b = V1[s];
+		if c == 1 || c == 2 {
+			let g = if t < a { a - t } else if t > b { t - b } else { 0.0 };
+			let q = exp(-(g / 0.03) * (g / 0.03));
+			if c == 1 { P = max(P, q); } else { F = max(F, q); }
+		}
+		var f = 1.0;
+		if t < a {
+			let lead = if protrusion(c) { 0.075 } else { 0.06 };
+			let x = (a - t) / lead;
+			f = exp(-x * x);
+		} else if t > b {
+			let x = (t - b) / 0.06;
+			f = exp(-x * x);
+		}
+		if f < 0.001 { continue; }
+		let dj = f * DJ[c];
+		sj += dj;
+		jaw += dj * VIS[c * 12];
+		let dl = f * DL[c];
+		sl += dl;
+		for j in 1..12 { lips[j] += dl * VIS[c * 12 + j]; }
+	}
+	out[0] = (jaw / max(sj, 1e-6)) * min(1.0, sj / 0.35);
+	for j in 1..12 { out[j] = (lips[j] / max(sl, 1e-6)) * min(1.0, sl / 0.35); }
+	out[0] *= (1.0 - 0.85 * P) * (1.0 - 0.6 * F);
+	out[1] *= 1.0 - 0.6 * P;
+	out[2] *= 1.0 - 0.6 * P;
+	out[3] = max(out[3], 0.5 * P);
+	out[4] = max(out[4], 0.5 * P);
+	out[11] = max(out[11], 0.4 * F);
+	out[9] = max(out[9], 0.25 * F);
+	out[10] = max(out[10], 0.25 * F);
+}
+=== -5b487bf5f81393f
+fn g2v(w const byte[:], i int, n int&) i32 {
+	if i + 1 < w.len {
+		let p = w[i..i + 2];
+		var v = -1;
+		if p == "th" {
+			v = 3;
+		} else if p == "sh" || p == "ch" {
+			v = 7;
+		} else if p == "ph" {
+			v = 2;
+		} else if p == "ee" || p == "ea" {
+			v = 11;
+		} else if p == "oo" {
+			v = 13;
+		} else if p == "ou" || p == "ow" {
+			v = 12;
+		} else if p == "ai" || p == "ay" {
+			v = 10;
+		}
+		if v >= 0 {
+			n = 2;
+			return v as i32;
+		}
+	}
+	n = 1;
+	let c = w[i] as int;
+	let r int = match c {
+		'a' => 9,
+		'e' => 10,
+		'i', 'y' => 11,
+		'o' => 12,
+		'u', 'w' => 13,
+		'b', 'm', 'p' => 1,
+		'f', 'v' => 2,
+		't', 'd', 'n', 'l' => 4,
+		'k', 'g', 'c', 'q', 'x' => 5,
+		's', 'z' => 6,
+		'j' => 7,
+		'r' => 8,
+		_ => -1,
+	};
+	return r as i32;
+}
+=== -75203b753cede46b
+fn push_word(w const byte[:], t real, rate real) real {
+	var b byte[..64] = [];
+	for ch in w {
+		var c = ch;
+		if c >= 'A' && c <= 'Z' { c += 32; }
+		if c >= 'a' && c <= 'z' && b.len < 64 { b.push(c); }
+	}
+	if b.len >= 3 && b[b.len - 1] == 'e' { b.pop(); }
+	var tt = t;
+	var i = 0;
+	while i < b.len {
+		var n = 1;
+		let v = g2v(b[..], i, n);
+		if v >= 0 {
+			var d = 0.065 / rate;
+			if v >= 9 && v <= 13 { d *= 1.5; }
+			if VN < 512 {
+				VC[VN] = v;
+				V0[VN] = tt;
+				V1[VN] = tt + d;
+				VN++;
+			}
+			tt += d;
+		}
+		i += n;
+	}
+	tt
+}
+=== 36d98fd787f1f4e7
+fn life_say(text const byte[:], t real, rate real) {
+	VN = 0;
+	let r = max(rate, 0.2);
+	fn ws(c byte) bool { c == ' ' || c == '\t' || c == '\n' }
+	var tt = t;
+	var i = 0;
+	while i < text.len {
+		while i < text.len && ws(text[i]) { i++; }
+		let s = i;
+		while i < text.len && !ws(text[i]) { i++; }
+		if i > s {
+			let wd = text[s..i];
+			let last = wd[wd.len - 1];
+			let pause = if last == ',' || last == '.' || last == ';' || last == ':' || last == '!' || last == '?' { 0.22 } else { 0.06 };
+			tt = push_word(wd, tt, r) + pause / r;
+		}
+	}
+}
+=== -3939e00449e5edd5
+fn life_lip(word const byte[:], t real, rate real) {
+	VN = 0;
+	push_word(word, t, max(rate, 0.2));
+}
+=== 458e61bd4215c57b
+fn life_reset(seed int) {
+	LT = 0.0;
+	GY = 0.0;
+	GP = 0.0;
+	SA = false;
+	S0Y = 0.0;
+	S0P = 0.0;
+	S1Y = 0.0;
+	S1P = 0.0;
+	ST = 0.0;
+	SD = 0.0;
+	FY = 0.0;
+	FP = 0.0;
+	FT = 0.0;
+	AV = false;
+	AVF = false;
+	PT = false;
+	HY = 0.0;
+	HP = 0.0;
+	HVY = 0.0;
+	HVP = 0.0;
+	VG = 0.0;
+	BT = -1.0;
+	BA = 0.0;
+	BC = 0.0;
+	BH = 0.0;
+	BO = 0.0;
+	BL = 0.0;
+	LB = -10.0;
+	BN = 2.0;
+	for i in 512 {
+		VC[i] = 0;
+		V0[i] = 0.0;
+		V1[i] = 0.0;
+	}
+	VN = 0;
+	LR = seed & 0xFFFFFFFF;
+	if LR == 0 { LR = 2463534242; }
+	BN = 1.5 + 2.0 * rnd();
+	FT = 0.3;
+}
+=== 407613097e6edf81
+fn gap_ahead(t real) real {
+	var best = -1.0;
+	for k in VN {
+		if V0[k] <= t && t < V1[k] { return 0.0; }
+		if V0[k] > t {
+			if best < 0.0 || V0[k] < best { best = V0[k]; }
+		}
+	}
+	if best < 0.0 { return 10.0; }
+	best - t
+}
+=== 4da8cd0342878366
+fn breath_in(talk bool, gap real) {
+	BI = true;
+	BS = BV;
+	BP = 0.0;
+	if talk {
+		BK = 0.7 + 0.3 * rnd();
+		BD = clamp(gap, 0.15, 0.35);
+	} else {
+		BK = 0.8 + 0.4 * rnd();
+		BD = 0.4 * 60.0 / (12.0 + 5.0 * rnd());
+	}
+}
+=== 2b5d2822b5bd7e8e
+fn life_step(inp real[:], out real[:]) {
+	let dt = clamp(inp[0], 0.0, 0.1);
+	let on = inp[1] > 0.5;
+	let talk = inp[5] > 0.5;
+	let eng = inp[6] > 0.5;
+	let Ry = if inp[8] > 0.0 { inp[8] } else { 0.21 };
+	let Rp = if inp[9] > 0.0 { inp[9] } else { 0.17 };
+	let vs = if inp[10] < 0.0 { -1.0 } else { 1.0 };
+	LT += dt;
+	if on {
+		if talk && !PT && rnd() < 0.7 {
+			AVF = true;
+			FT = 0.0;
+		}
+		if !talk && PT && AV { FT = 0.0; }
+	}
+	PT = talk;
+	FT -= dt;
+	if FT <= 0.0 { pick_fix(on, talk, inp[4]); }
+	var gy = FY;
+	var gp = FP;
+	if on {
+		gy = inp[2] + FY;
+		gp = inp[3] + FP;
+	}
+	gy = clamp(gy, -1.4, 1.4);
+	gp = clamp(gp, -0.6, 0.6);
+	let rate = if talk { 26.0 } else if on && eng { 14.0 } else { 18.0 };
+	if SA {
+		let dy = gy - S1Y;
+		let dp = gp - S1P;
+		if sqrt(dy * dy + dp * dp) > 0.1 { start_saccade(gy, gp, rate); }
+	}
+	if SA {
+		ST += dt;
+		if ST >= SD {
+			GY = S1Y;
+			GP = S1P;
+			SA = false;
+		} else {
+			let m = minjerk(ST / SD);
+			GY = S0Y + (S1Y - S0Y) * m;
+			GP = S0P + (S1P - S0P) * m;
+		}
+	} else {
+		let dy = gy - GY;
+		let dp = gp - GP;
+		if sqrt(dy * dy + dp * dp) > 0.035 {
+			start_saccade(gy, gp, rate);
+		} else {
+			let k = 1.0 - exp(-dt / 0.06);
+			GY += dy * k;
+			GP += dp * k;
+		}
+	}
+	let sy = (if on { 0.3 } else { 0.15 }) + 0.6 * smooth((abs(gy) - 0.12) / 0.5);
+	var hy = gy * sy;
+	hy = gy - clamp(gy - hy, -0.95 * Ry, 0.95 * Ry);
+	let sp = (if on { 0.35 } else { 0.2 }) + 0.5 * smooth((abs(gp) - 0.08) / 0.4);
+	var hp = gp * sp;
+	hp = gp - clamp(gp - hp, -0.95 * Rp, 0.95 * Rp);
+	spring(HY, HVY, hy, 9.0, dt);
+	spring(HP, HVP, hp, 10.0, dt);
+	let ey = clamp(GY - HY, -Ry, Ry);
+	let ep = clamp(GP - HP, -Rp, Rp);
+	let vt = if on && !AV && inp[4] > 0.15 && inp[4] < 8.0 { atan2(0.031, inp[4]) } else { 0.0 };
+	VG += (vt - VG) * (1.0 - exp(-dt / 0.15));
+	let ly = ey - VG;
+	let ry = ey + VG;
+	if BT >= 0.0 {
+		BT += dt;
+		if BT > BC + BH + BO { BT = -1.0; }
+	}
+	BN -= dt;
+	if BN <= 0.0 && BT < 0.0 { start_blink(rate); }
+	let lid = 0.35 * clamp(-ep / 0.35, 0.0, 1.0);
+	let wide = 0.25 * clamp(ep / 0.3, 0.0, 1.0);
+	let bl = if BT >= 0.0 { blink_val(BT) } else { 0.0 };
+	let br = if BT >= 0.0 { blink_val(BT - BL) } else { 0.0 };
+	BP += dt / BD;
+	if BI {
+		BV = BS + (BK - BS) * smooth(BP);
+		if BP >= 1.0 {
+			BI = false;
+			BS = BV;
+			BP = 0.0;
+			BE = talk;
+			BD = if talk { 5.0 } else { 0.6 * 60.0 / (12.0 + 5.0 * rnd()) };
+		}
+	} else {
+		if BE { BV = BS * (1.0 - BP); } else { BV = BS * (1.0 - BP) * (1.0 - BP); }
+		if BP >= 1.0 { BV = 0.0; }
+	}
+	if !BI {
+		if BP >= 1.0 {
+			breath_in(talk, 0.35);
+		} else if talk && VN > 0 && BP * BD >= 0.6 {
+			let g = gap_ahead(inp[7]);
+			if g >= 0.15 { breath_in(true, g); }
+		}
+	}
+	out[0] = 1.0 - (1.0 - bl) * (1.0 - lid);
+	out[1] = 1.0 - (1.0 - br) * (1.0 - lid);
+	out[2] = clamp(ly / Ry, 0.0, 1.0);
+	out[3] = clamp(-ly / Ry, 0.0, 1.0);
+	out[4] = clamp(vs * ep / Rp, 0.0, 1.0);
+	out[5] = clamp(-vs * ep / Rp, 0.0, 1.0);
+	out[6] = clamp(-ry / Ry, 0.0, 1.0);
+	out[7] = clamp(ry / Ry, 0.0, 1.0);
+	out[8] = out[4];
+	out[9] = out[5];
+	out[10] = HY;
+	out[11] = HP;
+	out[12] = ey;
+	out[13] = ep;
+	out[14] = GY;
+	out[15] = GP;
+	mouth(inp[7], out[16..28]);
+	if talk && VN == 0 { out[16] = max(0.0, 0.35 + 0.35 * sin(17.0 * LT) + 0.2 * sin(29.0 * LT)); }
+	out[28] = wide * (1.0 - bl);
+	out[29] = wide * (1.0 - bl);
+	out[30] = VG;
+	var live = 0.0;
+	for k in VN {
+		if V1[k] > inp[7] - 0.2 {
+			live = 1.0;
+			break;
+		}
+	}
+	out[31] = live;
+	if out.len > 32 { out[32] = BV; }
+}
+=== 25e3792c4f5ce14d
+fn life_eye_cal(p const real[:], d const real[:], n int, ax int) real {
+	fn moves(v int) bool { abs(d[3 * v]) > 1e-7 || abs(d[3 * v + 1]) > 1e-7 || abs(d[3 * v + 2]) > 1e-7 }
+	var any = false;
+	var x0 = 0.0;
+	var x1 = 0.0;
+	var y0 = 0.0;
+	var y1 = 0.0;
+	var z1 = 0.0;
+	for v in n {
+		if !moves(v) { continue; }
+		let x = p[3 * v];
+		let y = p[3 * v + 1];
+		let z = p[3 * v + 2];
+		if !any {
+			x0 = x;
+			x1 = x;
+			y0 = y;
+			y1 = y;
+			z1 = z;
+			any = true;
+		} else {
+			x0 = min(x0, x);
+			x1 = max(x1, x);
+			y0 = min(y0, y);
+			y1 = max(y1, y);
+			z1 = max(z1, z);
+		}
+	}
+	if !any { return 0.0; }
+	let R = ((x1 - x0) + (y1 - y0)) / 4.0;
+	let cz = z1 - R;
+	var num = 0.0;
+	var den = 0.0;
+	for v in n {
+		if !moves(v) { continue; }
+		let z = p[3 * v + 2];
+		if z > cz {
+			let r = z - cz;
+			num += d[3 * v + ax] * r;
+			den += r * r;
+		}
+	}
+	if den > 1e-12 {
+		let s = clamp(num / den, -1.0, 1.0);
+		return atan2(s, sqrt(max(0.0, 1.0 - s * s)));
+	}
+	return 0.0;
+}
