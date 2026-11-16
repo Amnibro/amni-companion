@@ -441,8 +441,14 @@ fn rx_frames(s const float3[:], fnm float3[>..]&, ft float3[>..]&, fb float3[>..
 		fb.push(rx_cross(nv, tg));
 	}
 }
-=== -94648ce5eeac8e6
-fn rx_lbs(pm const gfx::mat4[:], out float3[>..]&) {
+=== 45a80113067624f3
+fn rx_d2(a float3, b float3) real {
+	let dx = (a.x as real) - (b.x as real);
+	let dy = (a.y as real) - (b.y as real);
+	let dz = (a.z as real) - (b.z as real);
+	dx * dx + dy * dy + dz * dz
+}
+fn rx_lbs_from(src const float3[:], pm const gfx::mat4[:], out float3[>..]&) {
 	out.clear();
 	out.resize(P.len, float3 { 0.0, 0.0, 0.0 });
 	for v in P.len {
@@ -451,55 +457,53 @@ fn rx_lbs(pm const gfx::mat4[:], out float3[>..]&) {
 			let w = W[4 * v + k];
 			let j = J[4 * v + k];
 			if w > 0.0 && j >= 0 && j < pm.len {
-				acc = acc + linalg::point(pm[j], P[v]) * w;
+				acc = acc + linalg::point(pm[j], src[v]) * w;
 			}
 		}
 		out[v] = acc;
 	}
 }
-=== 09318d11fae19a54
-fn rx_dot(a float3, b float3) real {
-	(a.x as real) * (b.x as real) + (a.y as real) * (b.y as real) + (a.z as real) * (b.z as real)
+fn rx_lbs(pm const gfx::mat4[:], out float3[>..]&) {
+	rx_lbs_from(P[..], pm, out);
 }
-fn rx_d2(a float3, b float3) real {
-	let ex = (a.x as real) - (b.x as real);
-	let ey = (a.y as real) - (b.y as real);
-	let ez = (a.z as real) - (b.z as real);
-	ex * ex + ey * ey + ez * ez
-}
-fn rx_rn(pal const gfx::mat4[:], v int, oj const int[:], ow const f32[:]) float3 {
-	let g = G[v] * gltf::VERTEX_FLOATS;
-	let nv = float3 { gltf::verts[g + 3], gltf::verts[g + 4], gltf::verts[g + 5] };
-	let p = P[v];
-	var acc = float3 { 0.0, 0.0, 0.0 };
-	for k in 4 {
-		let w = ow[4 * v + k];
-		let j = oj[4 * v + k];
-		if w > 0.0 && j >= 0 && j < pal.len {
-			acc = acc + (linalg::point(pal[j], p + nv) - linalg::point(pal[j], p)) * w;
-		}
-	}
-	acc
-}
+=== -6bba566a46959927
 fn rx_folds(q const float3[:], pal const gfx::mat4[:], oj const int[:], ow const f32[:], mk const f32[:]) int {
-	var f = 0;
+	var nf = 0;
 	for t in TR.len / 3 {
 		let a = TR[3 * t];
 		let b = TR[3 * t + 1];
 		let c = TR[3 * t + 2];
-		if mk[a] >= 0.5 && mk[b] >= 0.5 && mk[c] >= 0.5 {
-			let r = rx_rn(pal, a, oj, ow) + rx_rn(pal, b, oj, ow) + rx_rn(pal, c, oj, ow);
-			let cr = rx_cross(q[b] - q[a], q[c] - q[a]);
-			if rx_dot(cr, r) < 0.0 { f++; }
+		if mk[a] < 0.5 || mk[b] < 0.5 || mk[c] < 0.5 { continue; }
+		var r = float3 { 0.0, 0.0, 0.0 };
+		for ci in 3 {
+			let v = TR[3 * t + ci];
+			let p = P[v];
+			let g = G[v] * gltf::VERTEX_FLOATS;
+			let nv = float3 { gltf::verts[g + 3] as f32, gltf::verts[g + 4] as f32, gltf::verts[g + 5] as f32 };
+			for k in 4 {
+				let w = ow[4 * v + k];
+				let j = oj[4 * v + k];
+				if w > 0.0 && j >= 0 && j < pal.len {
+					r = r + (linalg::point(pal[j], p + nv) - linalg::point(pal[j], p)) * w;
+				}
+			}
+		}
+		if linalg::dot3(rx_cross(q[b] - q[a], q[c] - q[a]), r) < 0.0 { nf++; }
+	}
+	nf
+}
+fn rx_proj(w real[:], k int) {
+	var u real[8] = [0.0; 8];
+	for i in k { u[i] = w[i]; }
+	for i in 1..k {
+		var p = i;
+		while p > 0 && u[p - 1] < u[p] {
+			let tmp = u[p - 1];
+			u[p - 1] = u[p];
+			u[p] = tmp;
+			p--;
 		}
 	}
-	f
-}
-fn rx_proj(y real[:]) {
-	let k = y.len;
-	var u real[8] = [0.0; 8];
-	for i in k { u[i] = y[i]; }
-	sort(u[0..k]) { a, b => a > b };
 	var cs = 0.0;
 	var th = 0.0;
 	for r in k {
@@ -507,287 +511,183 @@ fn rx_proj(y real[:]) {
 		let t = (cs - 1.0) / ((r + 1) as real);
 		if u[r] - t > 0.0 { th = t; }
 	}
-	for i in k { y[i] = max(y[i] - th, 0.0); }
-}
-fn rx_clipname(i int) const byte[:] {
-	match i {
-		0 => "Idle_Loop",
-		1 => "Walk_Formal_Loop",
-		2 => "Dance_Loop",
-		_ => "Sitting_Idle_Loop",
-	}
+	for i in k { w[i] = max(w[i] - th, 0.0); }
 }
 fn rx_mush(glb const byte[:], lib const byte[:], lo f32, hi f32, n int) int {
-	let asset = gltf::load(glb);
-	if asset < 0 {
-		print("load fail");
-		return 0;
-	}
-	let it = s3d::add(asset);
-	let nlib = clips::clips_load(lib, asset);
-	var sl i32[22];
-	let first = gltf::assets[asset].nodes.first;
-	for i in 22 { sl[i] = if clips::kc_slot[i] < 0 { -1 } else { (clips::kc_slot[i] as int - first) as i32 }; }
-	mix_open(asset, it, sl[..]);
-	for c in nlib { mix_clip(clips::kc_nf[c], clips::kc_loop[c], clips::clips_frames(c)); }
-	G.clear();
-	var sk i32 = -1;
-	var got = false;
-	let av = args();
-	for k in 6..av.len {
-		let ar = av[k];
-		if starts_with(ar, "from=") || starts_with(ar, "mush=") { continue; }
-		let nd = gltf::find_node(asset, ar);
-		if nd < 0 { continue; }
-		if got == false {
-			sk = gltf::nodes[nd].skin as i32;
-			got = true;
-		}
-		let ms = gltf::meshes[gltf::nodes[nd].mesh];
-		for pi in ms.prims.count {
-			let pr = gltf::prims[ms.prims.first + pi];
-			for v in pr.vcount { G.push(pr.vfirst + v); }
-		}
-	}
-	if G.len != P.len {
-		print("vertex map mismatch ", G.len, " ", P.len);
-		return 0;
-	}
+	let asset, item, sk, nlib = rx_scene(glb, lib);
+	if asset < 0 { return 0; }
 	rx_rows(false);
 	let nv = P.len;
-	var OJ int[>..] = [];
-	OJ.append(J[..]);
-	var OW f32[>..] = [];
-	OW.append(W[..]);
 	var s0 float3[>..] = [];
 	rx_smooth(P[..], s0, n);
 	var fn0 float3[>..] = [];
 	var ft0 float3[>..] = [];
 	var fb0 float3[>..] = [];
 	rx_frames(s0[..], fn0, ft0, fb0);
-	var D float3[>..] = [];
-	var MK f32[>..] = [];
+	var dl float3[>..] = [];
+	var m f32[>..] = [];
+	var nmask = 0;
 	for v in nv {
 		let e = P[v] - s0[v];
-		D.push(float3 { rx_dot(e, ft0[v]) as f32, rx_dot(e, fb0[v]) as f32, rx_dot(e, fn0[v]) as f32 });
-		MK.push(rx_mask(v, lo, hi));
+		dl.push(float3 { linalg::dot3(e, ft0[v]), linalg::dot3(e, fb0[v]), linalg::dot3(e, fn0[v]) });
+		m.push(rx_mask(v, lo, hi));
+		if m[v] > 0.0 { nmask++; }
 	}
-	var pal gfx::mat4[>..] = [];
+	var oj int[>..] = [];
+	oj.append(J[..]);
+	var ow f32[>..] = [];
+	ow.append(W[..]);
 	var pm gfx::mat4[>..] = [];
 	var xt float3[>..] = [];
+	var pal gfx::mat4[>..] = [];
 	var l float3[>..] = [];
 	var s float3[>..] = [];
-	var fq float3[>..] = [];
-	var tq float3[>..] = [];
-	var bq float3[>..] = [];
+	var fs1 float3[>..] = [];
+	var ft1 float3[>..] = [];
+	var fb1 float3[>..] = [];
 	var jc = 0;
 	var np = 0;
 	var e0 = 0.0;
-	var e1 = 0.0;
-	var fl = 0;
+	var fo = 0;
 	var fx = 0;
-	var fw = 0;
-	var ll = 0;
-	var lx = 0;
-	var lw = 0;
-	fn capture() {
-		s3d::pose(it);
+	var last_o = 0;
+	var last_x = 0;
+	for i in 20 {
+		let c = rx_pose(i, nlib);
+		if c < -1 { continue; }
+		s3d::pose(item);
 		pal.clear();
 		motion::joints(sk, pal);
 		jc = pal.len;
 		pm.append(pal[..]);
 		rx_lbs(pal[..], l);
 		rx_smooth(l[..], s, n);
-		rx_frames(s[..], fq, tq, bq);
+		rx_frames(s[..], fs1, ft1, fb1);
+		let base = xt.len;
 		for v in nv {
-			let d = D[v];
-			let x = l[v] + (s[v] + tq[v] * d.x + bq[v] * d.y + fq[v] * d.z - l[v]) * MK[v];
+			let d = dl[v];
+			let tgt = s[v] + ft1[v] * d.x + fb1[v] * d.y + fs1[v] * d.z;
+			let x = l[v] + (tgt - l[v]) * m[v];
 			xt.push(x);
-			if MK[v] > 0.0 { e0 += rx_d2(l[v], x); }
+			if m[v] > 0.0 { e0 += rx_d2(l[v], x); }
 		}
-		let f0 = rx_folds(l[..], pal[..], OJ[..], OW[..], MK[..]);
-		let f1 = rx_folds(xt[np * nv..np * nv + nv], pal[..], OJ[..], OW[..], MK[..]);
-		fl += f0;
-		fx += f1;
-		ll = f0;
-		lx = f1;
+		let fa = rx_folds(l[..], pal[..], oj[..], ow[..], m[..]);
+		let fb = rx_folds(xt[base..(base + nv)], pal[..], oj[..], ow[..], m[..]);
+		fo += fa;
+		fx += fb;
+		last_o = fa;
+		last_x = fb;
 		np++;
 	}
-	capture();
-	let times real[32] = [0.5, 1.0, 1.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.25, 0.5, 0.75, 1.0, 0.0, 0.0, 0.0, 0.0, 0.35, 0.7, 1.05, 1.4, 1.75, 2.1, 2.45, 2.8, 0.5, 1.0, 1.5, 2.0, 0.0, 0.0, 0.0, 0.0];
-	var nb byte[>..] = [];
-	for ci in 4 {
-		let name = rx_clipname(ci);
-		var cl = -1;
-		for c in nlib {
-			nb.clear();
-			clips::clips_name(c, nb);
-			if cl < 0 && nb[..] == name { cl = c; }
-		}
-		if cl < 0 {
-			print("no clip ", name);
-			continue;
-		}
-		mix_play(cl, 0.0);
-		var t = 0.0;
-		for q in 8 {
-			let target = times[8 * ci + q];
-			if target <= 0.0 { continue; }
-			while t + 0.0001 < target {
-				mix_advance(1.0 / 60.0);
-				t += 1.0 / 60.0;
-			}
-			capture();
-		}
-	}
-	var nm = 0;
 	var sums real[256] = [0.0; 256];
 	var seen bool[256] = [false; 256];
 	var touched int[>..<] = [];
+	var cand int[>..] = [];
 	for v in nv {
-		if MK[v] <= 0.0 { continue; }
-		nm++;
+		if m[v] <= 0.0 { continue; }
 		for k in 4 {
-			if OW[4 * v + k] > 0.0 { rx_add(sums, seen, touched, OJ[4 * v + k], OW[4 * v + k] as real); }
+			let j = oj[4 * v + k];
+			if ow[4 * v + k] > 0.0 && j < jc { rx_add(sums, seen, touched, j, ow[4 * v + k] as real); }
 		}
 		for q in RO[v]..RO[v + 1] {
 			let u = RC[q];
 			for k in 4 {
-				if OW[4 * u + k] > 0.0 { rx_add(sums, seen, touched, OJ[4 * u + k], OW[4 * u + k] as real); }
+				let j = oj[4 * u + k];
+				if ow[4 * u + k] > 0.0 && j < jc { rx_add(sums, seen, touched, j, ow[4 * u + k] as real); }
 			}
 		}
-		var cand int[8] = [0; 8];
-		var cs real[8] = [0.0; 8];
-		var nk = 0;
+		cand.clear();
 		for t in touched {
-			let sv = sums[t];
-			if sv > 0.0 && t < jc {
-				var p = nk;
-				while p > 0 && (sv > cs[p - 1] || (sv == cs[p - 1] && t < cand[p - 1])) { p--; }
-				if p < 8 {
-					var q = min(nk, 7);
-					while q > p {
-						cand[q] = cand[q - 1];
-						cs[q] = cs[q - 1];
-						q--;
-					}
-					cand[p] = t;
-					cs[p] = sv;
-					if nk < 8 { nk++; }
-				}
-			}
+			if sums[t] > 0.0 { cand.push(t); }
+		}
+		sort(cand) { x, y => if sums[x] != sums[y] { sums[x] > sums[y] } else { x < y } };
+		for t in touched {
 			sums[t] = 0.0;
 			seen[t] = false;
 		}
 		touched.clear();
-		if nk == 0 { continue; }
+		let K = min(cand.len, 8);
+		if K == 0 { continue; }
 		var w0 real[8] = [0.0; 8];
-		for i in nk {
+		for i in K {
 			for k in 4 {
-				if OJ[4 * v + k] == cand[i] { w0[i] += OW[4 * v + k] as real; }
+				if J[4 * v + k] == cand[i] && W[4 * v + k] > 0.0 { w0[i] += W[4 * v + k] as real; }
 			}
 		}
 		var A real[64] = [0.0; 64];
-		var ar float3[8] = [float3 { 0.0, 0.0, 0.0 }; 8];
+		var av float3[8] = [float3 { 0.0, 0.0, 0.0 }; 8];
 		for p in np {
-			let tx = xt[p * nv + v];
-			for i in nk { ar[i] = linalg::point(pm[p * jc + cand[i]], P[v]) - tx; }
-			for i in nk {
-				for k in nk { A[8 * i + k] += rx_dot(ar[i], ar[k]); }
+			for i in K { av[i] = linalg::point(pm[p * jc + cand[i]], P[v]) - xt[p * nv + v]; }
+			for i in K {
+				for k in K { A[8 * i + k] += linalg::dot3(av[i], av[k]) as real; }
 			}
 		}
 		var tr = 0.0;
-		for i in nk { tr += A[9 * i]; }
-		let mu = 0.01 * tr / (nk as real) + 1.0e-12;
-		for i in nk { A[9 * i] += mu; }
-		var bvv real[8] = [0.0; 8];
-		for i in nk { bvv[i] = mu * w0[i]; }
-		var lip = 0.0;
-		for i in nk {
+		for i in K { tr += A[9 * i]; }
+		let mu = 0.01 * tr / (K as real) + 1.0e-12;
+		var bv real[8] = [0.0; 8];
+		for i in K {
+			A[9 * i] += mu;
+			bv[i] = mu * w0[i];
+		}
+		var mr = 0.0;
+		for i in K {
 			var rs = 0.0;
-			for k in nk { rs += abs(A[8 * i + k]); }
-			lip = max(lip, rs);
+			for k in K { rs += abs(A[8 * i + k]); }
+			mr = max(mr, rs);
 		}
-		let step = 1.0 / lip;
+		let step = 1.0 / mr;
 		var w real[8] = [0.0; 8];
-		for i in nk { w[i] = w0[i]; }
-		var y real[8] = [0.0; 8];
-		for it2 in 400 {
-			for i in nk {
-				var g = -bvv[i];
-				for k in nk { g += A[8 * i + k] * w[k]; }
-				y[i] = w[i] - step * g;
+		for i in K { w[i] = w0[i]; }
+		for st in 400 {
+			var gr real[8] = [0.0; 8];
+			for i in K {
+				var g = -bv[i];
+				for k in K { g += A[8 * i + k] * w[k]; }
+				gr[i] = g;
 			}
-			rx_proj(y[0..nk]);
-			for i in nk { w[i] = y[i]; }
+			for i in K { w[i] -= step * gr[i]; }
+			rx_proj(w[..], K);
 		}
-		var tj int[4] = [0, 0, 0, 0];
-		var tw real[4] = [0.0, 0.0, 0.0, 0.0];
-		var nt = 0;
-		for i in nk {
-			let sv = w[i];
-			let jj = cand[i];
-			if sv > 0.0 {
-				var p = nt;
-				while p > 0 && (sv > tw[p - 1] || (sv == tw[p - 1] && jj < tj[p - 1])) { p--; }
-				if p < 4 {
-					var q = min(nt, 3);
-					while q > p {
-						tj[q] = tj[q - 1];
-						tw[q] = tw[q - 1];
-						q--;
-					}
-					tj[p] = jj;
-					tw[p] = sv;
-					if nt < 4 { nt++; }
-				}
-			}
-		}
-		var tot = 0.0;
-		for k in nt { tot += tw[k]; }
-		if tot > 0.0 {
-			for k in 4 {
-				if k < nt {
-					J[4 * v + k] = tj[k];
-					W[4 * v + k] = (tw[k] / tot) as f32;
-				} else {
-					J[4 * v + k] = 0;
-					W[4 * v + k] = 0.0 as f32;
-				}
-			}
-		}
+		for i in K { rx_add(sums, seen, touched, cand[i], w[i]); }
+		rx_pick(v, sums, seen, touched);
 	}
 	for pass in 2 {
 		for e in EA.len {
 			if EK[e] != 1 { continue; }
-			let ea = EA[e];
-			let eb = EB[e];
-			if MK[ea] <= 0.0 || MK[eb] <= 0.0 { continue; }
+			let a = EA[e];
+			let b = EB[e];
+			if m[a] <= 0.0 || m[b] <= 0.0 { continue; }
 			for k in 4 {
-				rx_add(sums, seen, touched, J[4 * ea + k], (W[4 * ea + k] as real) * 0.5);
-				rx_add(sums, seen, touched, J[4 * eb + k], (W[4 * eb + k] as real) * 0.5);
+				rx_add(sums, seen, touched, J[4 * a + k], (W[4 * a + k] as real) * 0.5);
+				rx_add(sums, seen, touched, J[4 * b + k], (W[4 * b + k] as real) * 0.5);
 			}
-			if rx_pick(ea, sums, seen, touched) {
+			if rx_pick(a, sums, seen, touched) {
 				for k in 4 {
-					J[4 * eb + k] = J[4 * ea + k];
-					W[4 * eb + k] = W[4 * ea + k];
+					J[4 * b + k] = J[4 * a + k];
+					W[4 * b + k] = W[4 * a + k];
 				}
 			}
 		}
 	}
+	var e1 = 0.0;
+	var fnw = 0;
+	var last_n = 0;
+	var l2 float3[>..] = [];
 	for p in np {
-		rx_lbs(pm[p * jc..(p + 1) * jc], l);
+		let ps = pm[(p * jc)..(p * jc + jc)];
+		rx_lbs(ps, l2);
 		for v in nv {
-			if MK[v] > 0.0 { e1 += rx_d2(l[v], xt[p * nv + v]); }
+			if m[v] > 0.0 { e1 += rx_d2(l2[v], xt[p * nv + v]); }
 		}
-		let f2 = rx_folds(l[..], pm[p * jc..(p + 1) * jc], OJ[..], OW[..], MK[..]);
-		fw += f2;
-		lw = f2;
+		let f = rx_folds(l2[..], ps, oj[..], ow[..], m[..]);
+		fnw += f;
+		last_n = f;
 	}
-	let den = max((np * nm) as real, 1.0);
-	print("mush: ", np, " poses, ", nm, " masked, rms to target ", sqrt(e0 / den) * 1000.0, " mm before, ", sqrt(e1 / den) * 1000.0, " mm after");
-	print("mush folds (all poses): ", fl, " -> ", fx, " -> ", fw, " | last pose: ", ll, " -> ", lx, " -> ", lw);
-	nm
+	let denom = (np * nmask) as real;
+	print("mush: ", np, " poses, ", nmask, " masked, rms to target ", sqrt(e0 / denom) * 1000.0, " mm before, ", sqrt(e1 / denom) * 1000.0, " mm after");
+	print("mush folds (all poses): ", fo, " -> ", fx, " -> ", fnw, " | last pose: ", last_o, " -> ", last_x, " -> ", last_n);
+	nmask
 }
 === -6fdc147caa1a233a
 fn rx_relax(lo f32, hi f32, iters int, a f32) int {
@@ -864,11 +764,14 @@ fn rx_store(buf byte[>..]&) {
 		}
 	}
 }
-=== -134b6f3c86ebe9a0
+=== 19cfb377b8cd8553
+fn rx_skip(s const byte[:]) bool {
+	starts_with(s, "from=") || starts_with(s, "mush=") || starts_with(s, "psd=")
+}
 fn main() {
 	let a = args();
 	if a.len < 7 {
-		print("usage: relax <in.glb> <out.glb> <y low> <y high> <iterations> <mesh> [mesh ...] [from=<body.glb>] [mush=<clips.gltf>]; smooths skin weights of the named meshes inside the height band, welded across seams and linked across meshes; from= first copies weights from the nearest vertex of that file's full skin; mush= then bakes Delta Mush over that clip library's poses into the band's weights");
+		print("usage: relax <in.glb> <out.glb> <y low> <y high> <iterations> <mesh> [mesh ...] [from=<body.glb>] [mush=<clips.gltf>] [psd=<clips.gltf>]; smooths skin weights of the named meshes inside the height band, welded across seams and linked across meshes; from= first copies weights from the nearest vertex of that file's full skin; mush= then bakes Delta Mush over that clip library's poses into the band's weights; psd= builds hip pose-space corrective morph targets on the named meshes");
 		return;
 	}
 	var buf byte[>..] = [];
@@ -877,51 +780,792 @@ fn main() {
 		return;
 	}
 	let jl = rx_u32(buf[..], 12);
-	var doc = json::Doc { .. };
-	let root, jerr = json::parse(buf[20..20 + jl], doc);
+	var doc = json::Doc {};
+	let root, perr = json::parse(buf[20..(20 + jl)], doc);
 	if root < 0 {
-		print("bad json: ", jerr);
+		print("bad json: ", perr);
 		return;
 	}
 	let b0 = 20 + jl + 8;
-	let lo0, lok = parse_flt(a[3]);
-	let hi0, hok = parse_flt(a[4]);
-	let iters, iok = parse_int(a[5]);
-	let lo = lo0 as f32;
-	let hi = hi0 as f32;
-	var mush byte[>..] = [];
-	var has_mush = false;
-	var sbuf byte[>..] = [];
-	var sdoc = json::Doc { .. };
+	let lov, lok = parse_flt(a[3]);
+	let hiv, hok = parse_flt(a[4]);
+	let itv, iok = parse_int(a[5]);
+	let lo = lov as f32;
+	let hi = hiv as f32;
+	let iters = itv;
+	var buf2 byte[>..] = [];
+	var doc2 = json::Doc {};
 	for k in 6..a.len {
-		let ar = a[k];
-		if starts_with(ar, "from=") {
-			if read_file(ar[5..], sbuf) == false {
-				print("no ", ar[5..]);
-				continue;
-			}
-			let sl = rx_u32(sbuf[..], 12);
-			let sroot, serr = json::parse(sbuf[20..20 + sl], sdoc);
-			if sroot < 0 {
-				print("bad json: ", serr);
+		let arg = a[k];
+		if starts_with(arg, "from=") {
+			if read_file(arg[5..], buf2) == false {
+				print("no ", arg[5..]);
 				return;
 			}
-			rx_gather(sdoc, sroot, sbuf[..], 20 + sl + 8, "skin", 0, true);
+			let jl2 = rx_u32(buf2[..], 12);
+			let root2, perr2 = json::parse(buf2[20..(20 + jl2)], doc2);
+			if root2 < 0 {
+				print("bad json: ", perr2);
+				return;
+			}
+			rx_gather(doc2, root2, buf2[..], 20 + jl2 + 8, "skin", 0, true);
 			print("source skin ", SP.len);
-		} else if starts_with(ar, "mush=") {
-			mush.clear();
-			mush.append(ar[5..]);
-			has_mush = true;
-		} else {
-			let c = rx_gather(doc, root, buf[..], b0, ar, k - 6, false);
-			print(ar, " ", c);
+		} else if rx_skip(arg) == false {
+			let c = rx_gather(doc, root, buf[..], b0, arg, k - 6, false);
+			print(arg, " ", c);
 		}
 	}
 	let nw, nc = rx_link(0.0005, 0.015);
-	if SP.len > 0 { print("transferred ", rx_transfer(lo, hi)); }
+	if SP.len > 0 {
+		print("transferred ", rx_transfer(lo, hi));
+	}
 	let moved = rx_relax(lo, hi, iters, 0.5);
-	if has_mush { rx_mush(a[1], mush[..], lo, hi, 10); }
+	for k in 6..a.len {
+		if starts_with(a[k], "mush=") { rx_mush(a[1], a[k][5..], lo, hi, 10); }
+	}
 	rx_store(buf);
-	write_file(a[2], buf[..]);
+	var wrote = false;
+	for k in 6..a.len {
+		if starts_with(a[k], "psd=") {
+			if rx_psd(a[1], a[k][4..], lo, hi) > 0 {
+				rx_write(doc, root, buf[..], a[2]);
+				wrote = true;
+			}
+		}
+	}
+	if wrote == false { write_file(a[2], buf[..]); }
 	print("relax: ", P.len, " vertices, ", moved, " moved, ", EA.len, " edges, ", nw, " welds, ", nc, " cross-mesh links -> ", a[2]);
+}
+=== -6f894ce61524c314
+var rx_pc = -1;
+var rx_pt f32 = 0.0;
+fn rx_scene(glb const byte[:], lib const byte[:]) int, int, int, int {
+	let asset = gltf::load(glb);
+	if asset < 0 {
+		print("load fail");
+		return -1, -1, -1, -1;
+	}
+	let item = s3d::add(asset);
+	let nlib = clips::clips_load(lib, asset);
+	var sl i32[22];
+	let first = gltf::assets[asset].nodes.first;
+	for i in 22 { sl[i] = if clips::kc_slot[i] < 0 { -1 } else { (clips::kc_slot[i] as int - first) as i32 }; }
+	mix_open(asset, item, sl[..]);
+	for c in nlib { mix_clip(clips::kc_nf[c], clips::kc_loop[c], clips::clips_frames(c)); }
+	rx_pc = -1;
+	G.clear();
+	var sk = -1;
+	var got = false;
+	let a = args();
+	for k in 6..a.len {
+		let arg = a[k];
+		if rx_skip(arg) { continue; }
+		let nd = gltf::find_node(asset, arg);
+		if nd < 0 { continue; }
+		if got == false {
+			sk = gltf::nodes[nd].skin as int;
+			got = true;
+		}
+		let ms = gltf::meshes[gltf::nodes[nd].mesh];
+		for pi in ms.prims.count {
+			let pr = gltf::prims[ms.prims.first + pi];
+			for v in pr.vcount { G.push((pr.vfirst as int) + v); }
+		}
+	}
+	if G.len != P.len {
+		print("vertex map mismatch ", G.len, " ", P.len);
+		return -1, -1, -1, -1;
+	}
+	return asset, item, sk, nlib;
+}
+=== 4b51fe3d6b14cadc
+fn rx_clipname(g int) const byte[:] {
+	match g {
+		0 => "Idle_Loop",
+		1 => "Walk_Formal_Loop",
+		2 => "Dance_Loop",
+		3 => "Sitting_Idle_Loop",
+		_ => "",
+	}
+}
+fn rx_pose(i int, nlib int) int {
+	if i == 0 {
+		mix_rest();
+		rx_pc = -1;
+		return -1;
+	}
+	if i < 0 || i >= 20 { return -2; }
+	let gs int[19] = [0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3];
+	let ts real[19] = [0.5, 1.0, 1.5, 0.25, 0.5, 0.75, 1.0, 0.35, 0.7, 1.05, 1.4, 1.75, 2.1, 2.45, 2.8, 0.5, 1.0, 1.5, 2.0];
+	let g = gs[i - 1];
+	let target = ts[i - 1];
+	let name = rx_clipname(g);
+	var c = -1;
+	var nb byte[>..] = [];
+	for k in nlib {
+		if c < 0 {
+			nb.clear();
+			clips::clips_name(k, nb);
+			if nb == name { c = k; }
+		}
+	}
+	if c < 0 {
+		print("no clip ", name);
+		return -2;
+	}
+	if c != rx_pc {
+		mix_play(c, 0.0);
+		rx_pc = c;
+		rx_pt = 0.0;
+	}
+	while (rx_pt as real) + 0.0001 < target {
+		mix_advance(1.0 / 60.0);
+		rx_pt += (1.0 / 60.0) as f32;
+	}
+	g
+}
+=== -9ccdfbd1bcd5ef6
+fn rx_polar(c0 float3, c1 float3, c2 float3, q0 linalg::Quat) linalg::Quat {
+	var q = q0;
+	for step in 24 {
+		let r0 = linalg::qrotate(q, float3 { 1.0, 0.0, 0.0 });
+		let r1 = linalg::qrotate(q, float3 { 0.0, 1.0, 0.0 });
+		let r2 = linalg::qrotate(q, float3 { 0.0, 0.0, 1.0 });
+		let dd = abs((linalg::dot3(r0, c0) as real) + (linalg::dot3(r1, c1) as real) + (linalg::dot3(r2, c2) as real)) + 1.0e-9;
+		let om = (rx_cross(r0, c0) + rx_cross(r1, c1) + rx_cross(r2, c2)) * ((1.0 / dd) as f32);
+		let w = rx_len(om);
+		if w < 1.0e-9 { break; }
+		q = linalg::qnorm(linalg::qmul(linalg::qaxis(om * ((1.0 / w) as f32), w as f32), q));
+	}
+	q
+}
+=== 570aba7f00472399
+fn rx_ew(a int, b int) real {
+	if rx_d2(P[a], P[b]) < 0.0005 * 0.0005 { 20.0 } else { 1.0 }
+}
+fn rx_co(p float3, c int) real {
+	if c == 0 { p.x as real } else if c == 1 { p.y as real } else { p.z as real }
+}
+fn rx_amul(y const real[:], out real[:], dg const real[:], fr const bool[:]) {
+	for v in fr.len {
+		for c in 3 {
+			if fr[v] {
+				var s = dg[v] * y[3 * v + c];
+				for q in RO[v]..RO[v + 1] {
+					let u = RC[q];
+					if fr[u] { s -= rx_ew(v, u) * y[3 * u + c]; }
+				}
+				out[3 * v + c] = s;
+			} else {
+				out[3 * v + c] = 0.0;
+			}
+		}
+	}
+}
+fn rx_arap(l const float3[:], lam const f32[:], fr const bool[:], x float3[>..]&, iters int) {
+	let n = l.len;
+	x.clear();
+	x.append(l);
+	var R linalg::Quat[>..] = [];
+	for v in n { R.push(linalg::qaxis(float3 { 1.0, 0.0, 0.0 }, 0.0)); }
+	var dg real[>..] = [];
+	dg.resize(n, 0.0);
+	var bb real[>..] = [];
+	bb.resize(3 * n, 0.0);
+	var xs real[>..] = [];
+	xs.resize(3 * n, 0.0);
+	var rs real[>..] = [];
+	rs.resize(3 * n, 0.0);
+	var ds real[>..] = [];
+	ds.resize(3 * n, 0.0);
+	var qs real[>..] = [];
+	qs.resize(3 * n, 0.0);
+	for pass in iters {
+		for v in n {
+			let a0 = RO[v];
+			let a1 = RO[v + 1];
+			if a1 <= a0 { continue; }
+			var c0 = float3 { 0.0, 0.0, 0.0 };
+			var c1 = float3 { 0.0, 0.0, 0.0 };
+			var c2 = float3 { 0.0, 0.0, 0.0 };
+			for q in a0..a1 {
+				let u = RC[q];
+				let w = rx_ew(v, u);
+				let e = P[v] - P[u];
+				let dx = x[v] - x[u];
+				c0 = c0 + dx * ((w * (e.x as real)) as f32);
+				c1 = c1 + dx * ((w * (e.y as real)) as f32);
+				c2 = c2 + dx * ((w * (e.z as real)) as f32);
+			}
+			R[v] = rx_polar(c0, c1, c2, R[v]);
+		}
+		for v in n {
+			for c in 3 {
+				xs[3 * v + c] = rx_co(x[v], c);
+				bb[3 * v + c] = 0.0;
+			}
+			dg[v] = lam[v] as real;
+			if fr[v] == false { continue; }
+			for q in RO[v]..RO[v + 1] {
+				let u = RC[q];
+				let w = rx_ew(v, u);
+				dg[v] += w;
+				let e = P[v] - P[u];
+				let re = linalg::qrotate(R[v], e) + linalg::qrotate(R[u], e);
+				for c in 3 {
+					bb[3 * v + c] += w * 0.5 * rx_co(re, c);
+					if fr[u] == false { bb[3 * v + c] += w * rx_co(x[u], c); }
+				}
+			}
+			for c in 3 { bb[3 * v + c] += (lam[v] as real) * rx_co(l[v], c); }
+		}
+		rx_amul(xs[..], qs[..], dg[..], fr);
+		var rr real[3] = [0.0, 0.0, 0.0];
+		for v in n {
+			for c in 3 {
+				let i = 3 * v + c;
+				if fr[v] {
+					let r = bb[i] - qs[i];
+					rs[i] = r;
+					ds[i] = r;
+					rr[c] += r * r;
+				} else {
+					rs[i] = 0.0;
+					ds[i] = 0.0;
+				}
+			}
+		}
+		for k in 60 {
+			if rr[0] < 1.0e-14 && rr[1] < 1.0e-14 && rr[2] < 1.0e-14 { break; }
+			rx_amul(ds[..], qs[..], dg[..], fr);
+			for c in 3 {
+				if rr[c] < 1.0e-14 { continue; }
+				var dq = 0.0;
+				for v in n { dq += ds[3 * v + c] * qs[3 * v + c]; }
+				if dq <= 0.0 {
+					rr[c] = 0.0;
+					continue;
+				}
+				let al = rr[c] / dq;
+				var nr = 0.0;
+				for v in n {
+					let i = 3 * v + c;
+					xs[i] += al * ds[i];
+					rs[i] -= al * qs[i];
+					nr += rs[i] * rs[i];
+				}
+				let be = nr / rr[c];
+				for v in n {
+					let i = 3 * v + c;
+					ds[i] = rs[i] + be * ds[i];
+				}
+				rr[c] = nr;
+			}
+		}
+		for v in n {
+			if fr[v] { x[v] = float3 { xs[3 * v] as f32, xs[3 * v + 1] as f32, xs[3 * v + 2] as f32 }; }
+		}
+	}
+}
+=== -43a07b46d2667f2
+var DP float3[>..];
+var DN float3[>..];
+var TK int[>..];
+var TF f32[>..];
+var TB f32[>..];
+var OJ int[>..];
+var OW f32[>..];
+var MK f32[>..];
+fn rx_blend(pal const gfx::mat4[:], v int) gfx::mat4 {
+	var c0 = float4 { 0.0, 0.0, 0.0, 0.0 };
+	var c1 = float4 { 0.0, 0.0, 0.0, 0.0 };
+	var c2 = float4 { 0.0, 0.0, 0.0, 0.0 };
+	var c3 = float4 { 0.0, 0.0, 0.0, 0.0 };
+	for k in 4 {
+		let w = W[4 * v + k];
+		let j = J[4 * v + k];
+		if w > 0.0 && j >= 0 && j < pal.len {
+			c0 = c0 + pal[j].c0 * w;
+			c1 = c1 + pal[j].c1 * w;
+			c2 = c2 + pal[j].c2 * w;
+			c3 = c3 + pal[j].c3 * w;
+		}
+	}
+	gfx::mat4 { c0, c1, c2, c3 }
+}
+fn rx_grow(m bool[>..]&, n int) {
+	var prev bool[>..] = [];
+	for r in n {
+		prev.clear();
+		prev.append(m[..]);
+		for v in prev.len {
+			if prev[v] == false { continue; }
+			for q in RO[v]..RO[v + 1] { m[RC[q]] = true; }
+		}
+	}
+}
+=== -380530d2689e47e5
+fn rx_psd(glb const byte[:], lib const byte[:], lo f32, hi f32) int {
+	let asset, item, sk, nlib = rx_scene(glb, lib);
+	if asset < 0 { return 0; }
+	rx_rows(true);
+	psd_basis();
+	DP.clear();
+	DN.clear();
+	TK.clear();
+	TF.clear();
+	TB.clear();
+	let n = P.len;
+	OJ.clear();
+	OJ.append(J[..]);
+	OW.clear();
+	OW.append(W[..]);
+	MK.clear();
+	for v in n { MK.push(rx_mask(v, lo, hi)); }
+	var sf bool[>..] = [];
+	for v in n {
+		var mw = 0.0;
+		for k in 4 { mw = max(mw, W[4 * v + k] as real); }
+		sf.push(1.0 - mw > 0.02);
+	}
+	rx_grow(sf, 3);
+	let ks int[2] = [14, 18];
+	let fs f32[6] = [45.0, 90.0, 120.0, -30.0, 0.0, 90.0];
+	let bs f32[6] = [0.0, 0.0, 0.0, 0.0, 45.0, 30.0];
+	var pal gfx::mat4[>..] = [];
+	var l float3[>..] = [];
+	var x float3[>..] = [];
+	var fr bool[>..] = [];
+	var lam f32[>..] = [];
+	var nl float3[>..] = [];
+	var t1 float3[>..] = [];
+	var b1 float3[>..] = [];
+	var nx float3[>..] = [];
+	var t2 float3[>..] = [];
+	var b2 float3[>..] = [];
+	for si in 2 {
+		let k = ks[si];
+		if slot_node[k] < 0 { continue; }
+		let side = if k == 14 { "L" } else { "R" };
+		for sm in 6 {
+			let f = fs[sm];
+			let b = bs[sm];
+			mix_rest();
+			mix_set(k, mix_swing(k, psd_dir(f, b)));
+			push();
+			s3d::pose(item);
+			pal.clear();
+			motion::joints(sk, pal);
+			rx_lbs(pal[..], l);
+			fr.clear();
+			for v in n { fr.push(rx_d2(l[v], P[v]) > 1.0e-8); }
+			rx_grow(fr, 4);
+			lam.clear();
+			var nfree = 0;
+			for v in n {
+				let lv = if sf[v] { 0.05 } else { 2.0 };
+				lam.push(lv as f32);
+				if fr[v] { nfree++; }
+			}
+			rx_arap(l[..], lam[..], fr[..], x, 40);
+			rx_frames(l[..], nl, t1, b1);
+			rx_frames(x[..], nx, t2, b2);
+			var nmov = 0;
+			var maxd = 0.0;
+			var mv = 0;
+			var c5 = 0;
+			var c20 = 0;
+			for v in n {
+				if rx_d2(x[v], l[v]) <= 1.0e-12 {
+					DP.push(float3 { 0.0, 0.0, 0.0 });
+					DN.push(float3 { 0.0, 0.0, 0.0 });
+					continue;
+				}
+				let B = rx_blend(pal[..], v);
+				let Bi = linalg::inverse(B);
+				let dp = linalg::direction(Bi, x[v] - l[v]);
+				DP.push(dp);
+				let dlen = rx_len(dp);
+				nmov++;
+				if dlen > maxd {
+					maxd = dlen;
+					mv = v;
+				}
+				if dlen > 0.005 { c5++; }
+				if dlen > 0.02 { c20++; }
+				let g = G[v] * gltf::VERTEX_FLOATS;
+				let nr = float3 { gltf::verts[g + 3] as f32, gltf::verts[g + 4] as f32, gltf::verts[g + 5] as f32 };
+				var npv = linalg::unit3(linalg::direction(B, nr));
+				let dd = linalg::dot3(nl[v], nx[v]) as real;
+				if dd < 0.999999 {
+					let ang = acos(clamp(dd, -1.0, 1.0));
+					npv = linalg::qrotate(linalg::qaxis(linalg::unit3(rx_cross(nl[v], nx[v])), ang as f32), npv);
+				}
+				DN.push(linalg::unit3(linalg::direction(Bi, npv)) - nr);
+			}
+			TK.push(k);
+			TF.push(f);
+			TB.push(b);
+			mix_psd_add(-1, TK.len - 1, k, psd_dir(f, b));
+			let fa = rx_folds(l[..], pal[..], OJ[..], OW[..], MK[..]);
+			let fb = rx_folds(x[..], pal[..], OJ[..], OW[..], MK[..]);
+			print("psd ", side, " ", f, " ", b, ": ", nfree, " free, ", nmov, " moved, max ", maxd * 1000.0, " mm at ", P[mv].x, " ", P[mv].y, " ", P[mv].z, " (", c5, " / ", c20, "), folds ", fa, " -> ", fb);
+		}
+	}
+	mix_psd_ready();
+	var q0 float3[>..] = [];
+	var q float3[>..] = [];
+	var sa = 0;
+	var sb = 0;
+	for i in 20 {
+		let c = rx_pose(i, nlib);
+		if c < -1 { continue; }
+		s3d::pose(item);
+		pal.clear();
+		motion::joints(sk, pal);
+		rx_lbs(pal[..], l);
+		q0.clear();
+		for v in n {
+			var p = P[v];
+			for t in TK.len {
+				let wt = psd_w[t] as f32;
+				if wt > 0.0 { p = p + DP[t * n + v] * wt; }
+			}
+			q0.push(p);
+		}
+		rx_lbs_from(q0[..], pal[..], q);
+		let fa = rx_folds(l[..], pal[..], OJ[..], OW[..], MK[..]);
+		let fb = rx_folds(q[..], pal[..], OJ[..], OW[..], MK[..]);
+		let u0 = mix_psd_dir(0);
+		let uL = mix_psd_dir(14);
+		let uR = mix_psd_dir(18);
+		let dgr = 180.0 / PI;
+		let pname = if c < 0 { "bind" } else { rx_clipname(c) };
+		print("pose ", pname, " ", rx_pt, " hip tilt ", atan2(u0.y as real, u0.x as real) * dgr, " L flex ", atan2(uL.y as real, uL.x as real) * dgr, " abd ", asin(clamp(uL.z as real, -1.0, 1.0)) * dgr, " R flex ", atan2(uR.y as real, uR.x as real) * dgr, " abd ", asin(clamp(uR.z as real, -1.0, 1.0)) * dgr, " folds ", fa, " -> ", fb);
+		sa += fa;
+		sb += fb;
+	}
+	print("psd folds (all poses): ", sa, " -> ", sb);
+	TK.len
+}
+=== -2216c620d35884b6
+fn rx_wint(o byte[>..]&, v0 int) {
+	var v = v0;
+	if v < 0 {
+		o.push('-');
+		v = -v;
+	}
+	var dg byte[..24] = [];
+	if v == 0 { dg.push('0'); }
+	while v > 0 {
+		dg.push(('0' + v % 10) as byte);
+		v /= 10;
+	}
+	var i = dg.len;
+	while i > 0 {
+		i--;
+		o.push(dg[i]);
+	}
+}
+fn rx_wflt(o byte[>..]&, x0 real) {
+	var x = x0;
+	let sc0 = round(abs(x) * 10000000.0) as int;
+	if x < 0.0 && sc0 > 0 { o.push('-'); }
+	let ip = sc0 / 10000000;
+	var fp = sc0 % 10000000;
+	rx_wint(o, ip);
+	if fp > 0 {
+		o.push('.');
+		var ds byte[7] = [0; 7];
+		for i in 7 {
+			ds[6 - i] = ('0' + fp % 10) as byte;
+			fp /= 10;
+		}
+		var e = 7;
+		while e > 0 && ds[e - 1] == '0' { e--; }
+		for i in e { o.push(ds[i]); }
+	}
+}
+fn rx_pu32(o byte[>..]&, v int) {
+	o.push((v & 255) as byte);
+	o.push(((v >> 8) & 255) as byte);
+	o.push(((v >> 16) & 255) as byte);
+	o.push(((v >> 24) & 255) as byte);
+}
+fn rx_pf(o byte[>..]&, x f32) {
+	rx_pu32(o, binary::f32_bits(x) as int);
+}
+fn rx_write(d json::Doc&, root int, buf const byte[:], out const byte[:]) {
+	let jl = rx_u32(buf, 12);
+	let b0 = 20 + jl + 8;
+	let bl = rx_u32(buf, 20 + jl);
+	let a = args();
+	let nt = TK.len;
+	let np = P.len;
+	let meshes = bk_mem(d, root, "meshes");
+	let nmesh = if meshes >= 0 { json::count(d, meshes) } else { 0 };
+	var tm int[>..] = [];
+	var tmi int[>..] = [];
+	for k in 6..a.len {
+		let arg = a[k];
+		if rx_skip(arg) { continue; }
+		var mi = -1;
+		for i in nmesh {
+			if mi < 0 {
+				let el = json::element(d, meshes, i);
+				let nn = bk_mem(d, el, "name");
+				if nn >= 0 && json::as_string(d, nn) == arg { mi = i; }
+			}
+		}
+		if mi < 0 {
+			print("psd: skip ", arg, ": no mesh");
+			continue;
+		}
+		let ms = json::element(d, meshes, mi);
+		let prims = bk_mem(d, ms, "primitives");
+		if prims < 0 || json::count(d, prims) != 1 {
+			print("psd: skip ", arg, ": not a single primitive");
+			continue;
+		}
+		let p0 = json::element(d, prims, 0);
+		if bk_mem(d, p0, "targets") >= 0 {
+			print("psd: skip ", arg, ": already has targets");
+			continue;
+		}
+		tm.push(k);
+		tmi.push(mi);
+	}
+	var bin byte[>..] = [];
+	bin.append(buf[b0..(b0 + bl)]);
+	while bin.len % 4 != 0 { bin.push(0); }
+	var bo int[>..] = [];
+	var bln int[>..] = [];
+	var bc int[>..] = [];
+	var bpos bool[>..] = [];
+	var bmn float3[>..] = [];
+	var bmx float3[>..] = [];
+	for j in tm.len {
+		let id = tm[j] - 6;
+		for t in nt {
+			for kind in 2 {
+				let off = bin.len;
+				var cnt = 0;
+				var mn = float3 { 1.0e30, 1.0e30, 1.0e30 };
+				var mx = float3 { -1.0e30, -1.0e30, -1.0e30 };
+				for v in np {
+					if VM[v] != id { continue; }
+					let p = if kind == 0 { DP[t * np + v] } else { DN[t * np + v] };
+					rx_pf(bin, p.x);
+					rx_pf(bin, p.y);
+					rx_pf(bin, p.z);
+					mn = float3 { min(mn.x, p.x), min(mn.y, p.y), min(mn.z, p.z) };
+					mx = float3 { max(mx.x, p.x), max(mx.y, p.y), max(mx.z, p.z) };
+					cnt++;
+				}
+				bo.push(off);
+				bln.push(bin.len - off);
+				bc.push(cnt);
+				bpos.push(kind == 0);
+				bmn.push(mn);
+				bmx.push(mx);
+			}
+		}
+	}
+	let nb = bo.len;
+	let accs = bk_mem(d, root, "accessors");
+	let na = if accs >= 0 { json::count(d, accs) } else { 0 };
+	let views = bk_mem(d, root, "bufferViews");
+	let nvw = if views >= 0 { json::count(d, views) } else { 0 };
+	var js byte[>..] = [];
+	js.push('{');
+	var fr = true;
+	json::each(d, root) { c =>
+		if fr == false { js.push(','); }
+		fr = false;
+		let nm = json::name_of(d, c);
+		json::format_key(js, nm);
+		js.push(':');
+		if nm == "accessors" {
+			js.push('[');
+			let cn = json::count(d, c);
+			for i in cn {
+				if i > 0 { js.push(','); }
+				emit(d, json::element(d, c, i), js);
+			}
+			for b in nb {
+				if cn + b > 0 { js.push(','); }
+				js.append("{\"bufferView\":");
+				rx_wint(js, nvw + b);
+				js.append(",\"componentType\":5126,\"count\":");
+				rx_wint(js, bc[b]);
+				js.append(",\"type\":\"VEC3\"");
+				if bpos[b] {
+					js.append(",\"min\":[");
+					rx_wflt(js, bmn[b].x as real);
+					js.push(',');
+					rx_wflt(js, bmn[b].y as real);
+					js.push(',');
+					rx_wflt(js, bmn[b].z as real);
+					js.append("],\"max\":[");
+					rx_wflt(js, bmx[b].x as real);
+					js.push(',');
+					rx_wflt(js, bmx[b].y as real);
+					js.push(',');
+					rx_wflt(js, bmx[b].z as real);
+					js.push(']');
+				}
+				js.push('}');
+			}
+			js.push(']');
+		} else if nm == "bufferViews" {
+			js.push('[');
+			let cn = json::count(d, c);
+			for i in cn {
+				if i > 0 { js.push(','); }
+				emit(d, json::element(d, c, i), js);
+			}
+			for b in nb {
+				if cn + b > 0 { js.push(','); }
+				js.append("{\"buffer\":0,\"byteOffset\":");
+				rx_wint(js, bo[b]);
+				js.append(",\"byteLength\":");
+				rx_wint(js, bln[b]);
+				js.push('}');
+			}
+			js.push(']');
+		} else if nm == "buffers" {
+			js.push('[');
+			let cn = json::count(d, c);
+			for i in cn {
+				if i > 0 { js.push(','); }
+				let el = json::element(d, c, i);
+				if i == 0 {
+					js.push('{');
+					var f1 = true;
+					json::each(d, el) { bc2 =>
+						let bn = json::name_of(d, bc2);
+						if bn != "byteLength" {
+							if f1 == false { js.push(','); }
+							f1 = false;
+							json::format_key(js, bn);
+							js.push(':');
+							emit(d, bc2, js);
+						}
+					};
+					if f1 == false { js.push(','); }
+					js.append("\"byteLength\":");
+					rx_wint(js, bin.len);
+					js.push('}');
+				} else {
+					emit(d, el, js);
+				}
+			}
+			js.push(']');
+		} else if nm == "meshes" {
+			js.push('[');
+			let cn = json::count(d, c);
+			for i in cn {
+				if i > 0 { js.push(','); }
+				let el = json::element(d, c, i);
+				var j = -1;
+				for q in tmi.len {
+					if tmi[q] == i { j = q; }
+				}
+				if j < 0 {
+					emit(d, el, js);
+					continue;
+				}
+				js.push('{');
+				var f2 = true;
+				var ex = -1;
+				json::each(d, el) { mc =>
+					let mn = json::name_of(d, mc);
+					if mn == "extras" {
+						ex = mc;
+					} else if mn != "weights" {
+						if f2 == false { js.push(','); }
+						f2 = false;
+						json::format_key(js, mn);
+						js.push(':');
+						if mn == "primitives" {
+							let p0 = json::element(d, mc, 0);
+							js.append("[{");
+							var f3 = true;
+							json::each(d, p0) { pc =>
+								if f3 == false { js.push(','); }
+								f3 = false;
+								json::format_key(js, json::name_of(d, pc));
+								js.push(':');
+								emit(d, pc, js);
+							};
+							if f3 == false { js.push(','); }
+							js.append("\"targets\":[");
+							for t in nt {
+								if t > 0 { js.push(','); }
+								let ai = na + 2 * (j * nt + t);
+								js.append("{\"POSITION\":");
+								rx_wint(js, ai);
+								js.append(",\"NORMAL\":");
+								rx_wint(js, ai + 1);
+								js.push('}');
+							}
+							js.append("]}]");
+						} else {
+							emit(d, mc, js);
+						}
+					}
+				};
+				if f2 == false { js.push(','); }
+				js.append("\"weights\":[");
+				for t in nt {
+					if t > 0 { js.push(','); }
+					js.push('0');
+				}
+				js.append("],\"extras\":{");
+				var f4 = true;
+				if ex >= 0 {
+					json::each(d, ex) { xc =>
+						let xn = json::name_of(d, xc);
+						if xn != "targetNames" {
+							if f4 == false { js.push(','); }
+							f4 = false;
+							json::format_key(js, xn);
+							js.push(':');
+							emit(d, xc, js);
+						}
+					};
+				}
+				if f4 == false { js.push(','); }
+				js.append("\"targetNames\":[");
+				for t in nt {
+					if t > 0 { js.push(','); }
+					js.append("\"psd:");
+					js.append(gltf::text_of(gltf::nodes[slot_node[TK[t]]].name));
+					js.push(':');
+					rx_wint(js, round(TF[t] as real) as int);
+					js.push(':');
+					rx_wint(js, round(TB[t] as real) as int);
+					js.push('"');
+				}
+				js.append("]}}");
+			}
+			js.push(']');
+		} else {
+			emit(d, c, js);
+		}
+	};
+	js.push('}');
+	while js.len % 4 != 0 { js.push(' '); }
+	var fb byte[>..] = [];
+	fb.append("glTF");
+	rx_pu32(fb, 2);
+	rx_pu32(fb, 12 + 8 + js.len + 8 + bin.len);
+	rx_pu32(fb, js.len);
+	rx_pu32(fb, 0x4E4F534A);
+	fb.append(js[..]);
+	rx_pu32(fb, bin.len);
+	rx_pu32(fb, 0x004E4942);
+	fb.append(bin[..]);
+	write_file(out, fb[..]);
+	print("psd: wrote ", nt, " targets on ", tm.len, " meshes -> ", out);
 }

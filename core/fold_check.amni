@@ -7,6 +7,7 @@ import gfx.motion;
 import gfx.scene3d;
 import clips;
 import mix;
+import spring;
 fn vp(g int) float3 {
 	let b = g * gltf::VERTEX_FLOATS;
 	float3 { gltf::verts[b], gltf::verts[b + 1], gltf::verts[b + 2] }
@@ -15,19 +16,67 @@ fn vn(g int) float3 {
 	let b = g * gltf::VERTEX_FLOATS;
 	float3 { gltf::verts[b + 3], gltf::verts[b + 4], gltf::verts[b + 5] }
 }
+fn cor_q(b int) linalg::Quat {
+	var acc linalg::Quat = default<linalg::Quat>();
+	acc.x = 0.0;
+	acc.y = 0.0;
+	acc.z = 0.0;
+	acc.w = 0.0;
+	var f linalg::Quat = acc;
+	var have = false;
+	for k in 4 {
+		let w = gltf::verts[b + 22 + k];
+		if w > 0.0 {
+			let j = gltf::verts[b + 18 + k] as int;
+			var r = JQ[j];
+			if !have {
+				f = r;
+				have = true;
+			}
+			if f.x * r.x + f.y * r.y + f.z * r.z + f.w * r.w < 0.0 {
+				r.x = -r.x;
+				r.y = -r.y;
+				r.z = -r.z;
+				r.w = -r.w;
+			}
+			acc.x += r.x * w;
+			acc.y += r.y * w;
+			acc.z += r.z * w;
+			acc.w += r.w * w;
+		}
+	}
+	linalg::qnorm(acc)
+}
 fn skp(g int, m gfx::mat4[:]) float3 {
 	let b = g * gltf::VERTEX_FLOATS;
+	if cor_on && g < CH.len && CH[g] {
+		let q = cor_q(b);
+		let c = CR[g];
+		var s = linalg::qrotate(q, vp(g) - c);
+		for k in 4 {
+			let w = gltf::verts[b + 22 + k];
+			if w > 0.0 {
+				s = s + linalg::point(m[gltf::verts[b + 18 + k] as int], c) * w;
+			}
+		}
+		return s;
+	}
 	var s = float3 { 0.0, 0.0, 0.0 };
+	let p = vp(g);
 	for q in 4 {
 		let w = gltf::verts[b + 22 + q];
 		if w > 0.0 {
-			s = s + linalg::point(m[gltf::verts[b + 18 + q] as int], vp(g)) * w;
+			s = s + linalg::point(m[gltf::verts[b + 18 + q] as int], p) * w;
 		}
 	}
 	s
 }
 fn skn(g int, m gfx::mat4[:]) float3 {
 	let b = g * gltf::VERTEX_FLOATS;
+	if cor_on && g < CH.len && CH[g] {
+		let q = cor_q(b);
+		return linalg::unit3(linalg::qrotate(q, vn(g)));
+	}
 	let p = vp(g);
 	let n = vn(g);
 	var s = float3 { 0.0, 0.0, 0.0 };
@@ -49,6 +98,10 @@ var h1 f32 = -1.0e30;
 var pal gfx::mat4[>..];
 var sk_i = -1;
 var dump = false;
+var cor_on = false;
+var CR float3[>..];
+var CH bool[>..];
+var JQ linalg::Quat[>..];
 fn region(name const byte[:]) int {
 	if starts_with(name, "pelvis") || starts_with(name, "thigh") {
 		return 0;
@@ -149,19 +202,204 @@ fn gather(asset int, name const byte[:]) {
 		rb.push(region(gltf::text_of(gltf::nodes[node].name)));
 	}
 }
-fn measure(it int, tag const byte[:]) {
+struct SrcTri { cx f32, cy f32, cz f32, area f32, js int[12], ws f32[12], n int }
+fn src_w(tr SrcTri&, j int) f32 {
+	for e in tr.n {
+		if tr.js[e] == j {
+			return tr.ws[e];
+		}
+	}
+	return 0.0;
+}
+fn cor_src(asset int, nm const byte[:], src SrcTri[>..]&) {
+	let nd = gltf::find_node(asset, nm);
+	if nd < 0 {
+		return;
+	}
+	let ms = gltf::meshes[gltf::nodes[nd].mesh as int];
+	for pi in ms.prims.count as int {
+		let pr = gltf::prims[ms.prims.first as int + pi];
+		let vf = pr.vfirst as int;
+		let ifs = pr.ifirst as int;
+		for t in pr.icount as int / 3 {
+			let i0 = vf + gltf::indices[ifs + 3 * t] as int;
+			let i1 = vf + gltf::indices[ifs + 3 * t + 1] as int;
+			let i2 = vf + gltf::indices[ifs + 3 * t + 2] as int;
+			let a = vp(i0);
+			let b = vp(i1);
+			let c = vp(i2);
+			var st = default<SrcTri>();
+			st.cx = (a.x + b.x + c.x) / 3.0;
+			st.cy = (a.y + b.y + c.y) / 3.0;
+			st.cz = (a.z + b.z + c.z) / 3.0;
+			st.area = 0.5 * linalg::length3(tri_cross(b - a, c - a));
+			st.n = 0;
+			let cs int[3] = [i0, i1, i2];
+			for g in cs {
+				let base = g * gltf::VERTEX_FLOATS;
+				for k in 4 {
+					let j = gltf::verts[base + gltf::AT_JOINT + k] as int;
+					let w = gltf::verts[base + gltf::AT_WEIGHT + k];
+					if w > 0.0 {
+						var found = false;
+						for e in st.n {
+							if st.js[e] == j {
+								st.ws[e] += w / 3.0;
+								found = true;
+							}
+						}
+						if !found && st.n < 12 {
+							st.js[st.n] = j;
+							st.ws[st.n] = w / 3.0;
+							st.n += 1;
+						}
+					}
+				}
+			}
+			src.push(st);
+		}
+	}
+}
+fn cor_build(asset int, name const byte[:]) {
+	var src SrcTri[>..] = [];
+	cor_src(asset, name, src);
+	if !(name == "skin") {
+		cor_src(asset, "skin", src);
+	}
+	let nv = gltf::verts.len / gltf::VERTEX_FLOATS;
+	CR.resize(nv, float3 { 0.0, 0.0, 0.0 });
+	CH.resize(nv, false);
+	var got = 0;
+	var seen = 0;
+	let nd = gltf::find_node(asset, name);
+	if nd >= 0 {
+		let ms = gltf::meshes[gltf::nodes[nd].mesh as int];
+		for pi in ms.prims.count as int {
+			let pr = gltf::prims[ms.prims.first as int + pi];
+			let vf = pr.vfirst as int;
+			for v in pr.vcount as int {
+				let g = vf + v;
+				seen += 1;
+				let b = g * gltf::VERTEX_FLOATS;
+				var ja int[4] = [0; 4];
+				var wa f32[4] = [0.0; 4];
+				var ni = 0;
+				for k in 4 {
+					let w = gltf::verts[b + 22 + k];
+					if w > 0.0 {
+						ja[ni] = gltf::verts[b + 18 + k] as int;
+						wa[ni] = w;
+						ni += 1;
+					}
+				}
+				if ni >= 2 {
+					var nx real = 0.0;
+					var ny real = 0.0;
+					var nz real = 0.0;
+					var den real = 0.0;
+					for &tr in src {
+						var s real = 0.0;
+						for j in ni {
+							for k in j + 1..ni {
+								let ta real = src_w(tr, ja[j]);
+								let tb real = src_w(tr, ja[k]);
+								if ta == 0.0 || tb == 0.0 {
+									continue;
+								}
+								let w1 real = wa[j];
+								let w2 real = wa[k];
+								let dd = w1 * tb - w2 * ta;
+								s += w1 * w2 * ta * tb * exp(-(dd * dd) / (0.1 * 0.1));
+							}
+						}
+						let sa real = s * tr.area;
+						nx += sa * tr.cx;
+						ny += sa * tr.cy;
+						nz += sa * tr.cz;
+						den += sa;
+					}
+					if den > 1.0e-12 {
+						CH[g] = true;
+						CR[g] = float3 { (nx / den) as f32, (ny / den) as f32, (nz / den) as f32 };
+						got += 1;
+					}
+				}
+			}
+		}
+	}
+	print("cor: ", got, " of ", seen, " from ", src.len, " triangles");
+}
+fn mat_quat(m gfx::mat4) linalg::Quat {
+	let zero = float3 { 0.0, 0.0, 0.0 };
+	let o = linalg::point(m, zero);
+	let c0 = linalg::unit3(linalg::point(m, float3 { 1.0, 0.0, 0.0 }) - o);
+	let c1 = linalg::unit3(linalg::point(m, float3 { 0.0, 1.0, 0.0 }) - o);
+	let c2 = linalg::unit3(linalg::point(m, float3 { 0.0, 0.0, 1.0 }) - o);
+	let m00 real = c0.x;
+	let m10 real = c0.y;
+	let m20 real = c0.z;
+	let m01 real = c1.x;
+	let m11 real = c1.y;
+	let m21 real = c1.z;
+	let m02 real = c2.x;
+	let m12 real = c2.y;
+	let m22 real = c2.z;
+	var x real = 0.0;
+	var y real = 0.0;
+	var z real = 0.0;
+	var w real = 1.0;
+	let tr = m00 + m11 + m22;
+	if tr > 0.0 {
+		let s = sqrt(tr + 1.0) * 2.0;
+		w = 0.25 * s;
+		x = (m21 - m12) / s;
+		y = (m02 - m20) / s;
+		z = (m10 - m01) / s;
+	} else if m00 > m11 && m00 > m22 {
+		let s = sqrt(max(1.0 + m00 - m11 - m22, 1.0e-20)) * 2.0;
+		w = (m21 - m12) / s;
+		x = 0.25 * s;
+		y = (m01 + m10) / s;
+		z = (m02 + m20) / s;
+	} else if m11 > m22 {
+		let s = sqrt(max(1.0 + m11 - m00 - m22, 1.0e-20)) * 2.0;
+		w = (m02 - m20) / s;
+		x = (m01 + m10) / s;
+		y = 0.25 * s;
+		z = (m12 + m21) / s;
+	} else {
+		let s = sqrt(max(1.0 + m22 - m00 - m11, 1.0e-20)) * 2.0;
+		w = (m10 - m01) / s;
+		x = (m02 + m20) / s;
+		y = (m12 + m21) / s;
+		z = 0.25 * s;
+	}
+	var q linalg::Quat = default<linalg::Quat>();
+	q.x = x as f32;
+	q.y = y as f32;
+	q.z = z as f32;
+	q.w = w as f32;
+	linalg::qnorm(q)
+}
+fn measure(it, tag const byte[:]) {
 	s3d::pose(it);
 	motion::joints(sk_i, pal);
+	if cor_on {
+		JQ.resize(pal.len, default<linalg::Quat>());
+		for k in pal.len {
+			JQ[k] = mat_quat(pal[k]);
+		}
+	}
 	var fo int[>..] = [];
-	fo.resize(NB, 0);
 	var cr int[>..] = [];
-	cr.resize(NB, 0);
 	var st int[>..] = [];
+	fo.resize(NB, 0);
+	cr.resize(NB, 0);
 	st.resize(NB, 0);
 	var F = 0;
 	var C = 0;
 	var X = 0;
-	for t in bt.len / 3 {
+	for t in ra.len {
 		if ra[t] > 1.0e-10 {
 			let i0 = bt[3 * t];
 			let i1 = bt[3 * t + 1];
@@ -195,8 +433,11 @@ fn measure(it int, tag const byte[:]) {
 				let cx = (a.x + b.x + c.x) / 3.0;
 				let cy = (a.y + b.y + c.y) / 3.0;
 				let cz = (a.z + b.z + c.z) / 3.0;
-				let mark = if folded { "F " } else { "C " };
-				print(mark, cx, " ", cy, " ", cz);
+				if folded {
+					print("F ", cx, " ", cy, " ", cz);
+				} else {
+					print("C ", cx, " ", cy, " ", cz);
+				}
 			}
 		}
 	}
@@ -295,7 +536,7 @@ fn find_clip(name const byte[:], n int) int {
 fn main() {
 	let a = args();
 	if a.len < 3 {
-		print("usage: fold_check <model.glb> <clips.gltf> [mesh=skin] [move=joint:dx,dy,dz ...] [dump]; counts folded, crushed and stretched triangles per body region in bind, idle, walk, dance and sit poses");
+		print("usage: fold_check <model.glb> <clips.gltf> [mesh=skin] [move=joint:dx,dy,dz ...] [dump] [cor]; counts folded, crushed and stretched triangles per body region in bind, idle, walk, dance and sit poses");
 		return;
 	}
 	let asset = gltf::load(a[1]);
@@ -303,9 +544,8 @@ fn main() {
 		print("load fail");
 		return;
 	}
-	for i in 3..a.len {
-		let arg = a[i];
-		if starts_with(arg, "move=") {
+	for arg, i in a {
+		if i >= 3 && starts_with(arg, "move=") {
 			move_joint(asset, arg[5..]);
 		}
 	}
@@ -320,25 +560,33 @@ fn main() {
 	for c in nlib {
 		mix_clip(clips::kc_nf[c], clips::kc_loop[c], clips::clips_frames(c));
 	}
-	var mesh const byte[:] = "skin";
+	var mesh byte[>..] = [];
+	mesh.append("skin");
 	var have_mesh = false;
-	for i in 3..a.len {
-		let arg = a[i];
-		if arg == "dump" {
-			dump = true;
-		} else if !starts_with(arg, "move=") && !have_mesh {
-			mesh = arg;
-			have_mesh = true;
+	for arg, i in a {
+		if i >= 3 {
+			if arg == "dump" {
+				dump = true;
+			} else if arg == "cor" {
+				cor_on = true;
+			} else if !starts_with(arg, "move=") && !have_mesh {
+				mesh.clear();
+				mesh.append(arg);
+				have_mesh = true;
+			}
 		}
 	}
 	gather(asset, mesh);
 	if bt.len == 0 {
 		return;
 	}
+	if cor_on {
+		cor_build(asset, mesh);
+	}
 	print("skin tris ", bt.len / 3, " height ", h0, " to ", h1, " clips ", nlib);
 	measure(it, "bind");
-	let names const byte[:][4] = ["Idle_Loop", "Walk_Formal_Loop", "Dance_Loop", "Sitting_Idle_Loop"];
-	let at f32[4][4] = [[1.0, 0.0, 0.0, 0.0], [0.5, 1.0, 0.0, 0.0], [0.7, 1.4, 2.1, 2.8], [1.0, 2.0, 3.0, 0.0]];
+	let names = ["Idle_Loop", "Walk_Formal_Loop", "Dance_Loop", "Sitting_Idle_Loop"];
+	let at = [[1.0, 0.0, 0.0, 0.0], [0.5, 1.0, 0.0, 0.0], [0.7, 1.4, 2.1, 2.8], [1.0, 2.0, 3.0, 0.0]];
 	for ci in 4 {
 		let c = find_clip(names[ci], nlib);
 		if c < 0 {
@@ -360,7 +608,7 @@ fn main() {
 			tag.append(names[ci]);
 			tag.push(' ');
 			tag.append(str(target));
-			measure(it, tag[..]);
+			measure(it, tag);
 		}
 	}
 }
