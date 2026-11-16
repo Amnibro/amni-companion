@@ -49,19 +49,21 @@ fn solve_local(slot i32[:], rest real[:], want real[:], out real[:]) {
 }
 fn retarget_corr(sslot i32[:], srest real[:], tslot i32[:], trest real[:], corr real[:]) {
 	for k in 22 {
-		qm::q_put(corr, 4 * k, qid());
-		if k >= 14 { continue; }
-		if sslot[k] < 0 || tslot[k] < 0 { continue; }
-		let cs = rig::eff_child(sslot, k);
-		let ct = rig::eff_child(tslot, k);
-		if cs >= 0 && ct >= 0 {
-			let a = qm::v_norm(qm::v_sub(rest_p0(trest, ct), rest_p0(trest, k)));
-			let b = qm::v_norm(qm::v_sub(rest_p0(srest, cs), rest_p0(srest, k)));
-			qm::q_put(corr, 4 * k, qm::q_from_to(a, b));
-		} else {
-			let ep = rig::eff_parent(tslot, k);
-			if ep >= 0 { qm::q_put(corr, 4 * k, qm::q_get(corr, 4 * ep)); }
+		var q = qid();
+		let both = sslot[k] >= 0 && tslot[k] >= 0;
+		if both && k != 0 && (k < 14 || k > 21) {
+			let cs = rig::eff_child(sslot, k);
+			let ct = rig::eff_child(tslot, k);
+			if cs >= 0 && ct >= 0 {
+				let td = qm::v_norm(qm::v_sub(rest_p0(trest, ct), rest_p0(trest, k)));
+				let sd = qm::v_norm(qm::v_sub(rest_p0(srest, cs), rest_p0(srest, k)));
+				q = qm::q_from_to(td, sd);
+			} else {
+				let tp = rig::eff_parent(tslot, k);
+				if tp >= 0 { q = qm::q_get(corr, 4 * tp); }
+			}
 		}
+		qm::q_put(corr, 4 * k, q);
 	}
 }
 fn leg_ratio(sslot i32[:], srest real[:], tslot i32[:], trest real[:]) real {
