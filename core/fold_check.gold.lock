@@ -531,15 +531,7 @@ fn find_clip(name const byte[:], n int) int {
 	}
 	return -1;
 }
-=== 2d584f0318cfdf57
-fn sched_name(ci int) const byte[:] {
-	match ci {
-		0 => "Idle_Loop",
-		1 => "Walk_Formal_Loop",
-		2 => "Dance_Loop",
-		_ => "Sitting_Idle_Loop",
-	}
-}
+=== 234b5ea72a9e1bdd
 fn main() {
 	let a = args();
 	if a.len < 3 {
@@ -566,10 +558,9 @@ fn main() {
 	}
 	var want_half = false;
 	var want_twist = false;
+	var hp real = 0.0;
 	var ek real = 2.0;
 	var kk real = 3.0;
-	var mesh const byte[:] = "skin";
-	var have_mesh = false;
 	for i in 3..a.len {
 		let s = a[i];
 		if s == "dump" {
@@ -580,6 +571,11 @@ fn main() {
 			want_half = true;
 		} else if s == "twist" {
 			want_twist = true;
+		} else if starts_with(s, "hip=") {
+			let x, ok = parse_flt(trim(s[4..]));
+			if ok {
+				hp = x;
+			}
 		} else if starts_with(s, "elbow=") {
 			let x, ok = parse_flt(trim(s[6..]));
 			if ok {
@@ -590,30 +586,44 @@ fn main() {
 			if ok {
 				kk = x;
 			}
-		} else if starts_with(s, "move=") {
-		} else if !have_mesh {
-			mesh = s;
-			have_mesh = true;
 		}
 	}
 	if want_half {
 		var hk int[6] = [clips::kc_slot[14] as int, clips::kc_slot[18] as int, clips::kc_slot[8] as int, clips::kc_slot[12] as int, clips::kc_slot[15] as int, clips::kc_slot[19] as int];
-		var hs f32[6] = [0.0, 0.0, ek as f32, ek as f32, -kk as f32, -kk as f32];
+		var hs f32[6] = [hp as f32, hp as f32, ek as f32, ek as f32, -kk as f32, -kk as f32];
 		if kk < 0.0 {
 			hk[4] = -1;
 			hk[5] = -1;
 			hs[4] = 0.0;
 			hs[5] = 0.0;
 		}
-		print("half joints ", half_joints(asset, hk[..], hs[..]));
+		let r = half_joints(asset, hk[..], hs[..]);
+		print("half joints ", r);
 	}
 	if want_twist {
 		var tk int[2] = [clips::kc_slot[8] as int, clips::kc_slot[12] as int];
-		print("twist joints ", twist_joints(asset, tk[..]));
+		let r = twist_joints(asset, tk[..]);
+		print("twist joints ", r);
 	}
 	mix_open(asset, it, sl[..]);
 	for c in nlib {
 		mix_clip(clips::kc_nf[c], clips::kc_loop[c], clips::clips_frames(c));
+	}
+	var mesh const byte[:] = "skin";
+	var found = false;
+	for i in 3..a.len {
+		let s = a[i];
+		if found {
+			continue;
+		}
+		if starts_with(s, "move=") || starts_with(s, "knee=") || starts_with(s, "elbow=") || starts_with(s, "hip=") {
+			continue;
+		}
+		if s == "dump" || s == "cor" || s == "half" || s == "twist" {
+			continue;
+		}
+		mesh = s;
+		found = true;
 	}
 	gather(asset, mesh);
 	if bt.len == 0 {
@@ -624,12 +634,12 @@ fn main() {
 	}
 	print("skin tris ", bt.len / 3, " height ", h0, " to ", h1, " clips ", nlib);
 	measure(it, "bind");
+	let names = ["Idle_Loop", "Walk_Formal_Loop", "Dance_Loop", "Sitting_Idle_Loop"];
 	let at f32[16] = [1.0, 0.0, 0.0, 0.0, 0.5, 1.0, 0.0, 0.0, 0.7, 1.4, 2.1, 2.8, 1.0, 2.0, 3.0, 0.0];
 	for ci in 4 {
-		let nm = sched_name(ci);
-		let c = find_clip(nm, nlib);
+		let c = find_clip(names[ci], nlib);
 		if c < 0 {
-			print("no clip ", nm);
+			print("no clip ", names[ci]);
 			continue;
 		}
 		mix_play(c, 0.0);
@@ -644,8 +654,8 @@ fn main() {
 				t += 1.0 / 60.0;
 			}
 			var tag byte[>..] = [];
-			tag.append(nm);
-			tag.append(" ");
+			tag.append(names[ci]);
+			tag.push(' ');
 			tag.append(str(target));
 			measure(it, tag);
 		}
