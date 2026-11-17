@@ -276,7 +276,7 @@ export fn hv_weights(n i32) {
 fn place_m() {
 	s3d::place(item, gfx::mat4 { float4 { M[0], M[1], M[2], M[3] }, float4 { M[4], M[5], M[6], M[7] }, float4 { M[8], M[9], M[10], M[11] }, float4 { M[12], M[13], M[14], M[15] } });
 }
-=== 581df464b34b1008
+=== -2bc56741a4abf3dc
 export fn hv_rig() {
 	mix_open(asset, item, SL[..]);
 }
@@ -288,7 +288,21 @@ export fn hv_play(c i32, fade f32) i32 {
 	return 0;
 }
 export fn hv_advance(dt f32) i32 {
+	mix_place(M[..]);
 	return mix_advance(dt) as i32;
+}
+export fn hv_speed(c i32) f32 {
+	mix_place(M[..]);
+	return mix_speed(c as int);
+}
+export fn hv_feet(on i32) {
+	mix_feet(on != 0);
+}
+export fn hv_foot(f i32) i32 {
+	if f == 0 || f == 1 {
+		return fl_mode[f as int] as i32;
+	}
+	return -1;
 }
 export fn hv_apply() {
 	mix_apply(O[..]);

@@ -1,0 +1,134 @@
+import gfx;
+import math;
+import gfx.linalg;
+import gfx.gltf;
+import gfx.motion;
+import gfx.scene3d;
+import spring;
+import clips;
+import mix;
+var asset int = 0;
+var it int = 0;
+var nlib int = 0;
+var idle_c int = 0;
+var walk_c int = 0;
+fn setup() {
+	asset = gltf::load("../web/models/holo.glb");
+	it = s3d::add(asset);
+	nlib = clips::clips_load("../web/anim/AnimationLibrary_Godot_Standard.gltf", asset);
+	var sl i32[22];
+	let first = gltf::assets[asset].nodes.first;
+	for i in 22 { sl[i] = if clips::kc_slot[i] < 0 { -1 } else { (clips::kc_slot[i] as int - first) as i32 }; }
+	mix_open(asset, it, sl[..]);
+	for c in nlib { mix_clip(clips::kc_nf[c], clips::kc_loop[c], clips::clips_frames(c)); }
+	var nb byte[>..] = [];
+	for k in nlib {
+		nb.clear();
+		clips::clips_name(k, nb);
+		if nb == "Idle_Loop" { idle_c = k; }
+		if nb == "Walk_Loop" { walk_c = k; }
+	}
+}
+fn put(x f32, z f32, yaw f32) {
+	let m = gfx::mul(gfx::translate(float3 { x, 0.0, z }), linalg::qmatrix(linalg::qaxis(float3 { 0.0, 1.0, 0.0 }, yaw)));
+	s3d::place(it, m);
+	let fl = linalg::flat(m);
+	mix_place(fl[..]);
+}
+fn ankle(f int) float3 {
+	s3d::pose(it);
+	pos(motion::world[slot_node[16 + 4 * f]])
+}
+fn flat2(a float3, b float3) f32 {
+	let dx = a.x - b.x;
+	let dz = a.z - b.z;
+	sqrt(dx * dx + dz * dz)
+}
+fn walk(on bool, k f32) f32 {
+	mix_feet(on);
+	mix_rest();
+	mix_play(walk_c, 0.0);
+	let v = mix_speed(walk_c) * k;
+	var sum f32 = 0.0;
+	var pp float3[2] = [float3 { 0.0, 0.0, 0.0 }; 2];
+	var pc bool[2] = [false; 2];
+	for i in 120 {
+		put(0.0, v * (i as f32) / 30.0, 0.0);
+		mix_advance(1.0 / 30.0);
+		for f in 2 {
+			let p = ankle(f);
+			let c = fl_contact(f);
+			if i > 0 && c && pc[f] { sum += flat2(p, pp[f]); }
+			pp[f] = p;
+			pc[f] = c;
+		}
+	}
+	sum
+}
+fn knee_run() f32 {
+	mix_feet(true);
+	mix_rest();
+	mix_play(walk_c, 0.0);
+	let v = mix_speed(walk_c) * 0.85;
+	var low f32 = 1.0;
+	for i in 120 {
+		put(0.0, v * (i as f32) / 30.0, 0.0);
+		mix_advance(1.0 / 30.0);
+		s3d::pose(it);
+		for f in 2 {
+			let h = pos(motion::world[slot_node[14 + 4 * f]]);
+			let n = pos(motion::world[slot_node[15 + 4 * f]]);
+			let e = pos(motion::world[slot_node[16 + 4 * f]]);
+			let d = n.z - (h.z + (e.z - h.z) * ((n.y - h.y) / min(e.y - h.y, -0.0001)));
+			if d < low { low = d; }
+		}
+	}
+	low
+}
+fn main() {
+	setup();
+	let sp = clip_speed[walk_c];
+	if sp > 0.5 && sp < 2.5 && clip_speed[idle_c] == 0.0 { print("speed ok"); } else { print("speed bad ", sp, " ", clip_speed[idle_c]); }
+	let nf = clips::kc_nf[walk_c];
+	var cnt int[2] = [0; 2];
+	for i in nf {
+		for f in 2 {
+			if con[clip_cfirst[walk_c] + 2 * i + f] != 0 { cnt[f] += 1; }
+		}
+	}
+	let s0c = cnt[0] as real / nf as real;
+	let s1c = cnt[1] as real / nf as real;
+	if s0c > 0.3 && s0c < 0.8 && s1c > 0.3 && s1c < 0.8 { print("contact ok"); } else { print("contact bad ", s0c, " ", s1c); }
+	let a = walk(false, 0.85);
+	let b = walk(true, 0.85);
+	if a > 0.2 && b < 0.1 * a { print("lock ok"); } else { print("lock bad ", a, " ", b); }
+	let m = walk(true, 1.0);
+	if m < 0.02 { print("match ok"); } else { print("match bad ", m); }
+	let low = knee_run();
+	if low > -0.01 { print("knee ok"); } else { print("knee bad ", low); }
+	mix_feet(true);
+	mix_rest();
+	mix_play(idle_c, 0.0);
+	let s0 = fl_steps;
+	var slide f32 = 0.0;
+	var twist f32 = 0.0;
+	var pp float3[2] = [float3 { 0.0, 0.0, 0.0 }; 2];
+	var pm int[2] = [0; 2];
+	for i in 90 {
+		let yaw = 1.8 * (i as f32) / 30.0;
+		put(0.0, 0.0, yaw);
+		mix_advance(1.0 / 30.0);
+		for f in 2 {
+			let p = ankle(f);
+			if fl_mode[f] == 1 && pm[f] == 1 && i > 0 {
+				let d = flat2(p, pp[f]);
+				if d > slide { slide = d; }
+			}
+			let tw = abs(fl_yoff[f]);
+			if tw > twist { twist = tw; }
+			pp[f] = p;
+			pm[f] = fl_mode[f];
+		}
+	}
+	if fl_steps - s0 >= 4 && slide < 0.003 && twist < 0.8 { print("turn ok"); } else { print("turn bad ", fl_steps - s0, " ", slide, " ", twist); }
+}

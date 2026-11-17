@@ -279,7 +279,21 @@ export fn hv_play(c i32, fade f32) i32 {
 	return 0;
 }
 export fn hv_advance(dt f32) i32 {
+	mix_place(M[..]);
 	return mix_advance(dt) as i32;
+}
+export fn hv_speed(c i32) f32 {
+	mix_place(M[..]);
+	return mix_speed(c as int);
+}
+export fn hv_feet(on i32) {
+	mix_feet(on != 0);
+}
+export fn hv_foot(f i32) i32 {
+	if f == 0 || f == 1 {
+		return fl_mode[f as int] as i32;
+	}
+	return -1;
 }
 export fn hv_apply() {
 	mix_apply(O[..]);

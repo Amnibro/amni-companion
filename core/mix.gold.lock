@@ -92,7 +92,7 @@ fn inert_fit(x0 f32, xp f32, t1 f32, k int) {
 		in_t1[k] = t;
 	}
 }
-=== -2e07a9dc32066d65
+=== 1b81bbe1a26c3cd3
 fn mix_open(a int, it int, slots i32[:]) {
 	asset = a;
 	item = it;
@@ -112,11 +112,9 @@ fn mix_open(a int, it int, slots i32[:]) {
 	}
 	if slot_node[0] >= 0 {
 		hips_t = gltf::nodes[slot_node[0]].t;
-	} else {
-		hips_t = float3 { 0.0, 0.0, 0.0 };
+		pose_h = hips_t;
+		pose_ph = hips_t;
 	}
-	pose_h = hips_t;
-	pose_ph = hips_t;
 	last_dt = 0.0;
 	in_on = false;
 	frames.clear();
@@ -138,14 +136,20 @@ fn mix_open(a int, it int, slots i32[:]) {
 	for k in 22 {
 		psd_n[k] = 0;
 	}
+	clip_speed.clear();
+	clip_cfirst.clear();
+	con.clear();
+	fl_open();
 }
-=== -26daf2fa17445842
-fn mix_clip(nf int, looping bool, src f32[:]) int {
+=== -51dc20f539447568
+fn mix_clip(nf int, lp bool, src f32[:]) int {
 	clip_first.push(frames.len);
 	clip_nf.push(nf);
-	clip_loop.push(looping);
+	clip_loop.push(lp);
 	frames.append(src[..nf * 91]);
-	return clip_first.len - 1;
+	let idx = clip_first.len - 1;
+	fl_clip(idx);
+	return idx;
 }
 === -79b982149ac771e3
 fn dur(c int) f32 {
@@ -250,57 +254,50 @@ fn sample_hips(c int, t f32) float3 {
 	let b = float3 { frames[o1], frames[o1 + 1], frames[o1 + 2] };
 	return linalg::mix3(a, b, u);
 }
-=== -626354a07fa7ad84
+=== -7adf1bef92ecf08d
 fn mix_advance(dt f32) int {
 	last_dt = dt;
-	if in_on {
-		in_t += dt;
-	}
-	var res = -1;
+	if in_on { in_t += dt; }
+	var result = -1;
 	for i in act_clip.len {
 		act_t[i] += dt;
 		let d = dur(act_clip[i]);
 		if clip_loop[act_clip[i]] {
 			if d > 0.0 {
-				while act_t[i] >= d {
-					act_t[i] -= d;
-				}
+				while act_t[i] >= d { act_t[i] -= d; }
 			}
 		} else if act_t[i] >= d {
 			act_t[i] = d;
 			if !act_done[i] {
 				act_done[i] = true;
-				if i == cur {
-					res = act_clip[i];
-				}
+				if i == cur { result = act_clip[i]; }
 			}
 		}
 		act_w[i] = clamp(act_w[i] + act_dw[i] * dt, 0.0, 1.0);
-		if act_w[i] <= 0.0 || act_w[i] >= 1.0 {
-			act_dw[i] = 0.0;
-		}
+		if act_w[i] <= 0.0 || act_w[i] >= 1.0 { act_dw[i] = 0.0; }
 	}
-	let na = act_clip.len;
-	var j = 0;
+	var wr = 0;
 	var ncur = -1;
-	for i in na {
-		if i != cur && act_w[i] <= 0.0 && act_dw[i] <= 0.0 { continue; }
-		if i == cur {
-			ncur = j;
+	let total = act_clip.len;
+	for i in total {
+		let keep = i == cur || act_w[i] > 0.0 || act_dw[i] > 0.0;
+		if keep {
+			if i == cur { ncur = wr; }
+			act_clip[wr] = act_clip[i];
+			act_t[wr] = act_t[i];
+			act_w[wr] = act_w[i];
+			act_dw[wr] = act_dw[i];
+			act_done[wr] = act_done[i];
+			wr += 1;
 		}
-		act_clip[j] = act_clip[i];
-		act_t[j] = act_t[i];
-		act_w[j] = act_w[i];
-		act_dw[j] = act_dw[i];
-		act_done[j] = act_done[i];
-		j += 1;
 	}
-	if j < na {
-		act_clip.pop_n(na - j);
-		act_t.pop_n(na - j);
-		act_w.pop_n(na - j);
-		act_dw.pop_n(na - j);
-		act_done.pop_n(na - j);
+	let rm = total - wr;
+	if rm > 0 {
+		act_clip.pop_n(rm);
+		act_t.pop_n(rm);
+		act_w.pop_n(rm);
+		act_dw.pop_n(rm);
+		act_done.pop_n(rm);
 	}
 	cur = ncur;
 	for k in 22 {
@@ -311,7 +308,11 @@ fn mix_advance(dt f32) int {
 			if act_w[i] > 0.0 {
 				cum += act_w[i];
 				let s = sample(act_clip[i], act_t[i], k);
-				q = if cum == act_w[i] { s } else { linalg::qslerp(q, s, act_w[i] / cum) };
+				if cum == act_w[i] {
+					q = s;
+				} else {
+					q = linalg::qslerp(q, s, act_w[i] / cum);
+				}
 			}
 		}
 		if cum < 1.0 && cum > 0.0 {
@@ -321,38 +322,41 @@ fn mix_advance(dt f32) int {
 	}
 	if slot_node[0] >= 0 {
 		let base = gltf::nodes[slot_node[0]].t;
-		var cum f32 = 0.0;
+		var cumh f32 = 0.0;
 		var h = base;
 		for i in act_clip.len {
 			if act_w[i] > 0.0 {
-				cum += act_w[i];
+				cumh += act_w[i];
 				let s = sample_hips(act_clip[i], act_t[i]);
-				h = if cum == act_w[i] { s } else { linalg::mix3(h, s, act_w[i] / cum) };
+				if cumh == act_w[i] {
+					h = s;
+				} else {
+					h = linalg::mix3(h, s, act_w[i] / cumh);
+				}
 			}
 		}
-		if cum < 1.0 && cum > 0.0 {
-			h = linalg::mix3(base, h, cum);
+		if cumh < 1.0 && cumh > 0.0 {
+			h = linalg::mix3(base, h, cumh);
 		}
 		hips_t = h;
 	}
 	if in_on {
-		var done = in_t >= in_ht1;
 		for k in 22 {
 			if slot_node[k] < 0 { continue; }
 			let x = inert_x(in_x0[k], in_v0[k], in_t1[k], in_t);
 			if x > 0.0 {
 				cur_q[k] = linalg::qmul(linalg::qaxis(in_ax[k], x), cur_q[k]);
 			}
-			if in_t < in_t1[k] {
-				done = false;
-			}
 		}
 		if slot_node[0] >= 0 {
 			hips_t = hips_t + in_hd * inert_x(in_hx0, in_hv0, in_ht1, in_t);
 		}
-		if done {
-			in_on = false;
+		var fin = true;
+		for k in 22 {
+			if in_t < in_t1[k] { fin = false; }
 		}
+		if in_t < in_ht1 { fin = false; }
+		if fin { in_on = false; }
 	}
 	for k in 22 {
 		pose_pq[k] = pose_q[k];
@@ -360,8 +364,9 @@ fn mix_advance(dt f32) int {
 	}
 	pose_ph = pose_h;
 	pose_h = hips_t;
+	fl_step(dt);
 	push();
-	return res;
+	return result;
 }
 === -36219d8c475415be
 fn push() {
@@ -387,7 +392,7 @@ fn mix_apply(ov f32[:]) {
 	}
 	push();
 }
-=== -57613c7c25ffcc59
+=== -2370e1bd51d11fa8
 fn mix_rest() {
 	for k in 22 {
 		cur_q[k] = rest_q[k];
@@ -395,12 +400,12 @@ fn mix_rest() {
 		pose_pq[k] = rest_q[k];
 	}
 	if slot_node[0] >= 0 {
-		let t = gltf::nodes[slot_node[0]].t;
-		hips_t = t;
-		pose_h = t;
-		pose_ph = t;
+		hips_t = gltf::nodes[slot_node[0]].t;
+		pose_h = hips_t;
+		pose_ph = hips_t;
 	}
 	in_on = false;
+	fl_snap = true;
 	push();
 }
 === -38d5f466ac088ca1
@@ -1250,4 +1255,312 @@ fn crease_bind(asset int, th int, kd f32) {
 			}
 		}
 	}
+}
+=== -6047c310eede6f29
+let LEG_UP int[22] = [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0, 14, 15, -1, 0, 18, 19, -1];
+var fk_pre gfx::mat4[22] = [gfx::mat4_identity; 22];
+var fk_m gfx::mat4[7] = [gfx::mat4_identity; 7];
+var fl_len f32[2] = [0.0; 2];
+var fl_ok = false;
+var fl_place = gfx::mat4_identity;
+var feet_on = true;
+var fl_snap = true;
+var fl_mode int[2] = [0; 2];
+var fl_lock float3[2] = [float3 { 0.0, 0.0, 0.0 }; 2];
+var fl_yaw0 f32[2] = [0.0; 2];
+var fl_off float3[2] = [float3 { 0.0, 0.0, 0.0 }; 2];
+var fl_offv float3[2] = [float3 { 0.0, 0.0, 0.0 }; 2];
+var fl_yoff f32[2] = [0.0; 2];
+var fl_st f32[2] = [0.0; 2];
+var fl_ss float3[2] = [float3 { 0.0, 0.0, 0.0 }; 2];
+var fl_sy f32[2] = [0.0; 2];
+var fl_scale f32 = 1.0;
+var fl_pyaw f32 = 0.0;
+var fl_steps = 0;
+var clip_speed f32[>..];
+var clip_cfirst int[>..];
+var con byte[>..];
+=== -43ee5e5a68e8e81b
+fn fl_legs(f int, h float3, q0 linalg::Quat, qt linalg::Quat, qc linalg::Quat, qf linalg::Quat) {
+	let a = 14 + 4 * f;
+	let n0s = gltf::nodes[slot_node[0]].s;
+	let ntt = gltf::nodes[slot_node[a]].t;
+	let nts = gltf::nodes[slot_node[a]].s;
+	let nct = gltf::nodes[slot_node[a + 1]].t;
+	let ncs = gltf::nodes[slot_node[a + 1]].s;
+	let nft = gltf::nodes[slot_node[a + 2]].t;
+	let nfs = gltf::nodes[slot_node[a + 2]].s;
+	fk_m[0] = gfx::mul(fk_pre[0], linalg::compose(h, q0, n0s));
+	fk_m[1] = gfx::mul(fk_m[0], fk_pre[a]);
+	fk_m[2] = gfx::mul(fk_m[1], linalg::compose(ntt, qt, nts));
+	fk_m[3] = gfx::mul(fk_m[2], fk_pre[a + 1]);
+	fk_m[4] = gfx::mul(fk_m[3], linalg::compose(nct, qc, ncs));
+	fk_m[5] = gfx::mul(fk_m[4], fk_pre[a + 2]);
+	fk_m[6] = gfx::mul(fk_m[5], linalg::compose(nft, qf, nfs));
+}
+=== 18a7fd084beb824b
+fn fl_open() {
+	fl_ok = true;
+	for k in [0, 14, 15, 16, 18, 19, 20] {
+		if slot_node[k] < 0 { fl_ok = false; }
+	}
+	fl_snap = true;
+	fl_steps = 0;
+	if !fl_ok { return; }
+	motion::rest(asset);
+	motion::update(asset, gfx::mat4_identity);
+	for k in [0, 14, 15, 16, 18, 19, 20] {
+		let pn = gltf::nodes[slot_node[k]].parent;
+		let pw = if pn >= 0 { motion::world[pn] } else { gfx::mat4_identity };
+		let u = LEG_UP[k];
+		if u < 0 {
+			fk_pre[k] = pw;
+		} else {
+			fk_pre[k] = gfx::mul(linalg::inverse(motion::world[slot_node[u]]), pw);
+		}
+	}
+	for f in 2 {
+		let a = 14 + 4 * f;
+		fl_legs(f, gltf::nodes[slot_node[0]].t, rest_q[0], rest_q[a], rest_q[a + 1], rest_q[a + 2]);
+		fl_len[f] = linalg::length3(pos(fk_m[4]) - pos(fk_m[2])) + linalg::length3(pos(fk_m[6]) - pos(fk_m[4]));
+	}
+}
+=== -2b1f753035b6dbe3
+fn fl_q(x int) linalg::Quat {
+	return linalg::Quat { frames[x], frames[x + 1], frames[x + 2], frames[x + 3] };
+}
+fn fl_vel(c int, e const float3[:], nf int, i int, f int) float3 {
+	var v = float3 { 0.0, 0.0, 0.0 };
+	if clip_loop[c] && nf > 2 {
+		let i0 = (i + nf - 2) % (nf - 1);
+		let i1 = (i + 1) % (nf - 1);
+		v = (e[2 * i1 + f] - e[2 * i0 + f]) * 15.0;
+	} else {
+		let i0 = max(i - 1, 0);
+		let i1 = min(i + 1, nf - 1);
+		let span = max(i1 - i0, 1) as f32;
+		v = (e[2 * i1 + f] - e[2 * i0 + f]) * (30.0 / span);
+	}
+	return float3 { v.x, 0.0, v.z };
+}
+fn fl_low(y f32, lo f32, hi f32, len f32) bool {
+	return y - lo < max(0.025 * len, 0.2 * (hi - lo));
+}
+fn fl_clip(c int) {
+	clip_cfirst.push(con.len);
+	let nf = clip_nf[c];
+	if !fl_ok || nf < 1 {
+		for i in 2 * nf {
+			con.push(0);
+		}
+		clip_speed.push(0.0);
+		return;
+	}
+	var e float3[>..] = [];
+	for i in nf {
+		for f in 2 {
+			let o = clip_first[c] + i * 91;
+			let a = 14 + 4 * f;
+			fl_legs(f, float3 { frames[o + 88], frames[o + 89], frames[o + 90] }, fl_q(o), fl_q(o + 4 * a), fl_q(o + 4 * (a + 1)), fl_q(o + 4 * (a + 2)));
+			e.push(pos(fk_m[6]));
+		}
+	}
+	var lo f32[2] = [e[0].y, e[1].y];
+	var hi f32[2] = [e[0].y, e[1].y];
+	for i in nf {
+		for f in 2 {
+			let y = e[2 * i + f].y;
+			if y < lo[f] { lo[f] = y; }
+			if y > hi[f] { hi[f] = y; }
+		}
+	}
+	var vs = float3 { 0.0, 0.0, 0.0 };
+	var nlow = 0;
+	for i in nf {
+		for f in 2 {
+			if fl_low(e[2 * i + f].y, lo[f], hi[f], fl_len[f]) {
+				vs = vs + fl_vel(c, e, nf, i, f);
+				nlow += 1;
+			}
+		}
+	}
+	var vb = float3 { 0.0, 0.0, 0.0 };
+	if nlow > 0 { vb = vs / (nlow as f32); }
+	let travels = nlow > 0 && linalg::length3(vb) > 0.15 * fl_len[0];
+	var fs = float3 { 0.0, 0.0, 0.0 };
+	var nfl = 0;
+	for i in nf {
+		for f in 2 {
+			let v = fl_vel(c, e, nf, i, f);
+			var flag = fl_low(e[2 * i + f].y, lo[f], hi[f], fl_len[f]);
+			if flag && travels {
+				flag = linalg::dot3(v, vb) > 0.3 * linalg::dot3(vb, vb);
+			}
+			if flag {
+				con.push(1);
+				fs = fs + v;
+				nfl += 1;
+			} else {
+				con.push(0);
+			}
+		}
+	}
+	if travels && nfl > 0 {
+		clip_speed.push(linalg::length3(fs / (nfl as f32)));
+	} else {
+		clip_speed.push(0.0);
+	}
+}
+=== 2728f9736e096e61
+fn mix_speed(c int) f32 {
+	if c < 0 || c >= clip_speed.len { return 0.0; }
+	return clip_speed[c] * linalg::length3(col3(fl_place, 1));
+}
+fn mix_place(m f32[:]) {
+	fl_place = gfx::mat4 { float4 { m[0], m[1], m[2], m[3] }, float4 { m[4], m[5], m[6], m[7] }, float4 { m[8], m[9], m[10], m[11] }, float4 { m[12], m[13], m[14], m[15] } };
+}
+fn mix_feet(on bool) {
+	feet_on = on;
+	fl_snap = true;
+}
+fn fl_contact(f int) bool {
+	if cur < 0 { return true; }
+	let c = act_clip[cur];
+	if c < 0 || c >= clip_cfirst.len { return false; }
+	let i = clamp((act_t[cur] * 30.0 + 0.5) as int, 0, clip_nf[c] - 1);
+	return con[clip_cfirst[c] + 2 * i + f] != 0;
+}
+fn fl_wrap(x f32) f32 {
+	return atan2(sin(x as real), cos(x as real)) as f32;
+}
+=== -aa5e01dbc75429f
+fn fl_ac(x f32) f32 {
+	return acos(clamp(x, -1.0, 1.0)) as f32;
+}
+fn fl_ik(f int, tg float3, yo f32) {
+	let a = 14 + 4 * f;
+	let A = pos(fk_m[2]);
+	let K = pos(fk_m[4]);
+	let E = pos(fk_m[6]);
+	let l1 = linalg::length3(K - A);
+	let l2 = linalg::length3(E - K);
+	if l1 < 1.0e-5 || l2 < 1.0e-5 || linalg::length3(E - A) < 1.0e-5 { return; }
+	let d = clamp(linalg::length3(tg - A), 0.05 * (l1 + l2), 0.999 * (l1 + l2));
+	let ca = linalg::unit3(E - A);
+	var kd = (K - A) - ca * linalg::dot3(K - A, ca);
+	if linalg::length3(kd) < 0.02 * l1 {
+		kd = float3 { 0.0, 0.0, 1.0 } - ca * ca.z;
+		if linalg::length3(kd) < 1.0e-4 {
+			kd = float3 { 1.0, 0.0, 0.0 };
+		}
+	}
+	let ax = linalg::unit3(linalg::cross3(ca, linalg::unit3(kd)));
+	let a0 = fl_ac(linalg::dot3(linalg::unit3(K - A), ca));
+	let b0 = fl_ac(linalg::dot3(linalg::unit3(A - K), linalg::unit3(E - K)));
+	let a1 = fl_ac((l1 * l1 + d * d - l2 * l2) / (2.0 * l1 * d));
+	let b1 = fl_ac((l1 * l1 + l2 * l2 - d * d) / (2.0 * l1 * l2));
+	let r0 = linalg::qaxis(ax, a1 - a0);
+	let r1 = linalg::qaxis(ax, b1 - b0);
+	let ta = linalg::unit3(tg - A);
+	let c = linalg::dot3(ca, ta);
+	let cr = linalg::cross3(ca, ta);
+	var r2 = linalg::quat_identity();
+	if !(c > 0.999999 || linalg::length3(cr) < 1.0e-7) {
+		r2 = linalg::qaxis(linalg::unit3(cr), fl_ac(c));
+	}
+	let Qtp = mquat(fk_m[1]);
+	let Qt = mquat(fk_m[2]);
+	let Qcp = mquat(fk_m[3]);
+	let Qc = mquat(fk_m[4]);
+	let Qfp = mquat(fk_m[5]);
+	let Qf = mquat(fk_m[6]);
+	cur_q[a] = linalg::qnorm(linalg::qmul(qconj(Qtp), linalg::qmul(r2, linalg::qmul(r0, Qt))));
+	cur_q[a + 1] = linalg::qnorm(linalg::qmul(qconj(Qcp), linalg::qmul(r1, Qc)));
+	let np = linalg::qmul(r2, linalg::qmul(r0, linalg::qmul(r1, Qfp)));
+	cur_q[a + 2] = linalg::qnorm(linalg::qmul(qconj(np), linalg::qmul(linalg::qaxis(float3 { 0.0, 1.0, 0.0 }, yo), Qf)));
+}
+=== 6ef66fcdaf5f666b
+fn fl_relock(f int, E float3, yaw f32) {
+	fl_lock[f] = linalg::point(fl_place, E);
+	fl_yaw0[f] = yaw;
+	fl_off[f] = float3 { 0.0, 0.0, 0.0 };
+	fl_offv[f] = float3 { 0.0, 0.0, 0.0 };
+	fl_yoff[f] = 0.0;
+}
+fn fl_step(dt f32) {
+	if !fl_ok || !feet_on || item < 0 || dt <= 0.0 { return; }
+	let inv = linalg::inverse(fl_place);
+	let zc = col3(fl_place, 2);
+	let yaw = atan2(zc.x as real, zc.z as real) as f32;
+	let sc = linalg::length3(col3(fl_place, 1));
+	if abs(sc - fl_scale) > 0.01 * fl_scale { fl_snap = true; }
+	fl_scale = sc;
+	if abs(fl_wrap(yaw - fl_pyaw)) > 3.5 * dt { fl_snap = true; }
+	fl_pyaw = yaw;
+	for f in 2 {
+		let a = 14 + 4 * f;
+		fl_legs(f, hips_t, cur_q[0], cur_q[a], cur_q[a + 1], cur_q[a + 2]);
+		let E = pos(fk_m[6]);
+		let c = fl_contact(f);
+		var rf f32 = 0.07;
+		if cur >= 0 && act_clip[cur] < clip_speed.len && clip_speed[act_clip[cur]] > 0.0 {
+			rf = 0.22;
+		}
+		let R = rf * fl_len[f];
+		var lift f32 = 0.0;
+		if fl_snap {
+			fl_mode[f] = if c { 1 } else { 0 };
+			fl_relock(f, E, yaw);
+			continue;
+		}
+		if fl_mode[f] == 1 {
+			let T = linalg::point(inv, fl_lock[f]);
+			let o = float3 { T.x - E.x, 0.0, T.z - E.z };
+			fl_offv[f] = (o - fl_off[f]) / dt;
+			fl_off[f] = o;
+			fl_yoff[f] = fl_wrap(fl_yaw0[f] - yaw);
+			let l = linalg::length3(o);
+			if !c {
+				fl_mode[f] = 0;
+			} else if l > 0.66 * fl_len[f] {
+				fl_relock(f, E, yaw);
+			} else if (l > R || abs(fl_yoff[f]) > 0.22) && fl_mode[1 - f] != 2 {
+				fl_mode[f] = 2;
+				fl_st[f] = 0.0;
+				fl_ss[f] = fl_off[f];
+				fl_sy[f] = fl_yoff[f];
+				fl_steps += 1;
+			}
+		} else if fl_mode[f] == 0 {
+			let y f32 = 13.863;
+			let j = fl_offv[f] + fl_off[f] * y;
+			let ey = exp((-(y * dt)) as real) as f32;
+			fl_off[f] = (fl_off[f] + j * dt) * ey;
+			fl_offv[f] = (fl_offv[f] - j * (y * dt)) * ey;
+			fl_yoff[f] = fl_yoff[f] * ey;
+			if c {
+				fl_mode[f] = 1;
+				fl_lock[f] = linalg::point(fl_place, E + fl_off[f]);
+				fl_yaw0[f] = fl_wrap(yaw + fl_yoff[f]);
+			}
+		} else {
+			fl_st[f] += dt;
+			let u = min(fl_st[f] / 0.2, 1.0);
+			let k = 1.0 - (3.0 * u * u - 2.0 * u * u * u);
+			fl_off[f] = fl_ss[f] * k;
+			fl_yoff[f] = fl_sy[f] * k;
+			lift = (0.07 * fl_len[f] * sin(3.14159265 * (u as real))) as f32;
+			if u >= 1.0 {
+				fl_mode[f] = if c { 1 } else { 0 };
+				fl_relock(f, E, yaw);
+			} else if !c {
+				fl_mode[f] = 0;
+				fl_offv[f] = float3 { 0.0, 0.0, 0.0 };
+			}
+		}
+		if linalg::length3(fl_off[f]) > 1.0e-5 || lift > 0.0 || abs(fl_yoff[f]) > 1.0e-4 {
+			fl_ik(f, E + fl_off[f] + float3 { 0.0, lift, 0.0 }, fl_yoff[f]);
+		}
+	}
+	fl_snap = false;
 }

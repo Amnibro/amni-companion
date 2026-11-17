@@ -81,11 +81,11 @@ async function toggleAR(){
   try{setCamera(false);three();xr=await startAR(renderer,scene,$('#hud'),p=>{av&&(av.root.position.copy(p),home.copy(p),pad.position.copy(p),go=null)},()=>{xr=null;mode='room';av&&av.root.position.set(0,0,0);home.set(0,0,0);pad.position.set(0,0,0);ring.visible=true;$('#arBtn').classList.remove('on');document.body.classList.remove('xr')});mode='xr';ring.visible=false;$('#arBtn').classList.add('on');document.body.classList.add('xr');status('Point at the floor, then tap to place',5000)}
   catch(e){toast('AR could not start: '+e.message,7000)}
 }
-let yaw=0;function tick(t,frame){
+let yaw=0,turn=0;function tick(t,frame){
   const dt=Math.min(.05,clock.getDelta());ringM.uniforms.t.value+=dt;xr?.frame(frame)
   if(av){const r=av.root
-    if(go){const d=new THREE.Vector3(go.p.x-r.position.x,0,go.p.z-r.position.z),l=d.length();if(l>.04){av.loco(true,go.run);const want=Math.atan2(d.x,d.z);yaw+=Math.atan2(Math.sin(want-yaw),Math.cos(want-yaw))*Math.min(1,dt*7);r.position.addScaledVector(d.normalize(),Math.min(l,(go.run?2.1:.95)*r.scale.x*dt))}else{const th=go.then;go=null;av.loco(false);th?.()}}
-    else if(!av.spin){const u=userPos(),want=Math.atan2(u.x-r.position.x,u.z-r.position.z),df=Math.atan2(Math.sin(want-yaw),Math.cos(want-yaw));Math.abs(df)>.35&&(yaw+=df*Math.min(1,dt*2.1))}
+    if(go){const d=new THREE.Vector3(go.p.x-r.position.x,0,go.p.z-r.position.z),l=d.length();if(l>.04){av.loco(true,go.run);const want=Math.atan2(d.x,d.z);const dw=Math.atan2(Math.sin(want-yaw),Math.cos(want-yaw));yaw+=Math.sign(dw)*Math.min(Math.abs(dw)*Math.min(1,dt*7),3*dt);r.position.addScaledVector(d.normalize(),Math.min(l,av.speed(go.run)*dt))}else{const th=go.then;go=null;av.loco(false);th?.()}}
+    else if(!av.spin){const u=userPos(),want=Math.atan2(u.x-r.position.x,u.z-r.position.z),df=Math.atan2(Math.sin(want-yaw),Math.cos(want-yaw));Math.abs(df)>.35&&(turn=1);turn&&(yaw+=Math.sign(df)*Math.min(Math.abs(df),Math.min(1.8,Math.abs(df)*4+.2)*dt),Math.abs(df)<.02&&(turn=0))}
     r.rotation.y=yaw
     let lp=userPos();if(mode==='camera'&&senses?.nose){const n=senses.nose,s=S.camera==='user'?1:-1;lp=camera.localToWorld(new THREE.Vector3((.5-n[0])*s*-1.4,(.5-n[1])*.9,-.2))}
     if(lookOff){if(now()>lookOff.until)lookOff=null;else{const o={left:[-1.7,0],right:[1.7,0],up:[0,1.7]}[lookOff.dir]||[0,0];lp=r.localToWorld(new THREE.Vector3(o[0],1.5+o[1],1.4))}}

@@ -26,6 +26,8 @@ try{
   const mode=on=>p.waitForFunction(v=>document.body.classList.contains('camera')===v,on,{timeout:60000}).then(()=>true,()=>false)
   await p.goto(`http://127.0.0.1:${srv.address().port}/`)
   ok(await settled(),'app starts and the default model loads');await p.waitForTimeout(4000)
+  const feet=await p.evaluate(()=>new Promise(done=>{const a=globalThis.amni,pr=[null,null],rnd=Math.random,t0=performance.now();let s=0,n=0,sd=7;Math.random=()=>(sd=sd*16807%2147483647)/2147483647;a.act('walk','roam');const f=()=>{const L=a.av.live;for(const k of[0,1]){const m=a.av.v.foot(k),q=[L[196+48*k],L[198+48*k],m];pr[k]&&pr[k][2]===1&&m===1&&(s+=Math.hypot(q[0]-pr[k][0],q[1]-pr[k][1]),n++);pr[k]=q}performance.now()-t0<7000?requestAnimationFrame(f):(Math.random=rnd,a.act('walk','stop'),done([s,n]))};requestAnimationFrame(f)}))
+  ok(feet[1]>60&&feet[0]<.03,'planted feet stay put on a walk',(feet[0]*1000).toFixed(1)+' mm over '+feet[1]+' planted frames');await p.waitForTimeout(1500)
   ok(await panel('models'),'Models panel opens')
   const cards=(await p.locator('#stock .card b').allTextContents()).join()
   ok(cards==='Holo,Dex,Mannequin','stock models listed',cards)

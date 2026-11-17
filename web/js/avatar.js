@@ -78,6 +78,7 @@ class Avatar{
       this.addClip(talk?'Relax_Talk_Loop':'Relax_Loop',fr,nf,true)}}
   playClip(name,fade=.3){const id=this.ids[name];if(id===undefined||!this.v)return false;this.v.play(id,fade);this.cur=name;return true}
   anim(n){if(n==='spin'){this.spin=1.2;return true}if(n==='idle'||n==='stand'){const was=this.sitting;this.sitting=false;this.queue=[];was&&this.has('Sitting_Exit')?this.playClip('Sitting_Exit'):this.base();return true}const s=ANIM[n];if(!s)return false;const l=[].concat(s).filter(x=>this.has(x));if(!l.length)return false;this.sitting=n==='sit';this.queue=l.slice(1);return this.playClip(l[0])}
+  speed(run){if(!this.v)return(run?2.1:.95)*this.root.scale.x;this.root.updateMatrixWorld(true);this.v.place(this.g.scene.matrixWorld.elements);return this.v.speed(this.names.indexOf(run&&this.has('Jog_Fwd_Loop')?'Jog_Fwd_Loop':'Walk_Loop'))||(run?2.1:.95)*this.root.scale.x}
   loco(on,run){on?this.playClip(run&&this.has('Jog_Fwd_Loop')?'Jog_Fwd_Loop':'Walk_Loop',.25):(this.cur==='Walk_Loop'||this.cur==='Jog_Fwd_Loop')&&this.base(.3)}
   emote(n){if(n==='tpose')return this.anim('tpose');const e=EMOTE[n];if(!e)return false;this.emotes=this.emotes.filter(x=>x.n!==n);this.emotes.push({n,e,t:0});return true}
   setFace(n,v=1,hold=2.5){this.faceT[n]=v;hold&&setTimeout(()=>this.faceT[n]=0,hold*1000)}
@@ -90,7 +91,7 @@ class Avatar{
   lip(text,ci,n,rate=1){this.core.lip((text.slice(ci).match(/^\S+/)||[''])[0].slice(0,n||undefined),this.time,rate)}
   livePack(){this.root.updateMatrixWorld(true);this.v.place(this.g.scene.matrixWorld.elements);const L=this.v.live();this.live.set(L.subarray(0,264));this.headP=[L[264],L[265],L[266]];return this.live}
   update(dt){
-    this.time+=dt;if(!this.v)return;const fin=this.v.advance(dt);if(fin>=0&&this.names[fin]===this.cur){const n=this.queue.shift();n?this.playClip(n,.2):this.base()}this.spin>0&&(this.spin-=dt,this.holder.rotation.y+=dt*Math.PI*2/1.2,this.spin<=0&&(this.holder.rotation.y=Math.round(this.holder.rotation.y/Math.PI)*Math.PI))
+    this.time+=dt;if(!this.v)return;this.root.updateMatrixWorld(true);this.v.place(this.g.scene.matrixWorld.elements);const fin=this.v.advance(dt);if(fin>=0&&this.names[fin]===this.cur){const n=this.queue.shift();n?this.playClip(n,.2):this.base()}this.spin>0&&(this.spin-=dt,this.holder.rotation.y+=dt*Math.PI*2/1.2,this.spin<=0&&(this.holder.rotation.y=Math.round(this.holder.rotation.y/Math.PI)*Math.PI))
     this.trackW+=((this.track?this.trackTarget:0)-this.trackW)*Math.min(1,dt*7)
     if(this.track&&this.trackW>.01){const O=this.O;O.fill(0);this.slot.forEach((bi,k)=>{bi>=0&&this.track[5*k+4]>.5&&(O.set(this.track.subarray(5*k,5*k+4),5*k),O[5*k+4]=this.trackW)});this.v.apply(O)}
     this.lookW+=((this.look?this.lookTarget:0)-this.lookW)*Math.min(1,dt*4)

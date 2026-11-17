@@ -14,6 +14,7 @@ fn setup() int, int {
 	for i in 22 { sl[i] = if clips::kc_slot[i] < 0 { -1 } else { (clips::kc_slot[i] as int - first) as i32 }; }
 	mix_open(asset, it, sl[..]);
 	for c in nlib { mix_clip(clips::kc_nf[c], clips::kc_loop[c], clips::clips_frames(c)); }
+	mix_feet(false);
 	var idle = -1;
 	var walk = -1;
 	var nb byte[>..] = [];

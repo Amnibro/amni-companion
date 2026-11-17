@@ -1,0 +1,23 @@
+use std
+
+The program tests the mixer's foot lock on Holo. Imports: gfx, math, gfx.linalg, gfx.gltf, gfx.motion, gfx.scene3d, spring, clips and mix (local modules; the mixer's functions and state, such as `mix_open`, `mix_clip`, `mix_play`, `mix_advance`, `mix_place`, `mix_feet`, `mix_speed`, `mix_rest`, `fl_contact`, `fl_mode`, `fl_steps`, `fl_len`, `clip_speed`, `slot_node` and `item`, are used unqualified; spring's `pos` is the translation of a matrix; qualify the clips module as `clips::`). Set up exactly as the mixer test does: `let asset = gltf::load("../web/models/holo.glb")`, `let it = s3d::add(asset)`, `let nlib = clips::clips_load("../web/anim/AnimationLibrary_Godot_Standard.gltf", asset)`, then `var sl i32[22]; let first = gltf::assets[asset].nodes.first; for i in 22 { sl[i] = if clips::kc_slot[i] < 0 { -1 } else { (clips::kc_slot[i] as int - first) as i32 }; }`, `mix_open(asset, it, sl[..])` and `for c in nlib { mix_clip(clips::kc_nf[c], clips::kc_loop[c], clips::clips_frames(c)); }`. Find the clip indices of "Idle_Loop" and "Walk_Loop" by comparing `clips::clips_name(k, nb)` (it fills a byte buffer nb) for k below nlib. All steps advance with dt = 1/30.
+
+`put(x f32, z f32, yaw f32)` places the avatar: the matrix `m = gfx::mul(gfx::translate(float3 { x, 0.0, z }), linalg::qmatrix(linalg::qaxis(float3 { 0.0, 1.0, 0.0 }, yaw)))`, `s3d::place(it, m)` and `mix_place(linalg::flat(m)[..])` (flat gives the 16 floats column-major; keep it in a local array first). `ankle(f int) float3` is the world position of foot f's ankle as the renderer poses it: call `s3d::pose(it)` and return `pos(motion::world[slot_node[16 + 4 * f]])`. `flat2(a float3, b float3) f32` is the horizontal distance between two points (x and z only).
+
+`walk(on bool, k f32) f32` measures foot sliding: `mix_feet(on)`, `mix_rest()`, `mix_play(walk, 0.0)`, speed `v = mix_speed(walk) * k`; for frame i from 0 to 119: `put(0.0, v * i / 30.0, 0.0)`, `mix_advance(1.0 / 30.0)`, then for each foot f: `p = ankle(f)`, `c = fl_contact(f)`; when i > 0 and the foot was in contact on the previous frame too, add `flat2(p, previous p)` to the sum; remember p and c per foot. Returns the sum (meters a planted ankle slid over 4 seconds).
+
+Run, in order, and print one line each:
+1. `sp = clip_speed[walk]`: print "speed ok" when it is between 0.5 and 2.5 and `clip_speed[idle] == 0.0`, else "speed bad " and both values.
+2. Contact share: over the walk clip's frames (`clips::kc_nf[walk]`), the share of frames flagged for each foot, read from the mixer's `con` and `clip_cfirst` lists (`con[clip_cfirst[walk] + 2 * i + f] != 0`); print "contact ok" when both shares are between 0.3 and 0.8, else "contact bad " and the two shares.
+3. `a = walk(false, 0.85)`, `b = walk(true, 0.85)` (the body moves 15 % slower than the clip's own ground speed, so the unlocked feet slide): print "lock ok" when `a > 0.2` and `b < 0.1 * a`, else "lock bad " and a and b.
+4. `m = walk(true, 1.0)`: print "match ok" when `m < 0.02`, else "match bad " and m.
+5. Knees: during one more locked walk at k = 0.85 (same loop as walk with the lock on), after each advance and `s3d::pose(it)`, for each foot f with hip `h = pos(motion::world[slot_node[14 + 4 * f]])`, knee `n = pos(motion::world[slot_node[15 + 4 * f]])` and ankle e: the knee's forward offset `n.z - (h.z + (e.z - h.z) * ((n.y - h.y) / min(e.y - h.y, -0.0001)))` must stay above `-0.01`; track the smallest. Print "knee ok" when the smallest is above -0.01, else "knee bad " and it.
+6. Turning on the spot: `mix_feet(true)`, `mix_rest()`, `mix_play(idle, 0.0)`, `let s0 = fl_steps`; for i from 0 to 89 with `yaw = 1.8 * i / 30.0`: `put(0.0, 0.0, yaw)`, `mix_advance(1.0 / 30.0)`, then for each foot f with `p = ankle(f)`: when `fl_mode[f] == 1` and it was 1 on the previous frame too, track slide = the largest `flat2(p, previous p)`; track twist = the largest `abs(fl_yoff[f])`; remember p and the mode. Print "turn ok" when `fl_steps - s0 >= 4`, `slide < 0.003` and `twist < 0.8`, else "turn bad " with the step count, slide and twist.
+
+expect:
+speed ok
+contact ok
+lock ok
+match ok
+knee ok
+turn ok
