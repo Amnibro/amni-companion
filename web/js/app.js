@@ -8,7 +8,7 @@ import * as voice from './voice.js'
 import {Senses} from './senses.js'
 import * as store from './store.js'
 import {arSupported,startAR} from './xr.js'
-const VERSION='1.4.1',$=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],BASE=new URL('../',import.meta.url),now=()=>performance.now()
+const VERSION='1.4.2',$=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],BASE=new URL('../',import.meta.url),now=()=>performance.now()
 const STOCK={holo:{name:'Holo',file:'models/holo.glb',img:'models/holo.webp',hair:'models/holo.hair',persona:'holo',blurb:'Bubbly punk-pop holo buddy',look:{liner:1,lids:1,clean:1,nose:1,hair:'0.63 0.41 0.2 1.82'}},dex:{name:'Dex',file:'models/dex.glb',img:'models/dex.webp',hair:'models/dex.hair',persona:'dex',blurb:'Calm engineer, dry wit',look:{hair:'0.03 0.022 0.018 0.45'}},mannequin:{name:'Mannequin',cname:'Amni',file:'anim/AnimationLibrary_Godot_Standard.gltf',img:'models/mannequin.webp',persona:'neutral',blurb:'Plain and simple'}}
 const COOL={wave:7000,clap:7000,hands_up:7000,thumbs_up:7000,thumbs_down:7000,peace:7000,love:7000,fist:7000,pointing_up:7000,point:7000,wink:10000,nod:14000,head_shake:14000,object:4000},reacted={}
 let HE=!!navigator.gpu
