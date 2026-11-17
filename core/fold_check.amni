@@ -533,6 +533,14 @@ fn find_clip(name const byte[:], n int) int {
 	}
 	return -1;
 }
+fn sched_name(ci int) const byte[:] {
+	match ci {
+		0 => "Idle_Loop",
+		1 => "Walk_Formal_Loop",
+		2 => "Dance_Loop",
+		_ => "Sitting_Idle_Loop",
+	}
+}
 fn main() {
 	let a = args();
 	if a.len < 3 {
@@ -545,36 +553,9 @@ fn main() {
 		print("load fail");
 		return;
 	}
-	var half = false;
-	var ek f32 = 2.0;
-	var kk f32 = 3.0;
-	var mesh const byte[:] = "skin";
-	var have_mesh = false;
-	for x, i in a {
-		if i < 3 {
-			continue;
-		}
-		if starts_with(x, "move=") {
-			move_joint(asset, x[5..]);
-		} else if starts_with(x, "knee=") {
-			let v, ok = parse_flt(trim(x[5..]));
-			if ok {
-				kk = v as f32;
-			}
-		} else if starts_with(x, "elbow=") {
-			let v, ok = parse_flt(trim(x[6..]));
-			if ok {
-				ek = v as f32;
-			}
-		} else if x == "dump" {
-			dump = true;
-		} else if x == "cor" {
-			cor_on = true;
-		} else if x == "half" {
-			half = true;
-		} else if !have_mesh {
-			mesh = x;
-			have_mesh = true;
+	for i in 3..a.len {
+		if starts_with(a[i], "move=") {
+			move_joint(asset, a[i][5..]);
 		}
 	}
 	let it = s3d::add(asset);
@@ -584,29 +565,52 @@ fn main() {
 	for i in 22 {
 		sl[i] = if clips::kc_slot[i] < 0 { -1 } else { (clips::kc_slot[i] as int - first) as i32 };
 	}
-	if half {
-		var hk int[6];
-		hk[0] = clips::kc_slot[14] as int;
-		hk[1] = clips::kc_slot[18] as int;
-		hk[2] = clips::kc_slot[8] as int;
-		hk[3] = clips::kc_slot[12] as int;
-		hk[4] = clips::kc_slot[15] as int;
-		hk[5] = clips::kc_slot[19] as int;
-		var hs f32[6];
-		hs[0] = 0.0;
-		hs[1] = 0.0;
-		hs[2] = ek;
-		hs[3] = ek;
-		hs[4] = -kk;
-		hs[5] = -kk;
+	var want_half = false;
+	var want_twist = false;
+	var ek real = 2.0;
+	var kk real = 3.0;
+	var mesh const byte[:] = "skin";
+	var have_mesh = false;
+	for i in 3..a.len {
+		let s = a[i];
+		if s == "dump" {
+			dump = true;
+		} else if s == "cor" {
+			cor_on = true;
+		} else if s == "half" {
+			want_half = true;
+		} else if s == "twist" {
+			want_twist = true;
+		} else if starts_with(s, "elbow=") {
+			let x, ok = parse_flt(trim(s[6..]));
+			if ok {
+				ek = x;
+			}
+		} else if starts_with(s, "knee=") {
+			let x, ok = parse_flt(trim(s[5..]));
+			if ok {
+				kk = x;
+			}
+		} else if starts_with(s, "move=") {
+		} else if !have_mesh {
+			mesh = s;
+			have_mesh = true;
+		}
+	}
+	if want_half {
+		var hk int[6] = [clips::kc_slot[14] as int, clips::kc_slot[18] as int, clips::kc_slot[8] as int, clips::kc_slot[12] as int, clips::kc_slot[15] as int, clips::kc_slot[19] as int];
+		var hs f32[6] = [0.0, 0.0, ek as f32, ek as f32, -kk as f32, -kk as f32];
 		if kk < 0.0 {
 			hk[4] = -1;
 			hk[5] = -1;
 			hs[4] = 0.0;
 			hs[5] = 0.0;
 		}
-		let hr = half_joints(asset, hk[..], hs[..]);
-		print("half joints ", hr);
+		print("half joints ", half_joints(asset, hk[..], hs[..]));
+	}
+	if want_twist {
+		var tk int[2] = [clips::kc_slot[8] as int, clips::kc_slot[12] as int];
+		print("twist joints ", twist_joints(asset, tk[..]));
 	}
 	mix_open(asset, it, sl[..]);
 	for c in nlib {
@@ -621,18 +625,18 @@ fn main() {
 	}
 	print("skin tris ", bt.len / 3, " height ", h0, " to ", h1, " clips ", nlib);
 	measure(it, "bind");
-	let names const byte[:][4] = ["Idle_Loop", "Walk_Formal_Loop", "Dance_Loop", "Sitting_Idle_Loop"];
-	let at f32[4][4] = [[1.0, 0.0, 0.0, 0.0], [0.5, 1.0, 0.0, 0.0], [0.7, 1.4, 2.1, 2.8], [1.0, 2.0, 3.0, 0.0]];
+	let at f32[16] = [1.0, 0.0, 0.0, 0.0, 0.5, 1.0, 0.0, 0.0, 0.7, 1.4, 2.1, 2.8, 1.0, 2.0, 3.0, 0.0];
 	for ci in 4 {
-		let c = find_clip(names[ci], nlib);
+		let nm = sched_name(ci);
+		let c = find_clip(nm, nlib);
 		if c < 0 {
-			print("no clip ", names[ci]);
+			print("no clip ", nm);
 			continue;
 		}
 		mix_play(c, 0.0);
 		var t f32 = 0.0;
 		for si in 4 {
-			let target = at[ci][si];
+			let target = at[ci * 4 + si];
 			if target <= 0.0 {
 				continue;
 			}
@@ -641,10 +645,26 @@ fn main() {
 				t += 1.0 / 60.0;
 			}
 			var tag byte[>..] = [];
-			tag.append(names[ci]);
-			tag.push(' ');
+			tag.append(nm);
+			tag.append(" ");
 			tag.append(str(target));
 			measure(it, tag);
+		}
+	}
+	let angs f32[2] = [-1.4, 1.4];
+	let hands int[2] = [9, 13];
+	for ang in angs {
+		mix_rest();
+		for k in hands {
+			if slot_node[k] >= 0 {
+				mix_set(k, linalg::qmul(linalg::qaxis(linalg::unit3(gltf::nodes[slot_node[k]].t), ang), rest_q[k]));
+			}
+		}
+		push();
+		if ang < 0.0 {
+			measure(it, "hands turned -1.4");
+		} else {
+			measure(it, "hands turned 1.4");
 		}
 	}
 }

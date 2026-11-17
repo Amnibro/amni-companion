@@ -50,10 +50,6 @@ var rs_skip = 90;
 extern fn hv_f32(id i32, xs f32[:]);
 extern fn hv_i32(id i32, xs i32[:]);
 extern fn hv_bytes(id i32, xs byte[:]);
-fn has_lib() bool {
-	var scratch byte[>..] = [];
-	read_file("/m/lib.gltf", scratch)
-}
 fn main() {
 	hv_f32(0, P[..]);
 	hv_f32(1, C[..]);
@@ -67,7 +63,8 @@ fn main() {
 	hv_i32(9, SL[..]);
 	gltf::lazy_pixels = true;
 	let a = args();
-	if has_lib() {
+	var scratch byte[>..] = [];
+	if read_file("/m/lib.gltf", scratch) {
 		clips::clips_lib("/m/lib.gltf");
 	}
 	asset = gltf::load(a[1]);
@@ -75,13 +72,16 @@ fn main() {
 		print("view: ", gltf::error());
 		return;
 	}
-	if has_lib() {
+	var scratch2 byte[>..] = [];
+	if read_file("/m/lib.gltf", scratch2) {
 		nlib = clips::clips_load("/m/lib.gltf", asset);
-		if nlib > 0 {
-			var hk int[6] = [clips::kc_slot[14] as int, clips::kc_slot[18] as int, clips::kc_slot[8] as int, clips::kc_slot[12] as int, clips::kc_slot[15] as int, clips::kc_slot[19] as int];
-			var hs f32[6] = [0.0, 0.0, 2.0, 2.0, -3.0, -3.0];
-			half_joints(asset, hk[..], hs[..]);
-		}
+	}
+	if nlib > 0 {
+		var hk int[6] = [clips::kc_slot[14] as int, clips::kc_slot[18] as int, clips::kc_slot[8] as int, clips::kc_slot[12] as int, clips::kc_slot[15] as int, clips::kc_slot[19] as int];
+		var hs f32[6] = [0.0, 0.0, 2.0, 2.0, -3.0, -3.0];
+		half_joints(asset, hk[..], hs[..]);
+		var tk int[2] = [clips::kc_slot[8] as int, clips::kc_slot[12] as int];
+		twist_joints(asset, tk[..]);
 	}
 	cloth = cloth_setup("/m/avatar.cloth", asset);
 	no_skirt = cloth > 0;
@@ -90,10 +90,11 @@ fn main() {
 	if fe_do.len > 0 && gltf::find_node(asset, "head") < 0 {
 		fe_do.clear();
 	}
+	let nfirst = gltf::assets[asset].nodes.first;
+	let ncount = gltf::assets[asset].nodes.count;
 	if fe_do.len > 0 || a.len > 2 || hair::find_cards(asset, "hair") >= 0 {
-		let nfirst = gltf::assets[asset].nodes.first;
-		for j in gltf::assets[asset].nodes.count {
-			let n = nfirst + j;
+		for i in ncount {
+			let n = nfirst + i;
 			if gltf::nodes[n].mesh >= 0 {
 				let nm = gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name);
 				if nm == "hair" || (fe_do.len > 0 && (nm == "braid_hair" || nm == "tie")) {
@@ -108,15 +109,16 @@ fn main() {
 			rest_inv = linalg::inverse(motion::world[head]);
 		}
 	}
-	let tfirst = gltf::assets[asset].nodes.first;
-	for j in gltf::assets[asset].nodes.count {
-		let n = tfirst + j;
-		if gltf::nodes[n].mesh >= 0 && gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "teeth" {
-			teeth_mat = gltf::prims[gltf::meshes[gltf::nodes[n].mesh].prims.first].material;
-			if teeth_mat >= 0 {
-				teeth_base = gltf::materials[teeth_mat].base;
+	for i in ncount {
+		let n = nfirst + i;
+		if gltf::nodes[n].mesh >= 0 {
+			if gltf::text_of(gltf::meshes[gltf::nodes[n].mesh].name) == "teeth" {
+				teeth_mat = gltf::prims[gltf::meshes[gltf::nodes[n].mesh].prims.first].material;
+				if teeth_mat >= 0 {
+					teeth_base = gltf::materials[teeth_mat].base;
+				}
+				break;
 			}
-			break;
 		}
 	}
 	if !gfx::open("amni companion", 640, 800) {
@@ -148,10 +150,8 @@ fn main() {
 	s3d::ao_mode = 1;
 	s3d::ssr_on = false;
 	s3d::sss_on = true;
-	lit_off.clear();
-	lit_off.append([float3 { 0.1237, 0.5203, 1.1525 }, float3 { -0.8245, 0.1905, 0.9464 }, float3 { -0.5153, 0.4481, -0.7026 }, float3 { 0.0, -0.634, 0.9464 }, float3 { 0.5153, 0.4481, -0.7026 }]);
-	lit_ax.clear();
-	lit_ax.append([float3 { 0.993, 0.0, -0.119 }, float3 { 0.7, 0.0, 0.7 }, float3 { 1.0, 0.0, 0.0 }, float3 { 1.0, 0.0, 0.0 }, float3 { 1.0, 0.0, 0.0 }]);
+	lit_off = [float3 { 0.1237, 0.5203, 1.1525 }, float3 { -0.8245, 0.1905, 0.9464 }, float3 { -0.5153, 0.4481, -0.7026 }, float3 { 0.0, -0.634, 0.9464 }, float3 { 0.5153, 0.4481, -0.7026 }];
+	lit_ax = [float3 { 0.993, 0.0, -0.119 }, float3 { 0.7, 0.0, 0.7 }, float3 { 1.0, 0.0, 0.0 }, float3 { 1.0, 0.0, 0.0 }, float3 { 1.0, 0.0, 0.0 }];
 	let lit_size = [float2 { 0.309, 0.309 }, float2 { 1.03, 1.03 }, float2 { 0.309, 0.721 }, float2 { 1.03, 1.03 }, float2 { 0.309, 0.721 }];
 	let lit_rgb = [float3 { 3.5, 3.36, 3.15 }, float3 { 0.36, 0.4, 0.44 }, float3 { 3.2, 2.8, 2.32 }, float3 { 0.3, 0.285, 0.27 }, float3 { 3.2, 2.8, 2.32 }];
 	for i in lit_off.len {
@@ -186,8 +186,9 @@ fn main() {
 		hair::body(hg, asset, "skin", ["head", "neck_01", "spine_03", "spine_02", "clavicle_l", "clavicle_r", "upperarm_l", "upperarm_r"], []);
 		var hc = float3 { 0.58, 0.38, 0.14 };
 		let mfirst = gltf::assets[asset].materials.first;
-		for j in gltf::assets[asset].materials.count {
-			let m = mfirst + j;
+		let mcount = gltf::assets[asset].materials.count;
+		for i in mcount {
+			let m = mfirst + i;
 			if gltf::text_of(gltf::materials[m].name) == "hair" {
 				hc = float3 { gltf::materials[m].base.x, gltf::materials[m].base.y, gltf::materials[m].base.z };
 			}
@@ -211,9 +212,9 @@ fn main() {
 		}
 		if fe_do.len > 0 || fe_shade.len > 0 || fe_hair.x >= 0.0 {
 			let kc = hair::grooms[hg].look.color;
-			let kg f32 = if fe_do.len == 0 && fe_shade.len == 0 { 0.5 * hair::grooms[hg].look.gain } else { 0.5 };
-			for j in gltf::assets[asset].materials.count {
-				let m = mfirst + j;
+			let kg = if fe_do.len == 0 && fe_shade.len == 0 { 0.5 * hair::grooms[hg].look.gain } else { 0.5 };
+			for i in mcount {
+				let m = mfirst + i;
 				if gltf::text_of(gltf::materials[m].name) == "scalp" {
 					gltf::materials[m].base_tex = gltf::TexRef { -1, 0 };
 					gltf::materials[m].base = float4 { kc.x * kg, kc.y * kg, kc.z * kg, 1.0 };
@@ -372,6 +373,7 @@ export fn he_frame(t real) {
 		}
 	}
 	half_drive(item);
+	twist_drive(item);
 	place_m();
 	s3d::place(pad_item, gfx::translate(float3 { C[8], C[9] + 0.002, C[10] }));
 	if ring >= 0 {
@@ -397,7 +399,7 @@ export fn he_frame(t real) {
 	if C[15] > 0.0 {
 		var best = 0;
 		var bd = abs(scales[0] - C[15]);
-		for i in 1..4 {
+		for i in 4 {
 			let d = abs(scales[i] - C[15]);
 			if d < bd {
 				bd = d;
